@@ -1,0 +1,107 @@
+BUSINESS:
+  CAR:
+    吨每桶: 0.18
+    总收油量: 3000
+    比率: 0.91
+  RESTAURANT:
+    total_amount_per_car: 35,44
+    收油关系映射:
+      小食/小吃/美食/饮食/私房菜: 1,2
+      火锅: 1,2
+      酒楼/酒家/烤鱼: 3,4
+      酸菜鱼: 1
+      餐厅/餐馆/饭店/饭馆/川菜/湘菜/农庄/山庄/大排档/食府/公司/炸鸡: 2,3
+      餐饮/汉堡: 1,3
+    街道图:
+      Huizhou:
+        博罗县:
+        - 园洲镇
+        - 湖镇镇
+        - 石坝镇
+        - 麻陂镇
+        - 龙溪街道
+        - 杨侨镇
+        - 杨村镇
+        - 观音阁镇
+        - 龙华镇
+        - 柏塘镇
+        - 横河镇
+        - 罗阳街道
+        - 公庄镇
+        - 福田镇
+        - 长宁镇
+        - 泰美镇
+        - 石湾镇
+        惠东县:
+        - 梁化镇
+        - 大岭街道
+        - 高潭镇
+        - 黄埠镇
+        - 宝口镇
+        - 平山街道
+        - 稔山镇
+        - 白花镇
+        - 多祝镇
+        - 铁涌镇
+        - 吉隆镇
+        - 平海镇
+        - 白盆珠镇
+        - 安墩镇
+        惠城区:
+        - 沙田镇
+        - 良井镇
+        - 永湖镇
+        - 三和街道
+        - 淡水街道
+        - 镇隆镇
+        - 平湮镇
+        - 霞涌街道
+        - 澳头街道
+        - 西区街道
+        - 秋长街道
+        - 新圩镇
+        惠阳区:
+        - 沙田镇
+        - 良井镇
+        - 永湖镇
+        - 三和街道
+        - 淡水街道
+        - 镇隆镇
+        - 平湮镇
+        - 霞涌街道
+        - 澳头街道
+        - 西区街道
+        - 秋长街道
+        - 新圩镇
+        龙门县:
+        - 龙华镇
+        - 龙田镇
+        - 龙江镇
+        - 蓝田瑶族乡
+        - 永汉镇
+        - 龙湮镇
+        - 麻榨镇
+        - 地派镇
+        - 龙城街道
+        - 平陵街道
+    餐厅对应关系:
+      chinese_address: Chinese Address
+      chinese_name: Chinese name
+      city: City
+      contact_person_en: Contact person(EN)
+      contact_person_zh: Contact person(CH)
+      contact_phone: Telephone number
+      distance_km: Distance (km)
+      distance_mile: Distance (mile)
+      district: 区域
+      english_address: English Address
+      english_name: English name
+      location: Coordinates
+      province: Province
+OTHER:
+  Tab1:
+    last_dir: r"F:\WorkSpace\Project2025\MoCo\app\config"
+SYSTEM:
+  apikeys:
+  - '12345678'
+  - '87654321'

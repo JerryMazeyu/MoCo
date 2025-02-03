@@ -1,0 +1,6 @@
+app/var/log/moco.log
+app/assets/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

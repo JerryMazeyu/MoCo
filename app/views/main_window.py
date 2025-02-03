@@ -1,0 +1,52 @@
+import sys
+from tabs import Tab0, Tab1
+from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+
+        self.setWindowTitle("MoCo 数据助手")
+        self.setGeometry(100, 100, 1000, 600)
+
+        self.tab_widget = QTabWidget()
+        self.setCentralWidget(self.tab_widget)
+
+        self.initUI()
+
+    def initUI(self):
+        # Create tabs
+        self.tab0 = QWidget()
+        self.tab1 = QWidget()
+        self.tab2 = QWidget()
+        self.tab3 = QWidget()
+
+        # Add tabs to the tab widget
+        self.tab_widget.addTab(self.tab0, "配置项")
+        self.tab_widget.addTab(self.tab1, "查找&确认餐厅信息")
+        self.tab_widget.addTab(self.tab2, "配置规则")
+        self.tab_widget.addTab(self.tab3, "生成&审核")
+
+        # Set layouts for each tab
+        self.tab0.layout = QVBoxLayout()
+        self.tab1.layout = QVBoxLayout()
+        self.tab2.layout = QVBoxLayout()
+        self.tab3.layout = QVBoxLayout()
+
+
+        # Add TabContent to tab
+        self.tab0_content = Tab0()
+        self.tab0.layout.addWidget(self.tab0_content)
+        self.tab1_content = Tab1()
+        self.tab1.layout.addWidget(self.tab1_content)
+
+        self.tab0.setLayout(self.tab0.layout)
+        self.tab1.setLayout(self.tab1.layout)
+        self.tab2.setLayout(self.tab2.layout)
+        self.tab3.setLayout(self.tab3.layout)
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    main_window = MainWindow()
+    main_window.show()
+    sys.exit(app.exec_())
