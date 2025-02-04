@@ -121,8 +121,6 @@ class RestaurantService:
         df = pd.DataFrame(data)
         df.to_excel(file_path, index=False)
     
-
-    
     
     def extract_street_base_batch(self) -> pd.DataFrame:
         """批量生成街道候选列表"""
@@ -156,6 +154,7 @@ class RestaurantService:
         # 从地址中提取街道名
         return self._extract_street_from_address(streets, address)
 
+
     def _get_streets_from_config(self, city: str, district: str) -> Optional[list]:
         """
         从配置文件中获取指定城市和区域的街道列表。
@@ -169,6 +168,7 @@ class RestaurantService:
         except KeyError:
             # 如果城市或区域不存在于配置中，返回 None
             return None
+
 
     def _extract_street_from_address(self, streets: list, address: str) -> Optional[str]:
         """
@@ -208,6 +208,7 @@ class RestaurantService:
         # 按最大值降序排序，选择最大值对应的关键字
         matched_types.sort(key=lambda x: x[1], reverse=True)
         return matched_types[0][0]  # 返回最大值对应的关键字组（例如“酒楼/酒家/烤鱼”）
+
 
     def extract_restaurant_type_batch(self) -> pd.DataFrame:
         """批量生成餐厅类型"""

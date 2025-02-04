@@ -1,5 +1,5 @@
 import sys
-from tabs import Tab0, Tab1
+from tabs import Tab0, Tab1, Tab2
 from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout
 
 class MainWindow(QMainWindow):
@@ -24,7 +24,7 @@ class MainWindow(QMainWindow):
         # Add tabs to the tab widget
         self.tab_widget.addTab(self.tab0, "配置项")
         self.tab_widget.addTab(self.tab1, "查找&确认餐厅信息")
-        self.tab_widget.addTab(self.tab2, "配置规则")
+        self.tab_widget.addTab(self.tab2, "配置车辆信息")
         self.tab_widget.addTab(self.tab3, "生成&审核")
 
         # Set layouts for each tab
@@ -39,6 +39,8 @@ class MainWindow(QMainWindow):
         self.tab0.layout.addWidget(self.tab0_content)
         self.tab1_content = Tab1()
         self.tab1.layout.addWidget(self.tab1_content)
+        self.tab2_content = Tab2()
+        self.tab2.layout.addWidget(self.tab2_content)
 
         self.tab0.setLayout(self.tab0.layout)
         self.tab1.setLayout(self.tab1.layout)
