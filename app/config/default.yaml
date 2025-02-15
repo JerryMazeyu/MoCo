@@ -102,10 +102,15 @@ BUSINESS:
     总收油量: 3000
     吨每桶: 0.18
     比率: 0.91
+
 OTHER:
   Tab1:
     last_dir: r"F:\WorkSpace\Project2025\MoCo\app\config"
-
+    
+SPECIAL:
+  - BUSINESS.CAR.总收油量
+  - BUSINESS.RESTAURANT.收油关系映射
+  - SYSTEM.apikeys
 
 # OTHER:
 #   logging:

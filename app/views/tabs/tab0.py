@@ -3,7 +3,7 @@ from PyQt5.QtGui import QColor, QTextCharFormat, QSyntaxHighlighter
 from PyQt5.QtCore import QRegularExpression
 import yaml
 from app.controllers import flow0_validate_config
-from app.config.config import CONF, default_config
+from app.config.config import get_config
 from app.utils import rp
 import os, shutil
 
@@ -71,11 +71,14 @@ class YAMLHighlighter(QSyntaxHighlighter):
 
 
 class Tab0(QWidget):
-    def __init__(self, config_file=CONF, parent=None):
+    def __init__(self, config_file=None, parent=None):
         super().__init__(parent)
+        config_file = get_config() if config_file is None else config_file
+        self.config_service = config_file
         self.original_config = config_file._config
-        self.current_config = self.original_config.copy()
-
+        self.special_config = config_file._special
+        self.current_config = self.special_config.copy()
+        
         # 初始化布局
         layout = QVBoxLayout()
 
@@ -83,9 +86,12 @@ class Tab0(QWidget):
         title_label = QLabel("编辑 YAML 配置文件")
         layout.addWidget(title_label)
 
+        # Special 配置
+        self.special_yaml = self.config_service.get_special_yaml()
+
         # YAML 编辑器
         self.yaml_editor = QTextEdit()
-        self.yaml_editor.setPlainText(yaml.dump(self.current_config, allow_unicode=True))
+        self.yaml_editor.setPlainText(self.special_yaml)
 
         # 应用 YAML 语法高亮
         self.highlighter = YAMLHighlighter(self.yaml_editor.document())
@@ -106,15 +112,28 @@ class Tab0(QWidget):
         """保存更改到配置文件"""
         try:
             # 获取编辑器中的 YAML 内容并解析为字典
-            updated_config = yaml.safe_load(self.yaml_editor.toPlainText())
+            updated_special = yaml.safe_load(self.yaml_editor.toPlainText())
+            if not isinstance(updated_special, dict):
+                QMessageBox.critical(self, "错误", "编辑器中不是合法的dict结构")
+                return
+            
+            updated_config = self._merge_special_into_config(
+                updated_special,
+                self.original_config.copy()
+            )
+            updated_config['SPECIAL'] = self.config_service.special_list
+
+            # 验证配置项
             flag, e = flow0_validate_config(updated_config)
             if not flag:
                 QMessageBox.critical(self, "错误", f"配置项内容错误：\n{str(e)}")
                 return
+            
             # 更新内存中的配置并保存到文件
-            self.current_config = updated_config
+            self.current_config = updated_special
             with open(rp("config.yaml", folder="config"), "w", encoding="utf-8") as f:
                 yaml.dump(updated_config, f, allow_unicode=True)
+            
             QMessageBox.information(self, "成功", "配置已成功保存")
         except yaml.YAMLError as e:
             QMessageBox.critical(self, "错误", f"YAML 格式错误：\n{str(e)}")
@@ -125,6 +144,20 @@ class Tab0(QWidget):
             os.remove(rp("config.yaml", folder="config"))
         except:
             pass
-        self.current_config = default_config._config.copy()
+        self.current_config = get_config()._special.copy()
         self.yaml_editor.setPlainText(yaml.dump(self.current_config, allow_unicode=True))
         QMessageBox.information(self, "提示", "已恢复默认配置")
+
+    def _merge_special_into_config(self, partial: dict, base: dict) -> dict:
+        """
+        将partial(编辑器修改过的special)合并进base(原完整配置),
+        返回合并后的大字典(你想怎么合并具体看需要).
+        举个递归dict合并的例子:
+        """
+        for k, v in partial.items():
+            if isinstance(v, dict) and k in base and isinstance(base[k], dict):
+                # 递归合并
+                self._merge_special_into_config(v, base[k])
+            else:
+                base[k] = v
+        return base
