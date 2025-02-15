@@ -1,11 +1,12 @@
+import os
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QTextEdit, QPushButton, QMessageBox
 from PyQt5.QtGui import QColor, QTextCharFormat, QSyntaxHighlighter
 from PyQt5.QtCore import QRegularExpression
 import yaml
+from components.singleton import global_context
 from app.controllers import flow0_validate_config
 from app.config.config import get_config
 from app.utils import rp
-import os, shutil
 
 
 class YAMLHighlighter(QSyntaxHighlighter):
@@ -78,6 +79,7 @@ class Tab0(QWidget):
         self.original_config = config_file._config
         self.special_config = config_file._special
         self.current_config = self.special_config.copy()
+        global_context.data["config"] = self.current_config
         
         # 初始化布局
         layout = QVBoxLayout()
@@ -137,6 +139,7 @@ class Tab0(QWidget):
             QMessageBox.information(self, "成功", "配置已成功保存")
         except yaml.YAMLError as e:
             QMessageBox.critical(self, "错误", f"YAML 格式错误：\n{str(e)}")
+        global_context.data["config"] = self.current_config
 
     def reset_to_default(self):
         """恢复默认配置"""
@@ -147,6 +150,7 @@ class Tab0(QWidget):
         self.current_config = get_config()._special.copy()
         self.yaml_editor.setPlainText(yaml.dump(self.current_config, allow_unicode=True))
         QMessageBox.information(self, "提示", "已恢复默认配置")
+        global_context.data["config"] = self.current_config
 
     def _merge_special_into_config(self, partial: dict, base: dict) -> dict:
         """

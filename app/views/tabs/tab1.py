@@ -9,6 +9,7 @@ from components.xlsxviewer import XlsxViewer
 from app.controllers import flow1_load_df, flow1_generate_candidate_street, flow1_generate_restaurant_type
 from app.config import get_config
 from app.utils import rp, setup_logger
+from components.singleton import global_context
 
 class Tab1(QWidget):
     def __init__(self, parent=None):
@@ -41,11 +42,11 @@ class Tab1(QWidget):
         self.import_button = QPushButton("导入餐厅数据")
         self.extract_street_button = QPushButton("获取街道信息")
         self.extract_restaurant_type_button = QPushButton("获取餐厅类型")
-        self.edit_button = QPushButton("配置信息")
-        self.next_button = QPushButton("下一步")
+        # self.edit_button = QPushButton("配置信息")
+        # self.next_button = QPushButton("下一步")
 
         # 强制按钮不要垂直拉伸
-        for btn in (self.import_button, self.extract_street_button, self.extract_restaurant_type_button, self.edit_button, self.next_button):
+        for btn in (self.import_button, self.extract_street_button, self.extract_restaurant_type_button):
             btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             btn.setFixedWidth(120)
         
@@ -54,14 +55,14 @@ class Tab1(QWidget):
         self.import_button.setFixedWidth(button_width)
         self.extract_street_button.setFixedWidth(button_width)
         self.extract_restaurant_type_button.setFixedWidth(button_width)
-        self.edit_button.setFixedWidth(button_width)
-        self.next_button.setFixedWidth(button_width)
+        # self.edit_button.setFixedWidth(button_width)
+        # self.next_button.setFixedWidth(button_width)
         
         self.left_layout.addWidget(self.import_button)
         self.left_layout.addWidget(self.extract_street_button)
         self.left_layout.addWidget(self.extract_restaurant_type_button)
-        self.left_layout.addWidget(self.edit_button)
-        self.left_layout.addWidget(self.next_button)
+        # self.left_layout.addWidget(self.edit_button)
+        # self.left_layout.addWidget(self.next_button)
 
         self.left_layout.addStretch(1)  # 在底部添加弹性空间
         
@@ -126,8 +127,9 @@ class Tab1(QWidget):
             self.last_dir = os.path.dirname(file_path)
             self.save_last_directory(self.last_dir)
             try:
-                df = flow1_load_df(file_path)
+                df, restaurants = flow1_load_df(file_path)
                 self.xlsx_viewer.load_data(df)
+                global_context.data["restaurants"] = restaurants
 
                 # 将 XlsxViewer 添加到右侧布局
                 self.right_layout.removeWidget(self.table_placeholder)
@@ -143,7 +145,8 @@ class Tab1(QWidget):
         """提取街道信息"""
         try:
             self.update_message("正在提取街道信息...")
-            df_with_street = flow1_generate_candidate_street(self.xlsx_viewer.file_path)
+            df_with_street, restaurants_with_street = flow1_generate_candidate_street(self.xlsx_viewer.file_path)
+            global_context.data["restaurants"] = restaurants_with_street
             self.xlsx_viewer.refresh_data(df=df_with_street)
             self.update_message("街道信息提取成功")
         except Exception as e:
@@ -154,7 +157,8 @@ class Tab1(QWidget):
         """提取餐厅类型"""
         try:
             self.update_message("正在提取餐厅类型...")
-            df_with_type = flow1_generate_restaurant_type(self.xlsx_viewer.file_path)
+            df_with_type, restaurant_with_rest_type = flow1_generate_restaurant_type(self.xlsx_viewer.file_path)
+            global_context.data["restaurants"] = restaurant_with_rest_type
             self.xlsx_viewer.refresh_data(df=df_with_type)
             self.update_message("餐厅类型提取成功")
         except Exception as e:
@@ -166,58 +170,5 @@ class Tab1(QWidget):
         self.conf.OTHER.Tab1.last_dir = path
         self.conf.save()
 
-
-class ConfigDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("编辑配置信息")
-        self.setFixedSize(400, 300)
-
-        # 主布局
-        layout = QVBoxLayout()
-
-        # 配置信息输入区域
-        self.restaurant_address = QLineEdit()
-        self.api_key = QLineEdit()
-        self.factory_location = QLineEdit()
-
-        # 配置标签和输入框
-        layout.addWidget(QLabel("餐厅地址:"))
-        layout.addWidget(self.restaurant_address)
-
-        layout.addWidget(QLabel("API Key:"))
-        layout.addWidget(self.api_key)
-
-        layout.addWidget(QLabel("工厂位置:"))
-        layout.addWidget(self.factory_location)
-
-        # 按钮布局
-        button_layout = QHBoxLayout()
-        self.confirm_button = QPushButton("确认")
-        self.cancel_button = QPushButton("取消")
-        button_layout.addWidget(self.confirm_button)
-        button_layout.addWidget(self.cancel_button)
-
-        # 将按钮布局添加到主布局
-        layout.addLayout(button_layout)
-        self.setLayout(layout)
-
-        # 按钮信号绑定
-        self.confirm_button.clicked.connect(self.accept)  # 确认按钮绑定 accept 方法
-        self.cancel_button.clicked.connect(self.reject)  # 取消按钮绑定 reject 方法
-
-    def get_config(self):
-        """获取用户输入的配置信息"""
-        return {
-            "restaurant_address": self.restaurant_address.text(),
-            "api_key": self.api_key.text(),
-            "factory_location": self.factory_location.text()
-        }
-
-    def set_config(self, config):
-        """设置初始配置信息"""
-        self.restaurant_address.setText(config.get("restaurant_address", ""))
-        self.api_key.setText(config.get("api_key", ""))
-        self.factory_location.setText(config.get("factory_location", ""))
 
         

@@ -1,28 +1,37 @@
-import sys
+import os
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QAbstractItemView,
-    QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox
+    QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox, QHeaderView
+
 )
 from pydantic import ValidationError
 from PyQt5.QtCore import Qt
-from PyQt5.QtCore import Qt
 from app.controllers import flow2
 from app.models.vehicle_model import Vehicle
+from app.utils import rp
+from app.config import get_config
+from components.singleton import global_context
         
 class Tab2(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("车辆库管理（多选示例 - 使用flow2）")
-        flow2.flow2_init_service()
+        self.conf = get_config()
+        try:
+            self.last_dir = self.conf.OTHER.Tab2.last_dir
+        except:
+            self.last_dir = rp("")
+
+        flow2.flow2_init_service(rp('vehicle_example.xlsx'))
         # 1. 主布局
         main_layout = QVBoxLayout(self)
 
         # 2. 车辆列表（QTableWidget）
         self.table = QTableWidget()
-        self.table.setColumnCount(6)  # license_plate, driver_name, district, max_barrels, allocated_barrels, other_info
-        self.table.setHorizontalHeaderLabels(["车牌号", "司机姓名", "所属区域", "最大收油桶数", "已分配油桶数", "其他信息"])
+        self.table.setColumnCount(7)  # license_plate, driver_name, district, max_barrels, allocated_barrels, other_info
+        self.table.setHorizontalHeaderLabels(["选择", "车牌号", "司机", "车辆类型", "所属区域", "最大收油桶数", "其他信息"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
 
         # 多选设置
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -42,20 +51,20 @@ class Tab2(QWidget):
         self.driver_name_edit.setPlaceholderText("司机姓名")
         form_layout.addWidget(self.driver_name_edit)
 
+        self.vtype_edit = QLineEdit()
+        self.vtype_edit.setPlaceholderText("车辆类型")
+        form_layout.addWidget(self.vtype_edit)
+
         self.district_edit = QLineEdit()
-        self.district_edit.setPlaceholderText("所属区域")
+        self.district_edit.setPlaceholderText("所属区域(可选)")
         form_layout.addWidget(self.district_edit)
 
         self.max_barrels_edit = QLineEdit()
-        self.max_barrels_edit.setPlaceholderText("最大收油桶数")
+        self.max_barrels_edit.setPlaceholderText("所属区域(可选)")
         form_layout.addWidget(self.max_barrels_edit)
 
-        self.allocated_barrels_edit = QLineEdit()
-        self.allocated_barrels_edit.setPlaceholderText("已分配油桶数")
-        form_layout.addWidget(self.allocated_barrels_edit)
-
         self.other_info_edit = QLineEdit()
-        self.other_info_edit.setPlaceholderText("其他信息")
+        self.other_info_edit.setPlaceholderText("其他信息(可选)")
         form_layout.addWidget(self.other_info_edit)
 
         # 4. 按钮区域
@@ -74,9 +83,9 @@ class Tab2(QWidget):
         self.delete_btn.clicked.connect(self.delete_selected_vehicles)
         button_layout.addWidget(self.delete_btn)
 
-        self.edit_btn = QPushButton("编辑选中车辆(仅限单选)")
-        self.edit_btn.clicked.connect(self.edit_vehicle)
-        button_layout.addWidget(self.edit_btn)
+        # self.edit_btn = QPushButton("编辑选中车辆(仅限单选)")
+        # self.edit_btn.clicked.connect(self.edit_vehicle)
+        # button_layout.addWidget(self.edit_btn)
 
         self.next_btn = QPushButton("下一步")
         self.next_btn.clicked.connect(self.on_next_step)
@@ -88,22 +97,29 @@ class Tab2(QWidget):
     def refresh_table(self):
         """刷新表格数据显示"""
         vehicles = flow2.flow2_get_vehicles()
+        global_context.data['vehicles'] = vehicles
         self.table.setRowCount(len(vehicles))
 
         for row, v in enumerate(vehicles):
-            self.table.setItem(row, 0, QTableWidgetItem(v.license_plate))
-            self.table.setItem(row, 1, QTableWidgetItem(v.driver_name))
-            self.table.setItem(row, 2, QTableWidgetItem(v.district))
-            self.table.setItem(row, 3, QTableWidgetItem(str(v.max_barrels)))
-            self.table.setItem(row, 4, QTableWidgetItem(str(v.allocated_barrels)))
-            self.table.setItem(row, 5, QTableWidgetItem(str(v.other_info) if v.other_info else ""))
+            checkbox_item = QTableWidgetItem()
+            # 只要支持用户勾选、无需编辑其他文字
+            checkbox_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            checkbox_item.setCheckState(Qt.Unchecked)
+            self.table.setItem(row, 0, checkbox_item)
+
+            self.table.setItem(row, 1, QTableWidgetItem(v.license_plate))
+            self.table.setItem(row, 2, QTableWidgetItem(v.driver_name))
+            self.table.setItem(row, 3, QTableWidgetItem(v.vtype))
+            self.table.setItem(row, 4, QTableWidgetItem(v.district))
+            self.table.setItem(row, 5, QTableWidgetItem(str(v.max_barrels)))
+            self.table.setItem(row, 6, QTableWidgetItem(str(v.other_info) if v.other_info else ""))
 
     def clear_input_fields(self):
         self.plate_number_edit.clear()
         self.driver_name_edit.clear()
+        self.vtype_edit.clear()
         self.district_edit.clear()
         self.max_barrels_edit.clear()
-        self.allocated_barrels_edit.clear()
         self.other_info_edit.clear()
 
     def add_vehicle(self):
@@ -114,26 +130,21 @@ class Tab2(QWidget):
             return
 
         driver_name = self.driver_name_edit.text().strip()
+        vtype = self.vtype_edit.text().strip()
         district = self.district_edit.text().strip()
         max_barrels_str = self.max_barrels_edit.text().strip()
-        allocated_barrels_str = self.allocated_barrels_edit.text().strip()
+        # allocated_barrels_str = self.allocated_barrels_edit.text().strip()
         other_info = self.other_info_edit.text().strip()
-
-        try:
-            max_barrels = int(max_barrels_str) if max_barrels_str else 0
-            allocated_barrels = int(allocated_barrels_str) if allocated_barrels_str else 0
-        except ValueError:
-            QMessageBox.warning(self, "警告", "最大/已分配油桶数应为整数！")
-            return
 
         try:
             vehicle = Vehicle(
                 license_plate=plate_number,
                 driver_name=driver_name,
+                vtype=vtype,
                 district=district,
-                max_barrels=max_barrels,
-                allocated_barrels=allocated_barrels,
-                other_info=other_info if other_info else None
+                max_barrels=max_barrels_str if max_barrels_str else 0,
+                allocated_barrels=0,
+                other_info=other_info if other_info else ''
             )
             flow2.flow2_add_vehicle(vehicle)
         except ValidationError as ve:
@@ -148,34 +159,49 @@ class Tab2(QWidget):
 
     def import_vehicles(self):
         """从外部Excel导入车辆"""
-        file_path, _ = QFileDialog.getOpenFileName(self, "选择Excel文件", "", "Excel Files (*.xlsx *.xls)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "选择Excel文件", self.last_dir, "Excel Files (*.xlsx *.xls)")
         if file_path:
             try:
+                self.last_dir = os.path.dirname(file_path)
                 flow2.flow2_import_from_excel(file_path)
                 QMessageBox.information(self, "提示", "导入成功！")
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"导入失败：{str(e)}")
             self.refresh_table()
+        self.save_last_directory(self.last_dir)
+
+    def save_last_directory(self, path):
+        """保存 last_dir 到配置文件"""
+        self.conf.OTHER.Tab2.last_dir = path
+        self.conf.save()
 
     def delete_selected_vehicles(self):
-        """批量删除选中的车辆"""
-        selected_rows = self.table.selectionModel().selectedRows()
-        if not selected_rows:
-            QMessageBox.warning(self, "警告", "请先选中要删除的车辆！")
+        """
+        批量删除选中的车辆。
+        这里通过检查【选择】列(0列)的复选框是否勾选来决定是否删除。
+        """
+        row_count = self.table.rowCount()
+        plates_to_delete = []
+
+        for row in range(row_count):
+            item_check = self.table.item(row, 0)  # 第0列是复选框
+            if item_check and item_check.checkState() == Qt.Checked:
+                # 获取车牌（第1列）
+                plate_item = self.table.item(row, 1)
+                if plate_item:
+                    plates_to_delete.append(plate_item.text())
+        
+        if not plates_to_delete:
+            QMessageBox.warning(self, "警告", "未选中任何车辆！")
             return
 
-        ret = QMessageBox.question(self, "确认删除",
-                                   f"确认删除选中的 {len(selected_rows)} 条车辆信息吗？",
-                                   QMessageBox.Yes | QMessageBox.No)
+        ret = QMessageBox.question(
+            self, "确认删除",
+            f"确认删除选中的 {len(plates_to_delete)} 条车辆信息吗？",
+            QMessageBox.Yes | QMessageBox.No
+        )
         if ret != QMessageBox.Yes:
             return
-
-        plates_to_delete = []
-        for index in selected_rows:
-            row = index.row()
-            plate_item = self.table.item(row, 0)
-            if plate_item:
-                plates_to_delete.append(plate_item.text())
 
         for plate in plates_to_delete:
             try:
@@ -184,6 +210,31 @@ class Tab2(QWidget):
                 print(f"删除 {plate} 时异常: {e}")
 
         self.refresh_table()
+        # selected_rows = self.table.selectionModel().selectedRows()
+        # if not selected_rows:
+        #     QMessageBox.warning(self, "警告", "请先选中要删除的车辆！")
+        #     return
+
+        # ret = QMessageBox.question(self, "确认删除",
+        #                            f"确认删除选中的 {len(selected_rows)} 条车辆信息吗？",
+        #                            QMessageBox.Yes | QMessageBox.No)
+        # if ret != QMessageBox.Yes:
+        #     return
+
+        # plates_to_delete = []
+        # for index in selected_rows:
+        #     row = index.row()
+        #     plate_item = self.table.item(row, 0)
+        #     if plate_item:
+        #         plates_to_delete.append(plate_item.text())
+
+        # for plate in plates_to_delete:
+        #     try:
+        #         flow2.flow2_remove_vehicle(plate)
+        #     except Exception as e:
+        #         print(f"删除 {plate} 时异常: {e}")
+
+        # self.refresh_table()
 
     def edit_vehicle(self):
         """
@@ -208,25 +259,25 @@ class Tab2(QWidget):
             return
 
         driver_name = self.driver_name_edit.text().strip()
-        district = self.district_edit.text().strip()
-        max_barrels_str = self.max_barrels_edit.text().strip()
-        allocated_barrels_str = self.allocated_barrels_edit.text().strip()
+        vtype = self.vtype_edit.text().strip()
+        # max_barrels_str = self.max_barrels_edit.text().strip()
+        # allocated_barrels_str = self.allocated_barrels_edit.text().strip()
         other_info = self.other_info_edit.text().strip()
 
-        try:
-            max_barrels = int(max_barrels_str) if max_barrels_str else 0
-            allocated_barrels = int(allocated_barrels_str) if allocated_barrels_str else 0
-        except ValueError:
-            QMessageBox.warning(self, "警告", "最大/已分配油桶数应为整数！")
-            return
+        # try:
+        #     max_barrels = int(max_barrels_str) if max_barrels_str else 0
+        #     allocated_barrels = int(allocated_barrels_str) if allocated_barrels_str else 0
+        # except ValueError:
+        #     QMessageBox.warning(self, "警告", "最大/已分配油桶数应为整数！")
+        #     return
 
         try:
             new_vehicle = Vehicle(
                 license_plate=new_plate_number,
                 driver_name=driver_name,
                 district=district,
-                max_barrels=max_barrels,
-                allocated_barrels=allocated_barrels,
+                max_barrels=0,
+                allocated_barrels=0,
                 other_info=other_info if other_info else None
             )
             flow2.flow2_update_vehicle(old_plate_number, new_vehicle)
@@ -242,20 +293,22 @@ class Tab2(QWidget):
 
     def on_next_step(self):
         """示例：点击“下一步”时，获取已选车辆。"""
-        selected_rows = self.table.selectionModel().selectedRows()
-        if not selected_rows:
-            QMessageBox.information(self, "提示", "你尚未选择车辆，无法进行下一步。")
-            return
+        row_count = self.table.rowCount()
+        selected = []
 
-        selected_plates = []
-        for index in selected_rows:
-            row = index.row()
-            plate_item = self.table.item(row, 0)
-            if plate_item:
-                selected_plates.append(plate_item.text())
+        for row in range(row_count):
+            item_check = self.table.item(row, 0)  # 第0列是复选框
+            if item_check and item_check.checkState() == Qt.Checked:
+                # 获取车牌（第1列）
+                plate_item = self.table.item(row, 1)
+                if plate_item:
+                    selected.append(plate_item.text())
+        
+        if not selected:
+            QMessageBox.warning(self, "警告", "未选中任何车辆！")
+            return
 
         QMessageBox.information(
             self, "下一步",
-            f"你已选择以下车辆车牌 (共{len(selected_plates)}条)：\n" + "\n".join(selected_plates)
+            f"你已选择以下车辆车牌 (共{len(selected)}条)：\n" + "\n".join(selected)
         )
-        # TODO: 这里可以把选中的车辆信息带到下一个流程

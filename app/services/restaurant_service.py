@@ -124,17 +124,20 @@ class RestaurantService:
     
     def extract_street_base_batch(self) -> pd.DataFrame:
         """批量生成街道候选列表"""
+        tmp = []
         for restaurant in self.restaurants:
             try:
                 candidate_street = self.extract_street_base(restaurant.city, restaurant.district, restaurant.chinese_address)
                 setattr(restaurant, "street", candidate_street)
+                tmp.append(restaurant)
             except Exception as e:
                 self.logger.error(f"生成街道候选列表时出错: {str(e)}")
+        self.restaurants = tmp
         data = [restaurant.model_dump_with_mapping() for restaurant in self.restaurants]
         self.restaurants_df = pd.DataFrame(data)
-        self.restaurants = self.load_from_df(self.restaurants_df)
-        self.logger.info(f"街道候选列表生成成功。")
-        return self.restaurants_df
+        # self.restaurants = self.load_from_df(self.restaurants_df)
+        self.logger.info(f"*街道候选列表生成成功。")
+        return self.restaurants_df, self.restaurants
 
 
     def extract_street_base(self, city: str, district: str, address: str) -> Optional[str]:
@@ -212,17 +215,20 @@ class RestaurantService:
 
     def extract_restaurant_type_batch(self) -> pd.DataFrame:
         """批量生成餐厅类型"""
+        tmp = []
         for restaurant in self.restaurants:
             try:
                 restaurant_type = self.assign_restaurant_type_base(restaurant.chinese_name, restaurant.chinese_address)
                 setattr(restaurant, "restaurant_type", restaurant_type)
+                tmp.append(restaurant)
             except Exception as e:
                 self.logger.error(f"生成餐厅类型时出错: {str(e)}")
+        self.restaurants = tmp
         data = [restaurant.model_dump_with_mapping() for restaurant in self.restaurants]
         self.restaurants_df = pd.DataFrame(data)
         self.restaurants = self.load_from_df(self.restaurants_df)
-        self.logger.info(f"餐厅类型生成成功。")
-        return self.restaurants_df
+        self.logger.info(f"*餐厅类型生成成功。")
+        return self.restaurants_df, self.restaurants
 
 
 if __name__ == "__main__":

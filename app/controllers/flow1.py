@@ -6,6 +6,7 @@ from app.utils.logger import setup_logger
 import pandas as pd
 
 
+restaurant_service = RestaurantService()
 # def load_restaurant_data_from_excel(file_path: str) -> list[dict]:
 #     """
 #     从 Excel 文件中加载餐厅数据
@@ -35,7 +36,9 @@ def flow1_load_df(file_path: str) -> pd.DataFrame:
     # 从 Excel 文件中加载餐厅数据
     try:
         df = RestaurantService.load_df(file_path)
-        return df
+        global restaurant_service
+        restaurant_service.load(file_path)
+        return df, restaurant_service.restaurants
     except Exception as e:
         logger.error(f"加载餐厅数据时出错: {str(e)}")
 
@@ -47,12 +50,13 @@ def flow1_generate_candidate_street(file_path: str) -> pd.DataFrame:
     """
     logger = setup_logger("moco.log")
     logger.info(f"正在生成候选街道。")
-    restaurant_service = RestaurantService()
-    restaurant_service.load(file_path)
+    global restaurant_service
+    # restaurant_service = RestaurantService()
+    # restaurant_service.load(file_path)
     # 从 DataFrame 中生成街道候选列表
     try:
-        df_with_street = restaurant_service.extract_street_base_batch()
-        return df_with_street
+        df_with_street, restaurants_with_street = restaurant_service.extract_street_base_batch()
+        return df_with_street, restaurants_with_street
     except Exception as e:
         logger.error(f"生成街道候选列表时出错: {str(e)}")
 
@@ -64,31 +68,32 @@ def flow1_generate_restaurant_type(file_path: str) -> pd.DataFrame:
     """
     logger = setup_logger("moco.log")
     logger.info(f"正在生成餐厅类型。")
-    restaurant_service = RestaurantService()
-    restaurant_service.load(file_path)
+    global restaurant_service
+    # restaurant_service = RestaurantService()
+    # restaurant_service.load(file_path)
     # 从 DataFrame 中生成餐厅类型
     try:
-        df_with_rest_type = restaurant_service.extract_restaurant_type_batch()
-        return df_with_rest_type
+        df_with_rest_type, restaurant_with_rest_type = restaurant_service.extract_restaurant_type_batch()
+        return df_with_rest_type, restaurant_with_rest_type
     except Exception as e:
         logger.error(f"生成餐厅类型时出错: {str(e)}")
 
 
-def flow1_load_from_df(df: pd.DataFrame) -> list[dict]:
-    """
-    从 DataFrame 中加载餐厅数据并返回餐厅数据列表
-    :param df: DataFrame
-    :return: 餐厅数据列表
-    """
-    logger = setup_logger("moco.log")
-    logger.info(f"正在从 DataFrame 中加载餐厅数据。")
+# def flow1_load_from_df(df: pd.DataFrame) -> list[dict]:
+#     """
+#     从 DataFrame 中加载餐厅数据并返回餐厅数据列表
+#     :param df: DataFrame
+#     :return: 餐厅数据列表
+#     """
+#     logger = setup_logger("moco.log")
+#     logger.info(f"正在从 DataFrame 中加载餐厅数据。")
 
-    # 从 DataFrame 中加载餐厅数据
-    try:
-        restaurants = RestaurantService.load_from_df(df)
-        return restaurants
-    except Exception as e:
-        logger.error(f"加载餐厅数据时出错: {str(e)}")
+#     # 从 DataFrame 中加载餐厅数据
+#     try:
+#         restaurants = RestaurantService.load_from_df(df)
+#         return restaurants
+#     except Exception as e:
+#         logger.error(f"加载餐厅数据时出错: {str(e)}")
     
 
 # def process_restaurant_data(restaurant_data: dict, config) -> Restaurant:

@@ -20,7 +20,7 @@ BUSINESS:
       distance_km: "Distance (km)"
       distance_mile: "Distance (mile)"
     街道图:
-      惠州市:
+      Huizhou:
         博罗县: 
           - "园洲镇"
           - "湖镇镇"
@@ -105,7 +105,9 @@ BUSINESS:
 
 OTHER:
   Tab1:
-    last_dir: r"F:\WorkSpace\Project2025\MoCo\app\config"
+    last_dir: 'F:\WorkSpace\Project2025\MoCo\app\config'
+  Tab2:
+    last_dir: 'C:\Users\Jerry\Desktop\文件\视频的数据'
     
 SPECIAL:
   - BUSINESS.CAR.总收油量

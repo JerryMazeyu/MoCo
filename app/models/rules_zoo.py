@@ -13,8 +13,13 @@ class BaseRule(ABC):
         :param context: DistributionContext instance containing restaurants, vehicles, and assignments.
         """
         pass
-    
 
+    @abstractmethod
+    def desc(self) -> str:
+        """
+        Return a description of the rule.
+        """
+        pass
 
 class RegionMatchingRule(BaseRule):
     """

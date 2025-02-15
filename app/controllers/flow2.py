@@ -3,12 +3,12 @@ from app.models.vehicle_model import Vehicle
 
 vehicle_service = None
 
-def flow2_init_service(config_file: str = "config/vehicle.xlsx"):
+def flow2_init_service(file_path: str):
     """
     初始化 / 重置车辆服务 (可在程序启动时或重新加载时调用)
     """
     global vehicle_service
-    vehicle_service = VehicleService(config_file)
+    vehicle_service = VehicleService(file_path=file_path)
 
 def flow2_get_vehicles():
     """
@@ -23,7 +23,7 @@ def flow2_add_vehicle(vehicle: Vehicle):
     """
     global vehicle_service
     vehicle_service.add_vehicle(vehicle)
-    vehicle_service.save_to_local()
+    vehicle_service.save_to_excel()
 
 def flow2_remove_vehicle(license_plate: str):
     """
@@ -31,7 +31,7 @@ def flow2_remove_vehicle(license_plate: str):
     """
     global vehicle_service
     vehicle_service.remove_vehicle(license_plate)
-    vehicle_service.save_to_local()
+    vehicle_service.save_to_excel()
 
 def flow2_update_vehicle(old_license_plate: str, new_vehicle: Vehicle):
     """
@@ -39,11 +39,11 @@ def flow2_update_vehicle(old_license_plate: str, new_vehicle: Vehicle):
     """
     global vehicle_service
     vehicle_service.update_vehicle(old_license_plate, new_vehicle)
-    vehicle_service.save_to_local()
+    vehicle_service.save_to_excel()
 
 def flow2_import_from_excel(file_path: str):
     """
     从给定的Excel文件中批量导入车辆
     """
     global vehicle_service
-    vehicle_service.import_from_excel(file_path)
+    vehicle_service.load_from_excel(file_path=file_path)

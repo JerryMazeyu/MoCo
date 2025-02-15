@@ -9,7 +9,7 @@ class ConfigService:
             self._config_path = config_path
         
         self._special = {}
-        self.special_list = self._config.pop("SPECIAL", [])
+        self.special_list = self._config.get("SPECIAL", [])
         if not isinstance(self.special_list, list):
             self.special_list = []
             
@@ -58,6 +58,7 @@ class ConfigService:
         """
         if not config_path:
             config_path = self._config_path
+        
         with open(config_path, "w", encoding="utf-8") as file:
             yaml.dump(self._config, file, allow_unicode=True)
     
@@ -136,6 +137,18 @@ class ConfigWrapper:
                 return ConfigWrapper(value)
             return value
         raise AttributeError(f"配置项 {item} 不存在")
+    
+    def __setattr__(self, key, value):
+        if key == "_config_dict":
+            super().__setattr__(key, value)
+        else:
+            self._config_dict[key] = value
+
+    def __delattr__(self, key):
+        if key in self._config_dict:
+            del self._config_dict[key]
+        else:
+            raise AttributeError(f"配置项 {key} 不存在")
 
 default_config = ConfigService()
 

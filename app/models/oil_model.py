@@ -30,43 +30,43 @@ class OilCollectionSheet(BaseModel):
     records: List[CollectionRecord] = Field(..., description="包含的所有序号记录")
 
 
-# 示例数据
-oil_entry_1 = OilEntry(
-    chinese_name="海底捞",
-    english_name="Haidilao",
-    chinese_address="北京市海淀区知春路",
-    english_address="Beijing Zhichun Road",
-    barrel_count=10,
-    district="海淀区",
-    restaurant_manager="张三",
-    contact_phone="1234567890",
-    distance=15.3
-)
+# # 示例数据
+# oil_entry_1 = OilEntry(
+#     chinese_name="海底捞",
+#     english_name="Haidilao",
+#     chinese_address="北京市海淀区知春路",
+#     english_address="Beijing Zhichun Road",
+#     barrel_count=10,
+#     district="海淀区",
+#     restaurant_manager="张三",
+#     contact_phone="1234567890",
+#     distance=15.3
+# )
 
-oil_entry_2 = OilEntry(
-    chinese_name="肯德基",
-    english_name="KFC",
-    chinese_address="北京市朝阳区光华路",
-    english_address="Beijing Guanghua Road",
-    barrel_count=8,
-    district="朝阳区",
-    restaurant_manager="李四",
-    contact_phone="0987654321",
-    distance=12.5
-)
+# oil_entry_2 = OilEntry(
+#     chinese_name="肯德基",
+#     english_name="KFC",
+#     chinese_address="北京市朝阳区光华路",
+#     english_address="Beijing Guanghua Road",
+#     barrel_count=8,
+#     district="朝阳区",
+#     restaurant_manager="李四",
+#     contact_phone="0987654321",
+#     distance=12.5
+# )
 
-collection_record = CollectionRecord(
-    serial_no=1,
-    collection_time=datetime.now(),
-    transaction_id="TRX20250129",
-    license_plate="京A12345",
-    sales_contract_no="SC20250129",
-    oil_entries=[oil_entry_1, oil_entry_2]
-)
+# collection_record = CollectionRecord(
+#     serial_no=1,
+#     collection_time=datetime.now(),
+#     transaction_id="TRX20250129",
+#     license_plate="京A12345",
+#     sales_contract_no="SC20250129",
+#     oil_entries=[oil_entry_1, oil_entry_2]
+# )
 
-oil_collection_sheet = OilCollectionSheet(
-    title="2025年1月收油表",
-    records=[collection_record]
-)
+# oil_collection_sheet = OilCollectionSheet(
+#     title="2025年1月收油表",
+#     records=[collection_record]
+# )
 
-print(oil_collection_sheet.json(indent=2, ensure_ascii=False))
+# print(oil_collection_sheet.json(indent=2, ensure_ascii=False))

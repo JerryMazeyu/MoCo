@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+!app/assets/vehicle_example.xlsx
