@@ -113,7 +113,7 @@ SYSTEM:
   apikeys:
   - '12345678'
   - '87654321'
-  baidu_key: "bDIXrHBLFe7s9ojCVtZjxxLlEhrZNbWg"
-  gaode_key: "4bd94b7b4fed38f78e13d1055dd0f7ce"
-  serp_key: "8fee04febd8ef9f2ef5e3732b9a81519e8e97fea28687e8f7aaf5a43c0a1cd50"
+  baidu_key: 
+  gaode_key:
+  serp_key: 
   tripadvisor_key: ""
