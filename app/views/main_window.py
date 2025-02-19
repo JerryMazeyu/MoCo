@@ -1,5 +1,6 @@
-import sys
-from tabs import Tab0, Tab1, Tab2
+import sys,os 
+sys.path.append('d:/git/Git/program/MOCO/MoCo_20250217/MoCo')
+from tabs import Tab0, Tab1, Tab2, Tab5
 from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout
 
 class MainWindow(QMainWindow):
@@ -20,18 +21,21 @@ class MainWindow(QMainWindow):
         self.tab1 = QWidget()
         self.tab2 = QWidget()
         self.tab3 = QWidget()
+        self.tab5 = QWidget()
 
         # Add tabs to the tab widget
         self.tab_widget.addTab(self.tab0, "配置项")
         self.tab_widget.addTab(self.tab1, "查找&确认餐厅信息")
         self.tab_widget.addTab(self.tab2, "配置车辆信息")
         self.tab_widget.addTab(self.tab3, "生成&审核")
+        self.tab_widget.addTab(self.tab5, "城市餐厅信息爬取")
 
         # Set layouts for each tab
         self.tab0.layout = QVBoxLayout()
         self.tab1.layout = QVBoxLayout()
         self.tab2.layout = QVBoxLayout()
         self.tab3.layout = QVBoxLayout()
+        self.tab5.layout = QVBoxLayout()
 
 
         # Add TabContent to tab
@@ -41,11 +45,14 @@ class MainWindow(QMainWindow):
         self.tab1.layout.addWidget(self.tab1_content)
         self.tab2_content = Tab2()
         self.tab2.layout.addWidget(self.tab2_content)
+        self.tab5_content = Tab5()
+        self.tab5.layout.addWidget(self.tab5_content)
 
         self.tab0.setLayout(self.tab0.layout)
         self.tab1.setLayout(self.tab1.layout)
         self.tab2.setLayout(self.tab2.layout)
         self.tab3.setLayout(self.tab3.layout)
+        self.tab5.setLayout(self.tab5.layout)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

@@ -102,6 +102,9 @@ OTHER:
     last_dir: F:/WorkSpace/Project2025/MoCo/app/assets
   Tab2:
     last_dir: F:/WorkSpace/Project2025/MoCo/app/assets
+  Tab5:
+    关键字:
+      酒楼/酒家
 SPECIAL:
 - BUSINESS.CAR.总收油量
 - BUSINESS.RESTAURANT.收油关系映射
@@ -110,3 +113,7 @@ SYSTEM:
   apikeys:
   - '12345678'
   - '87654321'
+  baidu_key: "bDIXrHBLFe7s9ojCVtZjxxLlEhrZNbWg"
+  gaode_key: "4bd94b7b4fed38f78e13d1055dd0f7ce"
+  serp_key: "8fee04febd8ef9f2ef5e3732b9a81519e8e97fea28687e8f7aaf5a43c0a1cd50"
+  tripadvisor_key: ""
