@@ -145,7 +145,7 @@ class RuleService:
     生成平衡表-五月表步骤
     """
 
-    def process_dataframe(self,df: pd.DataFrame, n: int) -> pd.DataFrame:
+    def process_balance_dataframe(self,df: pd.DataFrame, n: int) -> pd.DataFrame:
         """
         根据给定的步骤处理输入的DataFrame。
         
@@ -201,54 +201,172 @@ class RuleService:
     新增1列产出重量，值为round(加工量*转化系数/100,2);
     新增1列售出数量，值为0
     """
-def process_dataframe_with_new_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    
-    :param df: 输入的DataFrame，至少包含'日期', '车牌号', '榜单净重', '榜单编号', '收集城市'字段
-    :return: 处理后的DataFrame
-    """
-    # 步骤1：新建一个dataframe,从dataframe复制日期、车牌号、榜单净重、榜单编号、收集城市
-    new_df = df[['日期', '车牌号', '榜单净重', '榜单编号', '收集城市']].copy()
-    
-    # 初始化新增的列
-    new_df['加工量'] = 0.0
-    new_df['毛油库存'] = 0.0
-    new_df['辅助列'] = None
-    new_df['转化系数'] = [np.random.randint(900, 931) for _ in range(len(new_df))]
-    new_df['产出重量'] = round(new_df['加工量'] * new_df['转化系数'] / 100, 2)
-    new_df['售出数量'] = 0
-    new_df['期末库存'] = 0.0
-    
-    # 步骤2：计算加工量和毛油库存
-    for date in new_df['日期'].unique():
-        mask = new_df['日期'] == date
-        if mask.sum() > 0:  # 确保有数据
-            total_weight = new_df.loc[mask, '榜单净重'].sum()
-            last_index = new_df[mask].index[-1]
-            new_df.at[last_index, '加工量'] = total_weight
-            
-            # 更新毛油库存
-            running_total = 0.0
-            for idx in new_df[mask].index:
-                current_weight = new_df.at[idx, '榜单净重']
-                previous_inventory = running_total if idx != new_df[mask].index[0] else 0
-                processing_amount = new_df.at[idx, '加工量']
-                new_df.at[idx, '毛油库存'] = current_weight + previous_inventory - processing_amount
-                running_total = new_df.at[idx, '毛油库存']
+    def process_dataframe_with_new_columns(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        
+        :param df: 输入的DataFrame，至少包含'日期', '车牌号', '榜单净重', '榜单编号', '收集城市'字段
+        :return: 处理后的DataFrame
+        """
+        # 步骤1：新建一个dataframe,从dataframe复制日期、车牌号、榜单净重、榜单编号、收集城市
+        new_df = df[['日期', '车牌号', '榜单净重', '榜单编号', '收集城市']].copy()
+        
+        # 初始化新增的列
+        new_df['加工量'] = 0.0
+        new_df['毛油库存'] = 0.0
+        new_df['辅助列'] = None
+        new_df['转化系数'] = [np.random.randint(900, 931) for _ in range(len(new_df))]
+        new_df['产出重量'] = round(new_df['加工量'] * new_df['转化系数'] / 100, 2)
+        new_df['售出数量'] = 0
+        new_df['期末库存'] = 0.0
+        
+        # 步骤2：计算加工量和毛油库存
+        for date in new_df['日期'].unique():
+            mask = new_df['日期'] == date
+            if mask.sum() > 0:  # 确保有数据
+                total_weight = new_df.loc[mask, '榜单净重'].sum()
+                last_index = new_df[mask].index[-1]
+                new_df.at[last_index, '加工量'] = total_weight
                 
-    # 计算产出重量
-    new_df['产出重量'] = round(new_df['加工量'] * new_df['转化系数'] / 100, 2)
+                # 更新毛油库存
+                running_total = 0.0
+                for idx in new_df[mask].index:
+                    current_weight = new_df.at[idx, '榜单净重']
+                    previous_inventory = running_total if idx != new_df[mask].index[0] else 0
+                    processing_amount = new_df.at[idx, '加工量']
+                    new_df.at[idx, '毛油库存'] = current_weight + previous_inventory - processing_amount
+                    running_total = new_df.at[idx, '毛油库存']
+                    
+        # 计算产出重量
+        new_df['产出重量'] = round(new_df['加工量'] * new_df['转化系数'] / 100, 2)
+        
+        # 计算辅助列
+        new_df['辅助列'] = new_df['日期'].ne(new_df['日期'].shift(-1)).astype(int)
+        new_df['辅助列'] = new_df['辅助列'].replace({1: 1, 0: None})
+        
+        # 计算期末库存
+        previous_end_stock = 0.0 #第一行的期末库存前一行默认0
+        for index, row in new_df.iterrows():
+            current_output = row['产出重量']
+            current_sale = row['售出数量']
+            new_df.at[index, '期末库存'] = current_output + previous_end_stock - current_sale
+            previous_end_stock = new_df.at[index, '期末库存']
+        
+        return new_df
+    """
+    收货确认书
+    """
+    def generate_df_check(df_oil: pd.DataFrame, df_car: pd.DataFrame) -> pd.DataFrame:
+    # 步骤1：新建一个dataframe名为df_check，包含提货日期、名称、车牌号、重量、司机、磅单号、毛重、皮重、净重、卸货重量
+        df_check = pd.DataFrame(columns=['提货日期', '名称', '车牌号', '重量', '司机', '磅单号', '毛重', '皮重', '净重', '卸货重量'])
+        
+        # 步骤2：复制输入的dataframe中的磅单编号作为df_check的磅单号
+        df_check['磅单号'] = df_oil['磅单编号']
+        
+        # 步骤3：df_check的重量列值=RANDBETWEEN(3050,3495)/100，保证所有行的重量和在3000的上下5%范围内，否则的话重新赋值重量列为RANDBETWEEN(3050,3495)/100
+        total_weight_target = 3000
+        tolerance = 0.05
+        while True:
+            df_check['重量'] = [np.random.randint(3050, 3496) / 100 for _ in range(len(df_check))]
+            total_weight = df_check['重量'].sum()
+            if (1 - tolerance) * total_weight_target <= total_weight <= (1 + tolerance) * total_weight_target:
+                break
+        
+        # 步骤4：确定输入的dataframe的日期列一共有多少天，用92除以天数为每一天的车次car_number_of_day，
+        # df_check的提货日期列的从df_oil的第一天+1开始，每个日期循环car_number_of_day加减1次做为提货日期值；
+            days = len(df_oil['日期'].unique())
+            car_number_of_day = 92 // days
+            start_date = pd.to_datetime(df_oil['日期'].min()) + pd.Timedelta(days=1)
+            dates = []
+            current_date = start_date
+            for day in range(days):
+                date = current_date
+                for _ in range(car_number_of_day + np.random.choice([-1, 0, 1])): #循环
+                    dates.append(date)
+                current_date += pd.Timedelta(days=1)
+            
+            # 确保dates列表长度与df_check行数相同
+            if len(dates) < len(df_check):
+                additional_days_needed = len(df_check) - len(dates)
+                last_date = dates[-1]
+                for i in range(additional_days_needed):
+                    dates.append(last_date + pd.Timedelta(days=i + 1))
+            elif len(dates) > len(df_check):
+                dates = dates[:len(df_check)]
+            
+            df_check['提货日期'] = dates
+        
+        # 步骤5：先对df_car按照车牌号随机打乱行顺序，
+        df_car_shuffled = df_car.sample(frac=1).reset_index(drop=True)
+        
+        # df_check的车牌号列的值循环从打乱后df_car的车牌号列取值，
+        # df_check的司机列的值对应df_car表相同行的`司机`列的值，
+        # df_check的皮重列=df_car表的皮重+RANDBETWEEN(1,13)*10
+        for i in range(len(df_check)):
+            car_idx = i % len(df_car_shuffled)
+            df_check.at[i, '车牌号'] = df_car_shuffled.loc[car_idx, '车牌号']
+            df_check.at[i, '司机'] = df_car_shuffled.loc[car_idx, '司机']
+            df_check.at[i, '皮重'] = df_car_shuffled.loc[car_idx, '皮重'] + np.random.randint(1, 14) * 10
+        
+        # 步骤6：df_check的净重列=重量*1000，df_check的毛重列=皮重+净重；
+        df_check['净重'] = df_check['重量'] * 1000
+        df_check['毛重'] = df_check['皮重'] + df_check['净重']
+        
+        # df_check的差值列=LOOKUP(RANDBETWEEN(1,1000),{0,3,6,10,15,30,60,90,150,200,300,350,480,550,700,800,850,900,940,970,990,995,1001},{-15,-14,-13,-12,-11,-7,-6,-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,11,12})/100
+        lookup_values = np.array([0, 3, 6, 10, 15, 30, 60, 90, 150, 200, 300, 350, 480, 550, 700, 800, 850, 900, 940, 970, 990, 995, 1001])
+        lookup_results = np.array([-15, -14, -13, -12, -11, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 11, 12])
+        random_lookup = np.random.randint(1, 1002, size=len(df_check))
+        df_check['差值'] = np.interp(random_lookup, lookup_values, lookup_results) / 100
+        
+        # 步骤7：df_check卸货重量=重量+差值
+        df_check['卸货重量'] = df_check['重量'] + df_check['差值']
+        
+        return df_check
     
-    # 计算辅助列
-    new_df['辅助列'] = new_df['日期'].ne(new_df['日期'].shift(-1)).astype(int)
-    new_df['辅助列'] = new_df['辅助列'].replace({1: 1, 0: None})
+    """
+    复制收货确认书的“数据透视表”的每日重量一列至物料平衡表-总表，对齐日期
+    """
+    def process_check_to_sum(df_generate_check: pd.DataFrame, df_generate_sum: pd.DataFrame) -> pd.DataFrame:
+        """
+        处理两个DataFrame并生成一个新的DataFrame。
+        
+        :param df_generate_check: 包含提货日期和重量的DataFrame
+        :param df_generate_sum: 包含供应日期和售出数量的DataFrame
+        :return: 处理后的DataFrame
+        """
+        # 步骤1：对df_generate_check表根据提货日期对重量进行求和汇总得到df_sum
+        df_sum = df_generate_check.groupby('提货日期')['重量'].sum().reset_index()
+        df_sum.rename(columns={'重量': '汇总重量'}, inplace=True)
+        
+        # 步骤2：关联df_generate_sum和df_sum，根据df_generate_sum的供应日期和df_sum的提货日期，
+        # 将df_generate_sum中相同日期的最后一行的售出数量赋值为df_sum对应日期的汇总值
+        df_merged = pd.merge(df_generate_sum, df_sum, left_on='供应日期', right_on='提货日期', how='left')
+        
+        # 对于每个日期，找到最后一行并将售出数量设置为汇总重量
+        for date in df_merged['供应日期'].unique():
+            mask = df_merged['供应日期'] == date
+            if mask.sum() > 0:  # 确保有数据
+                last_index = df_merged[mask].index[-1]  # 获取相同日期中的最后一行索引
+                df_merged.at[last_index, '售出数量'] = df_merged.loc[last_index, '汇总重量']
+        
+        # 删除不必要的列
+        df_final = df_merged.drop(columns=['提货日期', '汇总重量'])
+        
+        return df_final
     
-    # 计算期末库存
-    previous_end_stock = 0.0 #第一行的期末库存前一行默认0
-    for index, row in new_df.iterrows():
-        current_output = row['产出重量']
-        current_sale = row['售出数量']
-        new_df.at[index, '期末库存'] = current_output + previous_end_stock - current_sale
-        previous_end_stock = new_df.at[index, '期末库存']
-    
-    return new_df
+    """
+    复制平衡表-5月表的“流水号 车牌号 交付时间”到收油表的“流水号 车牌号 收购时间”
+    """
+    def copy_balance_to_oil(df_generate_balance: pd.DataFrame, df_generate_oil: pd.DataFrame) -> pd.DataFrame:
+        # 创建一个新的DataFrame df_generate_oil_copy 以避免直接修改原始df_generate_oil
+        df_generate_oil_copy = df_generate_oil.copy()
+        
+        # 步骤1：从df_generate_balance复制流水号和交付时间到df_generate_oil的相应列
+        # 首先需要基于车牌号和收集城市/区域进行关联
+        merged_df = pd.merge(df_generate_oil_copy, df_generate_balance[['车牌号', '收集城市', '流水号', '交付时间']], 
+                            left_on=['车牌号', '区域'], right_on=['车牌号', '收集城市'], how='left')
+        
+        # 更新df_generate_oil_copy的流水号和收购时间（即交付时间）
+        df_generate_oil_copy['流水号'] = merged_df['流水号']
+        df_generate_oil_copy['收购时间'] = merged_df['交付时间']
+        
+        return df_generate_oil_copy
