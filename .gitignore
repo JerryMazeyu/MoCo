@@ -1,7 +1,10 @@
 app/var/log/moco.log
+!app/assets/vehicle_example.xlsx
 app/assets/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-!app/assets/vehicle_example.xlsx
+
+*.xlsx
+*.xls
