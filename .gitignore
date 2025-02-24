@@ -5,3 +5,5 @@ __pycache__/
 *.pyo
 *.pyd
 !app/assets/vehicle_example.xlsx
+*.xlsx
+*.xls
