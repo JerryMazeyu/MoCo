@@ -355,6 +355,7 @@ class RuleService:
     
     """
     复制平衡表-5月表的“流水号 车牌号 交付时间”到收油表的“流水号 车牌号 收购时间”
+    输入平衡表-5月表，收油表-->输出收油表
     """
     def copy_balance_to_oil(df_generate_balance: pd.DataFrame, df_generate_oil: pd.DataFrame) -> pd.DataFrame:
         # 创建一个新的DataFrame df_generate_oil_copy 以避免直接修改原始df_generate_oil
@@ -370,3 +371,118 @@ class RuleService:
         df_generate_oil_copy['收购时间'] = merged_df['交付时间']
         
         return df_generate_oil_copy
+    
+    """
+    平衡表-总表合同编号分配
+    输入平衡表总表、收货确认书、当日生产转化系数、生成平衡表等的日期
+    """
+    def process_balance_sum_contract(df_generate_sum: pd.DataFrame, df_generate_check: pd.DataFrame,
+                       df_generate_balance_last_month: pd.DataFrame, df_generate_balance_current_month: pd.DataFrame,
+                       coeff_number: float, current_date: str):
+        """
+        处理两个DataFrame并生成一个新的DataFrame。
+        
+        :param df_generate_sum: 包含供应日期、产出重量、期末库存等信息的DataFrame
+        :param df_generate_check: 包含重量列的DataFrame
+        :param coeff_number: 浮点型数据，用于后续计算
+        :param current_date: 字符串格式的当前日期
+        :return: 处理后的DataFrame
+        """
+        # 步骤1：sum_product=df_generate_check的重量列进的和
+        sum_product = df_generate_check['重量'].sum()
+        
+        # 步骤2：last_month=current_date上一个月；
+        current_date = pd.to_datetime(current_date)
+        last_month = (current_date - timedelta(days=current_date.day)).replace(day=1)
+        last_month_ending_inventory = df_generate_sum[df_generate_sum['供应日期'].dt.to_period('M') == last_month.to_period('M')].iloc[-1]['期末库存']
+        
+        # 步骤3：当月的产出重量month_quantity = sum_product-last_month_ending_inventory 
+        month_quantity = sum_product - last_month_ending_inventory
+        
+        # 步骤4：取出df_generate_sum表中供应日期的月份等于current_date月份并且产出重量不为空值或者null值的供应日期和产出重量值，并去重，
+        # 循环去重后的供应日期和产出重量值，对产出重量值进行累加求和，当加到某一行的产出重量累加值<=month_quantity 并且下一行的产出重量累加值>month_quantity 时停止，
+        # 记录当前行的供应日期stop_date和累加值sum_quantity；
+        mask_current_month = (df_generate_sum['供应日期'].dt.to_period('M') == current_date.to_period('M')) & (df_generate_sum['产出重量'].notna())
+        filtered_df = df_generate_sum[mask_current_month][['供应日期', '产出重量']].drop_duplicates()
+        
+        cumulative_sum = 0
+        stop_date = None
+        sum_quantity = 0
+        for index, row in filtered_df.iterrows():
+            cumulative_sum += row['产出重量']
+            if cumulative_sum > month_quantity:
+                stop_date = row['供应日期']
+                sum_quantity = cumulative_sum - row['产出重量']
+                break
+            else:
+                stop_date = filtered_df.iloc[-1]['供应日期']
+                sum_quantity = cumulative_sum
+        
+        # 步骤5：求出剩余的原料remaining_materia= （month_quantity  -sum_quantity）/coeff_number,
+        remaining_material = (month_quantity - sum_quantity) / coeff_number
+        
+        # 依次对df_generate_sum中供应日期大于stop_date的行的每车吨量累加求和，直到累加和>remaining_materia停止，记录对应的行索引stop_index
+        mask_after_stop_date = (df_generate_sum['供应日期'] >= stop_date) #大于等于，因为stop_date上面是已经大于剩余量的日期
+        cumulative_weight = 0
+        stop_index = None
+        for idx, row in df_generate_sum[mask_after_stop_date].iterrows():
+            cumulative_weight += row['产出重量']
+            if cumulative_weight > remaining_material:
+                stop_index = idx
+                break
+        
+        # 步骤6：填充df_generate_sum表中分配明细列，
+        # 填充规则为1：供应日期的月份=current_date减1个月的合同分配明细列为空的分配明细列；
+        # 2：供应日期的月份=current_date对应月份行索引<=stop_index的分配明细列。
+        # 填充值为BWD-JC开头，加current_date年份的后2位数字，加current_date月份的第一天，
+        # 例如current_date='2024-05-06'，则填充值为BWD-JC240501
+        fill_value = f"BWD-JC{str(current_date.year)[-2:]}{current_date.month:02d}01"
+        
+        # 规则1
+        mask_last_month = df_generate_sum['供应日期'].dt.to_period('M') == last_month.to_period('M')
+        df_generate_sum.loc[mask_last_month & df_generate_sum['分配明细'].isna(), '分配明细'] = fill_value
+        
+        # 规则2
+        mask_current_month = df_generate_sum['供应日期'].dt.to_period('M') == current_date.to_period('M')
+        mask_until_stop_index = df_generate_sum.index <= stop_index
+        df_generate_sum.loc[mask_current_month & mask_until_stop_index & df_generate_sum['分配明细'].isna(), '分配明细'] = fill_value
+        # 步骤7：填充df_generate_balance_last_month表中合同分配明细列为空的分配明细列，值为BWD-JC开头，加current_date年份的后2位数字，加current_date月份的第一天；
+        df_generate_balance_last_month.loc[df_generate_balance_last_month['分配明细'].isna(), '分配明细'] = fill_value
+        
+        # 步骤8：填充df_generate_balance_current_month分配明细列，规则为关联df_generate_sum表，根据日期和过磅单编号关联，
+        # 填充值为BWD-JC开头，加current_date年份的后2位数字，加current_date月份的第一天
+        # 假设关联字段是'供应日期' 和 '过磅单编号'
+        df_generate_balance_current_month = df_generate_balance_current_month.merge(
+            df_generate_sum[['供应日期', '分配明细']], left_on=['供应日期', '过磅单编号'], right_on=['供应日期', '过磅单编号'], how='left')
+        df_generate_balance_current_month['分配明细_x'] = df_generate_balance_current_month['分配明细_y'].fillna(fill_value)
+        df_generate_balance_current_month.drop(columns=['分配明细_y'], inplace=True)
+        df_generate_balance_current_month.rename(columns={'分配明细_x': '分配明细'}, inplace=True)
+
+        return df_generate_sum, df_generate_balance_last_month, df_generate_balance_current_month
+    
+    """
+    复制流水号、交付时间和销售合同号"""
+    def copy_balance_to_oil_dataframes(df_generate_oil: pd.DataFrame, df_generate_balance: pd.DataFrame) -> pd.DataFrame:
+        """
+        将df_generate_balance的信息合并到df_generate_oil中。
+        
+        :param df_generate_oil: 主表DataFrame，包含车牌号和累计收油数等信息
+        :param df_generate_balance: 包含流水号、交付时间、销售合同号等信息的DataFrame
+        :return: 合并后的df_generate_oil DataFrame
+        """
+        # 步骤1：将df_generate_oil和df_generate_balance关联，
+        # 以df_generate_oil为主表，关联字段为车牌号和累计收油数，
+        # 将df_generate_balance的流水号赋值给df_generate_oil的流水号，
+        # 将df_generate_balance的交付时间赋值给df_generate_oil的收购时间，
+        # 将df_generate_balance的销售合同号赋值给df_generate_oil的销售合同号
+        
+        # 假设关联是基于'车牌号'和'累计收油数'这两个字段
+        merged_df = pd.merge(df_generate_oil, df_generate_balance[['车牌号', '累计收油数', '流水号', '交付时间', '销售合同号']],
+                            on=['车牌号', '累计收油数'], how='left')
+        
+        # 更新df_generate_oil的相应列
+        df_generate_oil['流水号'] = merged_df['流水号']
+        df_generate_oil['收购时间'] = merged_df['交付时间']
+        df_generate_oil['销售合同号'] = merged_df['销售合同号']
+        
+        return df_generate_oil
