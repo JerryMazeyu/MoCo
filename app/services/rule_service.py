@@ -32,6 +32,11 @@ class RuleService:
                 return np.random.choice(allocate_value)
         return np.random.choice([1, 2])  # 默认值
 
+    """
+    收油表
+    传入餐厅信息，包括required_columns中的列,并根据餐厅类型增加收油数的列，
+    最后返回排序后的餐厅信息
+    """
     def oil_restaurant_sort(self,df: pd.DataFrame) -> pd.DataFrame:
 
         # 确保需要的列存在
@@ -54,6 +59,10 @@ class RuleService:
         
         return df_sorted
     
+    """
+    分配车辆号码
+    传入餐厅信息和车辆信息，根据收油数分配车辆号码，并将结果与原DataFrame合并
+    """
     def oil_assign_vehicle_numbers(df_restaurants: pd.DataFrame, df_vehicles: pd.DataFrame) -> pd.DataFrame:
         """
         根据收油数分配车辆号码，并将结果与原DataFrame合并
@@ -111,6 +120,9 @@ class RuleService:
         
         return merged_df
 
+    """
+    写入Excel文件，并合并分配的车牌号和对应的累加收油数单元格
+    """
     def oil_write_to_excel_with_merge_cells(self,df: pd.DataFrame, output_path: str):
         """
         将DataFrame写入Excel文件，并合并分配的车牌号和对应的累加收油数单元格
@@ -140,9 +152,16 @@ class RuleService:
         
         wb.save(output_path)
 
-
     """
     生成平衡表-五月表步骤
+    输入收油表，包含'区域', '车牌号', '累计收油数'字段；输入
+    步骤1：读取dataframe中的'区域', '车牌号', '累计收油数'字段作为新的dataframe的字段，并去重
+    步骤2：新建一列榜单净重，公式为累计收油数*0.18-RANDBETWEEN(1,5)/100
+    步骤3：新建几列固定值的列
+    步骤4：计算车数car_number_of_day并新增交付日期列
+    步骤5：计算加工量和毛油库存
+    步骤6：计算产出重量
+    步骤7：计算辅助列
     """
 
     def process_balance_dataframe(self,df: pd.DataFrame, n: int) -> pd.DataFrame:
@@ -189,9 +208,9 @@ class RuleService:
         new_df['交付日期'] = delivery_dates[:len(new_df)]
         
         return new_df
-    
     """
     总表：生成毛油库存 期末库存、辅助列、转化系数、产出重量、售出数量、加工量
+    传入平衡表_5月表
     售出数量需要修改，规则没确定
     步骤1：复制日期、车牌号、榜单净重、榜单编号、收集城市;
     步骤2：新增一列加工量，如果当前日期为相同日期的最后一行，则加工量等于每个日期的榜单净重和，否则等于0 ；
@@ -201,10 +220,12 @@ class RuleService:
     新增1列产出重量，值为round(加工量*转化系数/100,2);
     新增1列售出数量，值为0
     """
-    def process_dataframe_with_new_columns(df: pd.DataFrame) -> pd.DataFrame:
+    def process_dataframe_with_new_columns(self, df: pd.DataFrame, total_df: pd.DataFrame = None) -> pd.DataFrame:
         """
+        处理DataFrame并与总表合并
         
         :param df: 输入的DataFrame，至少包含'日期', '车牌号', '榜单净重', '榜单编号', '收集城市'字段
+        :param total_df: 总表DataFrame，如果为None则创建新的DataFrame
         :return: 处理后的DataFrame
         """
         # 步骤1：新建一个dataframe,从dataframe复制日期、车牌号、榜单净重、榜单编号、收集城市
@@ -250,17 +271,23 @@ class RuleService:
             current_sale = row['售出数量']
             new_df.at[index, '期末库存'] = current_output + previous_end_stock - current_sale
             previous_end_stock = new_df.at[index, '期末库存']
+
+        # 如果提供了总表，则合并数据
+        if total_df is not None:
+            # 使用concat合并两个DataFrame
+            result_df = pd.concat([total_df, new_df], ignore_index=True)
+            return result_df
         
         return new_df
     """
-    收货确认书
+    收货确认书，传入五月平衡表和车辆信息
     """
-    def generate_df_check(df_oil: pd.DataFrame, df_car: pd.DataFrame) -> pd.DataFrame:
+    def generate_df_check(df_balance: pd.DataFrame, df_car: pd.DataFrame) -> pd.DataFrame:
     # 步骤1：新建一个dataframe名为df_check，包含提货日期、名称、车牌号、重量、司机、磅单号、毛重、皮重、净重、卸货重量
         df_check = pd.DataFrame(columns=['提货日期', '名称', '车牌号', '重量', '司机', '磅单号', '毛重', '皮重', '净重', '卸货重量'])
         
         # 步骤2：复制输入的dataframe中的磅单编号作为df_check的磅单号
-        df_check['磅单号'] = df_oil['磅单编号']
+        df_check['磅单号'] = df_balance['磅单编号']
         
         # 步骤3：df_check的重量列值=RANDBETWEEN(3050,3495)/100，保证所有行的重量和在3000的上下5%范围内，否则的话重新赋值重量列为RANDBETWEEN(3050,3495)/100
         total_weight_target = 3000
@@ -273,9 +300,9 @@ class RuleService:
         
         # 步骤4：确定输入的dataframe的日期列一共有多少天，用92除以天数为每一天的车次car_number_of_day，
         # df_check的提货日期列的从df_oil的第一天+1开始，每个日期循环car_number_of_day加减1次做为提货日期值；
-            days = len(df_oil['日期'].unique())
+            days = len(df_balance['日期'].unique())
             car_number_of_day = 92 // days
-            start_date = pd.to_datetime(df_oil['日期'].min()) + pd.Timedelta(days=1)
+            start_date = pd.to_datetime(df_balance['日期'].min()) + pd.Timedelta(days=1)
             dates = []
             current_date = start_date
             for day in range(days):
@@ -324,6 +351,7 @@ class RuleService:
     
     """
     复制收货确认书的“数据透视表”的每日重量一列至物料平衡表-总表，对齐日期
+    传入收货确认书和平衡表-总表
     """
     def process_check_to_sum(df_generate_check: pd.DataFrame, df_generate_sum: pd.DataFrame) -> pd.DataFrame:
         """
@@ -461,7 +489,8 @@ class RuleService:
         return df_generate_sum, df_generate_balance_last_month, df_generate_balance_current_month
     
     """
-    复制流水号、交付时间和销售合同号"""
+    复制流水号、交付时间和销售合同号
+    输入收油表和平衡表_5月表"""
     def copy_balance_to_oil_dataframes(df_generate_oil: pd.DataFrame, df_generate_balance: pd.DataFrame) -> pd.DataFrame:
         """
         将df_generate_balance的信息合并到df_generate_oil中。
