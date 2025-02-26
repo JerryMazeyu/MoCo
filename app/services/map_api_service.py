@@ -63,7 +63,7 @@ class RestaurantInfo:
         urls = []
         for i in range(1, self.n + 1):  # page是当前页码，高德是从1开始， offset是每页多少条数据，默认20条
 
-            url = 'https://restapi.amap.com/v5/place/around?key={}' \
+            url = 'https://restapi.amap.com/v3/place/around?key={}' \
                   '&radius=50000&keywords={}&types={}&location={}&offset=20&page={' \
                   '}&extensions=base&show_fields=business'.format(
                 self.key, self.keywords, self.type, self.address, i)
@@ -130,6 +130,8 @@ class RestaurantInfo:
                     print(j)
                     dict1 = {'name': i.get('name'), 'address': i.get('address'), 'tel': i.get('tel'), 'location': i.get('location'), 'adname': i.get('adname'), 'type': i.get('type'), 'distance': i.get('distance'), 'cityname': i.get('cityname')}
                     datalist.append(dict1)
+                if len(l)<20: ## 当最后一次小于20的话说明最后一页，退出
+                    break
             else:
                 break
         return datalist
@@ -290,8 +292,17 @@ if __name__ == '__main__':
     # # 高德地图示例
     key = '4bd94b7b4fed38f78e13d1055dd0f7ce'  # 注意坐标，高德和百度经纬度是不一样的
     # c = RestaurantInfo(25, key, '快餐', '餐饮', '113.74483,23.019135', 1)
-    c = RestaurantInfo(5, key, '火锅', '餐饮服务', '杭州', 1,'d:/git/Git/program/MOCO/MoCo-main/test.xlsx')
-    c.get_info_write_file()
+    key_words = ["酒家","酒楼","烤鱼店","食府","火锅","农庄","餐厅","餐馆","饭店","饭馆","川菜馆","湘菜馆","土菜馆","山庄"
+                 ,"大排档","茶楼","汉堡","餐饮","酸菜鱼","菜馆","快餐","猪脚","披萨","夜宵","食店"]
+    for key_word in key_words:
+        print("{}start".format(key_word))
+        try:
+            file_name = 'd:/git/Git/program/MOCO/2025_03_02_excel/{}.xlsx'.format(key_word)
+            c = RestaurantInfo(30, key, key_word, '东莞市', 1,file_name)
+        
+            c.get_info_write_file()
+        except:
+            print("{}查询失败".format(key_word))
 
     # 谷歌地图serp示例，每次调用每一页至多返回20条，第三个参数默认为英语，第四个参数无作用
     # google_key = '8fee04febd8ef9f2ef5e3732b9a81519e8e97fea28687e8f7aaf5a43c0a1cd50'

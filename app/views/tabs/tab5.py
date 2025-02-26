@@ -111,15 +111,16 @@ class Tab5(QWidget):
         msg_box.show()
         return msg_box
     
-    def remove_duplicates(self,input_list):
+    def remove_duplicates(self, input_list):
         seen = set()
         new_list = []
-        for d in input_list:
-            # 将字典项转换为元组，以便能够放入集合中进行比较
-            item_tuple = tuple(sorted(d.items()))
+        for item in input_list:
+            # 将列表转换为元组，因为元组是可哈希的
+            item_tuple = tuple(item)
             if item_tuple not in seen:
                 seen.add(item_tuple)
-                new_list.append(d)
+                # 如果需要保持原样为列表，则在添加回结果时再转回列表
+                new_list.append(list(item_tuple))
         return new_list
     ## 生成excel
     def on_generate_excel(self):
@@ -133,59 +134,60 @@ class Tab5(QWidget):
 
 
             ## 地名转化为经纬度，如果转不了就用地面
+            # try:
             try:
-                try:
-                    self.city_lat_lon  = flow5_location_change(self.city_input_value)
-                except:
-                    self.city_lat_lon = self.city_input_value
+                self.city_lat_lon  = flow5_location_change(self.city_input_value)
+            except:
+                self.city_lat_lon = self.city_input_value
 
-                self.restaurantList=[]
-                # 动态生成保存路径
-                sanitized_city = "".join([c if c.isalnum() or c.isspace() else "_" for c in self.city_input_value])
-                self.default_save_path = os.path.join(os.getcwd(), f"{sanitized_city}__restaurant_data.xlsx")
-                #获取关键字
-                keywords_list= self.get_keywords()
-                for api_type in ["百度地图"
-                                # ,"高德地图" 
-                                #  ,"serp_谷歌地图"
-                                ]:
-                    self.api_type = api_type
-                    # 获取 api_key
-                    self.api_key = self.get_selected_api_key()
-                    api_number_map = {
-                        "高德地图": 1,
-                        "百度地图": 2,
-                        "serp_谷歌地图": 3,
-                        "TripAdvior爬取": 4
-                    }
-                    # 获取api对应的number
-                    api_number = api_number_map.get(self.api_type, 0)
+            self.restaurantList=[]
+            # 动态生成保存路径
+            sanitized_city = "".join([c if c.isalnum() or c.isspace() else "_" for c in self.city_input_value])
+            self.default_save_path = os.path.join(os.getcwd(), f"{sanitized_city}__restaurant_data.xlsx")
+            #获取关键字
+            keywords_list= self.get_keywords()
+            for api_type in ["百度地图"
+                            ,"高德地图" 
+                            #  ,"serp_谷歌地图"
+                            ]:
+                self.api_type = api_type
+                # 获取 api_key
+                self.api_key = self.get_selected_api_key()
+                api_number_map = {
+                    "高德地图": 1,
+                    "百度地图": 2,
+                    "serp_谷歌地图": 3,
+                    "TripAdvior爬取": 4
+                }
+                # 获取api对应的number
+                api_number = api_number_map.get(self.api_type, 0)
 
-                    #循环关键字
-                    for key_words in keywords_list:
-                        
-                        self.keywords_input_value = key_words
-                        print(self.keywords_input_value, api_type,self.default_save_path,sep='\n')
-                        restaurantList_api = flow5_get_restaurantinfo(self.page_number,self.api_key, self.keywords_input_value,self.city_lat_lon , api_number,self.default_save_path)
-                        self.restaurantList.extend(restaurantList_api)
+                #循环关键字
+                for key_words in keywords_list:
+                    
+                    self.keywords_input_value = key_words
+                    print(self.keywords_input_value, api_type,self.default_save_path,sep='\n')
+                    restaurantList_api = flow5_get_restaurantinfo(self.page_number,self.api_key, self.keywords_input_value,self.city_lat_lon , api_number,self.default_save_path)
+                    self.restaurantList.extend(restaurantList_api)
 
-                print(self.restaurantList)            
-                self.restaurantList = self.remove_duplicates(self.restaurantList)
-                flow5_write_to_excel(self.restaurantList,self.default_save_path)
-                # 关闭正在生成的消息框
-                progress_msg.close()
+            print(self.restaurantList)            
+            self.restaurantList = self.remove_duplicates(self.restaurantList)
+            print(self.restaurantList)
+            flow5_write_to_excel(self.restaurantList,self.default_save_path)
+            # 关闭正在生成的消息框
+            progress_msg.close()
 
-                    # 显示成功消息
-                success_msg = self.show_centered_message("成功", f"Excel文件已保存至: {self.default_save_path}")
-                success_msg.exec_()
+                # 显示成功消息
+            success_msg = self.show_centered_message("成功", f"Excel文件已保存至: {self.default_save_path}")
+            success_msg.exec_()
 
-            except Exception as e:
-                # 关闭正在生成的消息框
-                progress_msg.close()
+            # except Exception as e:
+            #     # 关闭正在生成的消息框
+            #     progress_msg.close()
 
-                # 显示错误信息
-                error_msg = self.show_centered_message("错误", f"Excel文件生成失败: {str(e)}")
-                error_msg.exec_()
+            #     # 显示错误信息
+            #     error_msg = self.show_centered_message("错误", f"Excel文件生成失败: {str(e)}")
+            #     error_msg.exec_()
             
     # 展示excel
     def on_view_results(self):
