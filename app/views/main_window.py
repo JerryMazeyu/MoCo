@@ -28,9 +28,11 @@ class MainWindow(QMainWindow):
         self.tab5 = QWidget()
         self.tab6 = QWidget()
 
+
         # Add tabs to the tab widget
         self.tab_widget.addTab(self.tab5, "城市餐厅信息爬取")
         self.tab_widget.addTab(self.tab0, "配置项")
+        self.tab_widget.addTab(self.tab5, "城市餐厅信息爬取")
         self.tab_widget.addTab(self.tab1, "查找&确认餐厅信息")
         self.tab_widget.addTab(self.tab2, "配置车辆信息")
         self.tab_widget.addTab(self.tab3, "生成&审核")
@@ -39,6 +41,7 @@ class MainWindow(QMainWindow):
 
         # Set layouts for each tab
         self.tab0.layout = QVBoxLayout()
+        self.tab5.layout = QVBoxLayout()
         self.tab1.layout = QVBoxLayout()
         self.tab2.layout = QVBoxLayout()
         self.tab3.layout = QVBoxLayout()
@@ -49,6 +52,8 @@ class MainWindow(QMainWindow):
         # Add TabContent to tab
         self.tab0_content = Tab0()
         self.tab0.layout.addWidget(self.tab0_content)
+        self.tab5_content = Tab5()
+        self.tab5.layout.addWidget(self.tab5_content)
         self.tab1_content = Tab1()
         self.tab1.layout.addWidget(self.tab1_content)
         self.tab2_content = Tab2()
@@ -59,6 +64,7 @@ class MainWindow(QMainWindow):
         self.tab6.layout.addWidget(self.tab6_content)
 
         self.tab0.setLayout(self.tab0.layout)
+        self.tab5.setLayout(self.tab5.layout)
         self.tab1.setLayout(self.tab1.layout)
         self.tab2.setLayout(self.tab2.layout)
         self.tab3.setLayout(self.tab3.layout)
