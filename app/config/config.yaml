@@ -114,6 +114,6 @@ SYSTEM:
   - '12345678'
   - '87654321'
   baidu_key: 
-  gaode_key:
+  gaode_key: 
   serp_key: 
-  tripadvisor_key: ""
+  tripadvisor_key: 
