@@ -21,7 +21,9 @@ class ApiStatusIndicator(QLabel):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(16, 16)
+        self.setFixedSize(22, 22)  # 尺寸稍微加大一点
+        # 确保无文本显示
+        self.setText("")
         self.setStatus(None)  # 初始状态为未知
         
     def setStatus(self, is_connected):
@@ -30,22 +32,35 @@ class ApiStatusIndicator(QLabel):
         参数:
             is_connected: None表示未测试，True表示连接成功，False表示连接失败
         """
-        palette = self.palette()
+        base_style = """
+            border-radius: 11px;
+            margin: 2px;
+        """
+        
         if is_connected is None:
             # 灰色 - 未测试
-            palette.setColor(QPalette.Window, QColor(150, 150, 150))
+            self.setStyleSheet(base_style + """
+                background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.8, fx:0.5, fy:0.5, 
+                                                 stop:0 #A0A0A0, stop:1 #808080);
+                border: 1.5px solid #666666;
+            """)
             self.setToolTip("未测试连通性")
         elif is_connected:
             # 绿色 - 连接成功
-            palette.setColor(QPalette.Window, QColor(0, 180, 0))
+            self.setStyleSheet(base_style + """
+                background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.8, fx:0.5, fy:0.5, 
+                                                 stop:0 #00D000, stop:1 #00A000);
+                border: 1.5px solid #008800;
+            """)
             self.setToolTip("连接成功")
         else:
             # 红色 - 连接失败
-            palette.setColor(QPalette.Window, QColor(255, 0, 0))
+            self.setStyleSheet(base_style + """
+                background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.8, fx:0.5, fy:0.5, 
+                                                 stop:0 #FF3030, stop:1 #D00000);
+                border: 1.5px solid #AA0000;
+            """)
             self.setToolTip("连接失败")
-            
-        self.setPalette(palette)
-        self.setAutoFillBackground(True)
 
 
 class Tab5(QWidget):
