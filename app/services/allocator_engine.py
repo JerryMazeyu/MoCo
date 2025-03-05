@@ -2,9 +2,9 @@ from typing import List
 from app.models.rules_zoo import BaseRule
 from app.models.context_model import Context
 
-class DistributionEngine:
+class AllocatorEngine:
     """
-    Engine that applies a sequence of distribution rules on a given context.
+    Engine that applies a sequence of allocation rules on a given context.
     """
     def __init__(self, rules: List[BaseRule], context: Context):
         """

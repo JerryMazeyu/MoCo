@@ -1,15 +1,18 @@
 import os
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSortFilterProxyModel, QRegExp, QSize
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, QMessageBox,
     QProgressBar, QLabel, QFrame,
     QSizePolicy, QDialog, QLineEdit
 )
-from components.xlsxviewer import XlsxViewer
+from PyQt5.QtGui import QPixmap
+import pandas as pd
+from app.views.components.xlsxviewer import XlsxViewer
 from app.controllers import flow1_load_df, flow1_generate_candidate_street, flow1_generate_restaurant_type
 from app.config import get_config
 from app.utils import rp, setup_logger
-from components.singleton import global_context
+from app.views.components.singleton import global_context
+import json
 
 class Tab1(QWidget):
     def __init__(self, parent=None):
