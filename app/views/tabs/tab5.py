@@ -468,6 +468,42 @@ class Tab5(QWidget):
             math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
         c = 2 * math.asin(math.sqrt(a))
         return R * c  # 返回距离，单位为公里
+    
+    def file_path_excel_exists(self,datalist, filename):
+        # 检查文件是否存在
+        if os.path.exists(filename):
+            # 弹出对话框询问用户
+            # 创建消息框
+            msg_box = QMessageBox()
+            msg_box.setWindowTitle('文件已存在')
+            msg_box.setText('文件已存在，您想要替换原文件还是在源文件上新增数据？')
+
+            # 添加自定义按钮
+            replace_button = msg_box.addButton('替换', QMessageBox.ActionRole)
+            append_button = msg_box.addButton('新增', QMessageBox.ActionRole)
+            cancel_button = msg_box.addButton('取消', QMessageBox.RejectRole)
+            # 显示消息框并等待用户响应
+            msg_box.exec_()
+
+            if msg_box.clickedButton() == replace_button:
+                # 用户选择替换
+                print("Replacing the existing file.")
+                flow5_write_to_excel(datalist, filename)  # 直接写入文件
+            elif msg_box.clickedButton() == append_button:
+                # 用户选择新增
+                print("Appending to the existing file.")
+                existing_data = pd.read_excel(filename)  # 读取现有文件
+                combined_data = pd.concat([existing_data, pd.DataFrame(datalist)])  # 合并数据
+                combined_data = combined_data.drop_duplicates(subset=['name', 'address'], keep='first')  # 根据名称和地址去重
+                flow5_write_to_excel(combined_data.to_dict(orient='records'), filename)  # 写入去重后的数据
+            else:
+                print("Operation cancelled.")
+                return  # 用户选择取消，退出函数
+        else:
+            # 文件不存在，直接写入
+            flow5_write_to_excel(datalist, filename)
+
+
     ## 生成excel提示框
     def show_centered_message(self, title, text):
         """显示居中的消息框"""
@@ -567,7 +603,7 @@ class Tab5(QWidget):
                     res_lon, res_lat = map(float, restaurant['location'].split(','))  # 假设坐标格式为 "经度,纬度"
                     distance = self.haversine((res_lat, res_lon), self.factory_lat_lon)  # 计算距离
                     restaurant['distance_to_factory'] = distance  # 添加新的键
-                flow5_write_to_excel(self.restaurantList, self.default_save_path)
+                self.file_path_excel_exists(self.restaurantList, self.default_save_path)
                 # 关闭进度消息框
                 progress_msg.accept()
                 # 显示保存成功信息
