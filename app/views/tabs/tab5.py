@@ -12,6 +12,7 @@ from app.controllers import flow5_get_restaurantinfo, flow5_location_change, flo
 from app.config import get_config
 from app.utils import rp, setup_logger
 import xlrd
+import math
 
 
 
@@ -365,13 +366,10 @@ class Tab5(QWidget):
             QMessageBox.warning(self, "警告", "请输入城市名称")
             return False
         
-        # 获取经纬度
+        # 获取工厂经纬度
         lat = self.latitude_input.text().strip()
         lon = self.longitude_input.text().strip()
-        if lat and lon:
-            self.city_lat_lon = f"{lat},{lon}"
-        else:
-            self.city_lat_lon = ""  # 将在生成过程中自动获取
+        self.factory_lat_lon = f"{lat},{lon}"
         
         # 检查是否选择了API
         if not self.selected_apis:
@@ -434,7 +432,27 @@ class Tab5(QWidget):
         for i in range(self.keywords_list.count()):
             keywords.append(self.keywords_list.item(i).text())
         return keywords
+    ## 获取屏蔽字
+    def get_blocked_words(self):
+        blocked_words = []
+        for i in range(self.blocked_list.count()):
+            blocked_words.append(self.blocked_list.item(i).text())
+        return blocked_words
     
+    ## 计算两个经纬度之间的距离（单位：公里）
+    def haversine(self,coord1, coord2):
+        """计算两个经纬度之间的距离（单位：公里）"""
+        R = 6371  # 地球半径，单位为公里
+        lat1, lon1 = coord1
+        lat2, lon2 = map(float, coord2.split(','))
+
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+
+        a = (math.sin(dlat / 2) ** 2 +
+            math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
+        c = 2 * math.asin(math.sqrt(a))
+        return R * c  # 返回距离，单位为公里
     ## 生成excel提示框
     def show_centered_message(self, title, text):
         """显示居中的消息框"""
@@ -450,17 +468,16 @@ class Tab5(QWidget):
         msg_box.show()
         return msg_box
     
-    def remove_duplicates(self, input_list):
+    def remove_duplicates(self,restaurant_list):
         seen = set()
-        new_list = []
-        for item in input_list:
-            # 将列表转换为元组，因为元组是可哈希的
-            item_tuple = tuple(item)
-            if item_tuple not in seen:
-                seen.add(item_tuple)
-                # 如果需要保持原样为列表，则在添加回结果时再转回列表
-                new_list.append(list(item_tuple))
-        return new_list
+        unique_list = []
+        for restaurant in restaurant_list:
+            # 假设我们根据 'name' 和 'address' 来去重
+            identifier = (restaurant['name'], restaurant['address'])
+            if identifier not in seen:
+                seen.add(identifier)
+                unique_list.append(restaurant)
+        return unique_list
     
     ## 生成excel
     def on_generate_excel(self):
@@ -474,13 +491,12 @@ class Tab5(QWidget):
 
         ## 地名转化为经纬度，如果转不了就用地面
         try:
-            # 如果已经输入了经纬度，则使用输入的坐标
-            if not self.city_lat_lon:
-                try:
-                    self.city_lat_lon = flow5_location_change(self.city_input_value)
-                except:
-                    self.city_lat_lon = self.city_input_value
-
+            # 如果已经输入的经纬度，则使用输入的坐标,如果输入的是城市,则转化为经纬度
+            try:
+                self.city_lat_lon = flow5_location_change(self.city_input_value)
+            except:
+                self.city_lat_lon = self.city_input_value
+            print(self.city_lat_lon)
             self.restaurantList=[]
             # 动态生成保存路径
             sanitized_city = "".join([c if c.isalnum() or c.isspace() else "_" for c in self.city_input_value])
@@ -526,6 +542,16 @@ class Tab5(QWidget):
             try:
                 # 去重
                 self.restaurantList = self.remove_duplicates(self.restaurantList)
+                ## 去除屏蔽词
+                blocked_words = self.get_blocked_words()
+                self.restaurantList = [restaurant for restaurant in self.restaurantList if not any(word in restaurant['name'] for word in blocked_words)]
+
+                # 计算每个餐厅与工厂的距离并添加到字典中
+                for restaurant in self.restaurantList:
+                    # 提取餐厅的坐标
+                    res_lon, res_lat = map(float, restaurant['location'].split(','))  # 假设坐标格式为 "经度,纬度"
+                    distance = self.haversine((res_lat, res_lon), self.factory_lat_lon)  # 计算距离
+                    restaurant['distance_to_factory'] = distance  # 添加新的键
                 flow5_write_to_excel(self.restaurantList, self.default_save_path)
                 # 关闭进度消息框
                 progress_msg.accept()

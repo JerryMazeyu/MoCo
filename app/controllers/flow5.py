@@ -21,8 +21,9 @@ def flow5_write_to_excel(datalist, filename):
         sheet.write(0, 3, '坐标')
         sheet.write(0, 4, '所属区县')
         sheet.write(0, 5, '类型')
-        sheet.write(0, 6, '距离')
+        sheet.write(0, 6, '与地区中心距离(m)')
         sheet.write(0, 7, '城市')
+        sheet.write(0, 8, '与工厂距离(KM)')
 
 
         for i in range(len(datalist)):
@@ -34,6 +35,7 @@ def flow5_write_to_excel(datalist, filename):
             sheet.write(i + 1, 5, datalist[i]['type'])
             sheet.write(i + 1, 6, datalist[i]['distance'])
             sheet.write(i + 1, 7, datalist[i]['cityname'])
+            sheet.write(i + 1, 8, datalist[i]['distance_to_factory'])  
 
         book.save(filename)  # r'东莞市.xlsx'
         print('save success')
