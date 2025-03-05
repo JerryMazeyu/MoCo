@@ -3,8 +3,11 @@ import sys
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QAbstractItemView,
-    QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox, QHeaderView
-
+    QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox, QHeaderView,
+    QTreeWidget, QTreeWidgetItem, QStackedWidget, QComboBox, QTextEdit, QGridLayout,
+    QGroupBox, QCheckBox, QScrollArea, QSizePolicy, QDialog, QSpinBox, QTabWidget,
+    QToolButton, QInputDialog, QMenu, QAction, QListWidget, QListWidgetItem,
+    QFrame
 )
 from pydantic import ValidationError
 from PyQt5.QtCore import Qt
@@ -12,7 +15,8 @@ from app.controllers import flow2
 from app.models.vehicle_model import Vehicle
 from app.utils import rp
 from app.config import get_config
-from components.singleton import global_context
+import json
+from app.views.components.singleton import global_context
         
 class Tab2(QWidget):
     def __init__(self, parent=None):
@@ -292,7 +296,7 @@ class Tab2(QWidget):
         self.clear_input_fields()
 
     def on_next_step(self):
-        """示例：点击“下一步”时，获取已选车辆。"""
+        """示例：点击"下一步"时，获取已选车辆。"""
         row_count = self.table.rowCount()
         selected = []
 

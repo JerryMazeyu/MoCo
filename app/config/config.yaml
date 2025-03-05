@@ -1,10 +1,15 @@
 BUSINESS:
+  ALL:
+    总收油量: 3001
   CAR:
     吨每桶: 0.18
-    总收油量: 3001
+    每车收购量范围: 35,44
     比率: 0.91
+    默认车辆类型: 大卡车
+  FACYORY:
+    工厂坐标:
+    - 工厂1: 103.67786,23.10244
   RESTAURANT:
-    total_amount_per_car: 35,44
     收油关系映射:
       小食/小吃/美食/饮食/私房菜: 1,2
       酒楼/酒家/烤鱼: 3,4
@@ -99,21 +104,185 @@ BUSINESS:
       province: Province
 OTHER:
   Tab1:
-    last_dir: F:/WorkSpace/Project2025/MoCo/app/assets
+    last_dir: C:/Users/H3C/WorkSpace/GXC/MoCo/app/assets
   Tab2:
-    last_dir: F:/WorkSpace/Project2025/MoCo/app/assets
+    last_dir: C:/Users/H3C/WorkSpace/GXC/MoCo/app/assets
   Tab5:
-    关键字:
-      酒楼/酒家
+    关键词:
+    - 酸菜鱼
+    - 小吃
+    - 小食
+    - 美食
+    - 饮食
+    - 私房菜
+    - 农家菜
+    - 快餐
+    - 餐饮
+    - 汉堡
+    - 餐厅
+    - 餐馆
+    - 饭店
+    - 饭馆
+    - 川菜
+    - 湘菜
+    - 农庄
+    - 山庄
+    - 大排档
+    - 食府
+    - 酒楼
+    - 酒家
+    - 烤鱼
+    - 猪
+    - 手撕大骨
+    - 猪杂
+    - 牛肉粉
+    - 米线
+    - 沙拉
+    - 抄手
+    - 关东煮
+    - 酸奶
+    - 汤包
+    屏蔽词:
+    - 熟
+    - 鱼生
+    - 腌
+    - 滑
+    - 饼
+    - 糕
+    - 烧肉
+    - 鸡
+    - 鹅
+    - 鸭
+    - 馍
+    - 捞
+    - 鲜
+    - 酸奶
+    - 紫燕百味鸡
+    - 果
+    - 拔戒排骨
+    - 馒
+    - 奶
+    - 商行
+    - 士多
+    - 汤
+    - 品诺（湖南）
+    - 燕安居（湖南）
+    - 芒
+    - 拌
+    - 艾
+    - 包
+    - 小屉鲜
+    - 米花
+    - 形象设计
+    - 书亦
+    - 古茗
+    - 大卡司
+    - 益禾堂
+    - 熟食
+    - 茶饮
+    - 盐焗鸡
+    - 早餐
+    - 开心花甲
+    - 点
+    - 熟腌
+    - 椰子冻
+    - 糯米鸡
+    - 碗仔翅
+    - 嘉洲鸡
+    - 手撕鸡
+    - 鸡爪
+    - 白切鸡
+    - 周黑鸭
+    - 煌上煌
+    - 肉夹馍
+    - 肉泡馍
+    - 捆粄
+    - 炖品
+    - 烧卖
+    - 肉卷
+    - 猫咖
+    - 便当
+    - 超市
+    - 沙拉
+    - 沙律
+    - 抄手
+    - 钵仔糕
+    - 皇上皇
+    - 鱼滑
+    - 虾滑
+    - 饭团
+    - 酱香骨
+    - 果汁
+    - 现捞
+    - 关东煮
+    - 奶咖
+    - 酸奶
+    - 豆浆
+    - 汤包
+    - 士多
+    - 奶茶
+    - 咖啡
+    - 食品
+    - 袁记水饺
+    - 云吞
+    - 面包
+    - 饼干
+    - 糖水
+    - 牛杂
+    - 豆腐
+    - 麻辣烫
+    - 重庆小面
+    - 汤圆
+    - 烧烤
+    - 肉丸
+    - 牛肉档
+    - 烧腊
+    - 凉菜
+    - 凉皮
+    - 汤粉
+    - 鱼档
+    - 吐司
+    - 轻食
+    - 烧鸭
+    - 烧鸡
+    - 烧肉
+    - 烧鹅
+    - 烧味
+    - 章鱼小丸子
+    - 双皮奶
+    - 卤味
+    - 卤水
+    - 小笼包
+    - 绝味
+    - 包道
+    - 馄纯
+    - 濑粉
+    - 手撕大骨
+    - 猪杂
 SPECIAL:
-- BUSINESS.CAR.总收油量
+- BUSINESS.ALL.总收油量
 - BUSINESS.RESTAURANT.收油关系映射
-- SYSTEM.apikeys
+- SYSTEM.kimi_keys
+- SYSTEM.baidu_keys
+- SYSTEM.gaode_keys
+- SYSTEM.serp_keys
+- SYSTEM.tripadvisor_keys
+- OTHER.Tab5.关键词
+- OTHER.Tab5.屏蔽词
+- BUSINESS.FACYORY.工厂坐标
 SYSTEM:
-  apikeys:
+  baidu_keys:
+  - abcdegfh
+  - '87654321'
+  gaode_keys:
+  - a1b2c3d4
+  - '87654321'
+  kimi_keys:
   - '12345678'
   - '87654321'
-  baidu_key: 
-  gaode_key:
-  serp_key: 
-  tripadvisor_key: ""
+  serp_keys:
+  - hfgedcba
+  - '87654321'
+  tripadvisor_keys:
+  - 1b2c3d4e
+  - '87654321'

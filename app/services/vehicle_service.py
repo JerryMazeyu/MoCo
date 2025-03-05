@@ -62,7 +62,7 @@ class VehicleService:
                     print(f"跳过无效记录：{ve}")
 
         except Exception as e:
-            print(f"加载本地文件失败：{e}")
+            print(f"加载本地文件失败，应读取目录为：{self.vehicles_file}，错误信息为：{e}")
             self.vehicles = []
 
     def save_to_excel(self, save_path: Optional[str] = None) -> None:  # 这里修改成带保存路径参数的版本
