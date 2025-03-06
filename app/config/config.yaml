@@ -9,6 +9,7 @@ BUSINESS:
   FACYORY:
     工厂坐标:
     - 工厂1: 103.67786,23.10244
+    - 工厂2: 1.2,2.3
   RESTAURANT:
     收油关系映射:
       小食/小吃/美食/饮食/私房菜: 1,2
@@ -275,7 +276,7 @@ SYSTEM:
   - abcdegfh
   - '87654321'
   gaode_keys:
-  - 4bd94b7b4fed38f78e13d1055dd0f7ce
+  - qwertyuio
   - '87654321'
   kimi_keys:
   - '12345678'

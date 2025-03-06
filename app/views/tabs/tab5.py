@@ -3,9 +3,9 @@ from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, 
     QLabel, QMessageBox, QComboBox, QTableView, QDialog, QGroupBox, QScrollArea,
     QGridLayout, QListWidget, QListWidgetItem, QFrame, QSizePolicy, QCheckBox,
-    QSplitter
+    QSplitter, QDialogButtonBox, QFileDialog, QTextEdit
 )
-from PyQt5.QtCore import Qt, QCoreApplication
+from PyQt5.QtCore import Qt, QCoreApplication, QThread, pyqtSignal, QObject
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIntValidator, QDoubleValidator, QColor, QPalette
 import pandas as pd
 from app.controllers import flow5_get_restaurantinfo, flow5_location_change, flow5_write_to_excel, flow5_test_api_connectivity
@@ -61,6 +61,176 @@ class ApiStatusIndicator(QLabel):
                 border: 1.5px solid #AA0000;
             """)
             self.setToolTip("连接失败")
+
+
+class ExcelGeneratorWorker(QObject):
+    """用于在后台线程中生成Excel的工作类"""
+    # 定义信号
+    progress = pyqtSignal(str)  # 进度信息
+    finished = pyqtSignal(bool, str)  # 完成信号，参数：是否成功，消息
+    restaurant_list_updated = pyqtSignal(list)  # 餐厅列表更新信号
+
+    def __init__(self, tab5_instance):
+        super().__init__()
+        self.tab5 = tab5_instance
+        self.is_running = False
+
+    def run(self):
+        """执行Excel生成任务"""
+        self.is_running = True
+        success = False
+        message = ""
+        
+        try:
+            # 如果已经输入的经纬度，则使用输入的坐标,如果输入的是城市,则转化为经纬度
+            try:
+                self.tab5.city_lat_lon = flow5_location_change(self.tab5.city_input_value)
+            except:
+                self.tab5.city_lat_lon = self.tab5.city_input_value
+            
+            self.progress.emit(f"使用坐标: {self.tab5.city_lat_lon}")
+            self.tab5.restaurantList = []
+            
+            # 动态生成保存路径
+            sanitized_city = "".join([c if c.isalnum() or c.isspace() else "_" for c in self.tab5.city_input_value])
+            self.tab5.default_save_path = os.path.join(os.getcwd(), f"{sanitized_city}__restaurant_data.xlsx")
+            
+            # 获取关键字
+            keywords_list = self.tab5.get_keywords()
+            
+            # API类型映射
+            api_code_to_number = {
+                "gaode": 1,
+                "baidu": 2,
+                "serp": 3,
+                "tripadvisor": 4,
+                "kimi": 5
+            }
+            
+            # 遍历选中的API
+            for api_code in self.tab5.selected_apis:
+                if not self.is_running:
+                    self.progress.emit("任务已取消")
+                    return
+                    
+                # 获取API密钥
+                api_key = self.tab5.get_api_key(api_code)
+                # 获取API编号
+                api_number = api_code_to_number.get(api_code, 0)
+                
+                if not api_key or api_number == 0:
+                    self.progress.emit(f"跳过 {api_code}: 无效的API密钥或未知的API类型")
+                    continue
+                
+                # 遍历关键词
+                for key_words in keywords_list:
+                    if not self.is_running:
+                        self.progress.emit("任务已取消")
+                        return
+                        
+                    self.tab5.keywords_input_value = key_words
+                    self.progress.emit(f"搜索关键词: {self.tab5.keywords_input_value}, API类型: {api_code}, 坐标: {self.tab5.city_lat_lon}")
+                    
+                    try:
+                        restaurantList_api = flow5_get_restaurantinfo(
+                            self.tab5.page_number, api_key, self.tab5.keywords_input_value,
+                            self.tab5.city_lat_lon, api_number, self.tab5.default_save_path
+                        )
+                        self.tab5.restaurantList.extend(restaurantList_api)
+                        self.progress.emit(f"找到 {len(restaurantList_api)} 个餐厅")
+                    except Exception as e:
+                        self.progress.emit(f"API {api_code} 搜索失败: {str(e)}")
+            
+            if not self.is_running:
+                self.progress.emit("任务已取消")
+                return
+                
+            try:
+                # 去重
+                self.progress.emit("正在去除重复餐厅...")
+                self.tab5.restaurantList = self.tab5.remove_duplicates(self.tab5.restaurantList)
+                self.progress.emit(f"去重后剩余 {len(self.tab5.restaurantList)} 个餐厅")
+                
+                ## 去除屏蔽词
+                self.progress.emit("正在过滤屏蔽词...")
+                blocked_words = self.tab5.get_blocked_words()
+                self.tab5.restaurantList = [restaurant for restaurant in self.tab5.restaurantList if not any(word in restaurant['name'] for word in blocked_words)]
+                self.progress.emit(f"过滤屏蔽词后剩余 {len(self.tab5.restaurantList)} 个餐厅")
+
+                # 计算每个餐厅与工厂的距离并添加到字典中
+                self.progress.emit("正在计算餐厅与工厂的距离...")
+                for restaurant in self.tab5.restaurantList:
+                    # 提取餐厅的坐标
+                    res_lon, res_lat = map(float, restaurant['location'].split(','))  # 假设坐标格式为 "经度,纬度"
+                    distance = self.tab5.haversine((res_lat, res_lon), self.tab5.factory_lat_lon)  # 计算距离
+                    restaurant['distance_to_factory'] = distance  # 添加新的键
+                
+                self.progress.emit("正在保存Excel文件...")
+                self.tab5.file_path_excel_exists(self.tab5.restaurantList, self.tab5.default_save_path)
+                
+                # 发送更新后的餐厅列表
+                self.restaurant_list_updated.emit(self.tab5.restaurantList)
+                
+                success = True
+                message = f"Excel文件已保存到：\n{self.tab5.default_save_path}"
+                self.progress.emit(f"成功: {message}")
+            except Exception as e:
+                success = False
+                message = f"Excel生成失败: {str(e)}"
+                self.progress.emit(f"错误: {message}")
+        except Exception as e:
+            success = False
+            message = f"Excel生成过程中出错: {str(e)}"
+            self.progress.emit(f"错误: {message}")
+        
+        self.is_running = False
+        self.finished.emit(success, message)
+
+    def stop(self):
+        """停止任务"""
+        self.is_running = False
+
+
+class ProgressDialog(QDialog):
+    """进度对话框，用于显示Excel生成的进度"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("生成进度")
+        self.setMinimumWidth(500)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        
+        # 创建布局
+        layout = QVBoxLayout(self)
+        
+        # 进度标签
+        self.progress_label = QLabel("正在准备...")
+        layout.addWidget(self.progress_label)
+        
+        # 日志显示区域
+        self.log_area = QTextEdit()
+        self.log_area.setReadOnly(True)
+        self.log_area.setMinimumHeight(200)
+        layout.addWidget(self.log_area)
+        
+        # 按钮
+        button_layout = QHBoxLayout()
+        self.cancel_button = QPushButton("取消")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout.addStretch()
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+    
+    def append_log(self, message):
+        """添加日志消息"""
+        self.log_area.append(message)
+        # 滚动到底部
+        scrollbar = self.log_area.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+        # 更新最新状态
+        self.progress_label.setText(message)
 
 
 class Tab5(QWidget):
@@ -530,93 +700,117 @@ class Tab5(QWidget):
                 unique_list.append(restaurant)
         return unique_list
     
-    ## 生成excel
     def on_generate_excel(self):
+        """生成Excel文件（非阻塞方式）"""
         # 先进行确认
         if not self.prepare_search():
             return
-            
-        # 显示正在生成Excel的信息
-        progress_msg = self.show_centered_message("信息", "Excel文件正在生成中，请稍候...")
-        QCoreApplication.processEvents()  # 强制刷新事件循环以立即显示消息框
+        
+        # 如果已经有线程在运行，则不启动新线程
+        if hasattr(self, 'excel_thread') and self.excel_thread.isRunning():
+            reply = QMessageBox.question(
+                self, "确认", "已有一个Excel生成任务正在进行中，是否取消当前任务？",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                self.excel_worker.stop()
+                self.generate_excel_button.setText("生成餐厅excel")
+            return
+        
+        # 禁用生成按钮，防止重复点击
+        self.generate_excel_button.setEnabled(True)  # 保持启用状态，但改变文本
+        self.generate_excel_button.setText("取消生成")
+        
+        # 创建并显示进度对话框
+        self.progress_dialog = ProgressDialog(self)
+        self.progress_dialog.setModal(False)  # 非模态对话框，不阻塞用户操作
+        self.progress_dialog.show()
+        
+        # 创建工作线程
+        self.excel_thread = QThread()
+        self.excel_worker = ExcelGeneratorWorker(self)
+        self.excel_worker.moveToThread(self.excel_thread)
+        
+        # 连接信号
+        self.excel_thread.started.connect(self.excel_worker.run)
+        self.excel_worker.progress.connect(self.on_excel_progress)
+        self.excel_worker.finished.connect(self.on_excel_finished)
+        self.excel_worker.restaurant_list_updated.connect(self.on_restaurant_list_updated)
+        self.excel_worker.finished.connect(self.excel_thread.quit)
+        self.excel_worker.finished.connect(self.excel_worker.deleteLater)
+        self.excel_thread.finished.connect(self.excel_thread.deleteLater)
+        
+        # 连接进度对话框的取消按钮
+        self.progress_dialog.rejected.connect(self.on_cancel_excel_generation)
+        
+        # 修改按钮功能为取消
+        self.generate_excel_button.clicked.disconnect()
+        self.generate_excel_button.clicked.connect(self.on_cancel_excel_generation)
+        
+        # 启动线程
+        self.excel_thread.start()
 
-        ## 地名转化为经纬度，如果转不了就用地面
+    def on_cancel_excel_generation(self):
+        """取消Excel生成任务"""
+        if hasattr(self, 'excel_worker') and self.excel_worker.is_running:
+            reply = QMessageBox.question(
+                self, "确认", "确定要取消当前的Excel生成任务吗？",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                print("正在取消Excel生成任务...")
+                self.excel_worker.stop()
+                self.generate_excel_button.setText("生成餐厅excel")
+                
+                # 更新进度对话框
+                if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+                    self.progress_dialog.append_log("任务已取消！")
+                    # 将取消按钮改为关闭按钮
+                    self.progress_dialog.cancel_button.setText("关闭")
+                    self.progress_dialog.cancel_button.clicked.disconnect()
+                    self.progress_dialog.cancel_button.clicked.connect(self.progress_dialog.accept)
+                
+                # 恢复按钮功能
+                self.generate_excel_button.clicked.disconnect()
+                self.generate_excel_button.clicked.connect(self.on_generate_excel)
+
+    def on_excel_progress(self, message):
+        """处理Excel生成进度更新"""
+        print(message)  # 这会显示在消息控制台中
+        
+        # 更新进度对话框
+        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+            self.progress_dialog.append_log(message)
+
+    def on_excel_finished(self, success, message):
+        """处理Excel生成完成"""
+        # 恢复按钮状态和功能
+        self.generate_excel_button.setText("生成餐厅excel")
+        
+        # 恢复按钮功能
         try:
-            # 如果已经输入的经纬度，则使用输入的坐标,如果输入的是城市,则转化为经纬度
-            try:
-                self.city_lat_lon = flow5_location_change(self.city_input_value)
-            except:
-                self.city_lat_lon = self.city_input_value
-            print(self.city_lat_lon)
-            self.restaurantList=[]
-            # 动态生成保存路径
-            sanitized_city = "".join([c if c.isalnum() or c.isspace() else "_" for c in self.city_input_value])
-            self.default_save_path = os.path.join(os.getcwd(), f"{sanitized_city}__restaurant_data.xlsx")
-            
-            # 获取关键字
-            keywords_list = self.get_keywords()
-            
-            # API类型映射
-            api_code_to_number = {
-                "gaode": 1,
-                "baidu": 2,
-                "serp": 3,
-                "tripadvisor": 4,
-                "kimi": 5
-            }
-            
-            # 遍历选中的API
-            for api_code in self.selected_apis:
-                # 获取API密钥
-                api_key = self.get_api_key(api_code)
-                # 获取API编号
-                api_number = api_code_to_number.get(api_code, 0)
-                
-                if not api_key or api_number == 0:
-                    print(f"跳过 {api_code}: 无效的API密钥或未知的API类型")
-                    continue
-                
-                # 遍历关键词
-                for key_words in keywords_list:
-                    self.keywords_input_value = key_words
-                    print(f"搜索关键词: {self.keywords_input_value}, API类型: {api_code}, 坐标: {self.city_lat_lon}")
-                    
-                    try:
-                        restaurantList_api = flow5_get_restaurantinfo(
-                            self.page_number, api_key, self.keywords_input_value,
-                            self.city_lat_lon, api_number, self.default_save_path
-                        )
-                        self.restaurantList.extend(restaurantList_api)
-                    except Exception as e:
-                        print(f"API {api_code} 搜索失败: {str(e)}")
-            
-            try:
-                # 去重
-                self.restaurantList = self.remove_duplicates(self.restaurantList)
-                ## 去除屏蔽词
-                blocked_words = self.get_blocked_words()
-                self.restaurantList = [restaurant for restaurant in self.restaurantList if not any(word in restaurant['name'] for word in blocked_words)]
+            self.generate_excel_button.clicked.disconnect()
+        except:
+            pass  # 如果没有连接，忽略错误
+        self.generate_excel_button.clicked.connect(self.on_generate_excel)
+        
+        # 关闭进度对话框
+        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+            self.progress_dialog.append_log("任务完成！")
+            # 将取消按钮改为关闭按钮
+            self.progress_dialog.cancel_button.setText("关闭")
+            self.progress_dialog.cancel_button.clicked.disconnect()
+            self.progress_dialog.cancel_button.clicked.connect(self.progress_dialog.accept)
+        
+        # 显示结果消息
+        if success:
+            QMessageBox.information(self, "成功", message)
+        else:
+            QMessageBox.critical(self, "错误", message)
 
-                # 计算每个餐厅与工厂的距离并添加到字典中
-                for restaurant in self.restaurantList:
-                    # 提取餐厅的坐标
-                    res_lon, res_lat = map(float, restaurant['location'].split(','))  # 假设坐标格式为 "经度,纬度"
-                    distance = self.haversine((res_lat, res_lon), self.factory_lat_lon)  # 计算距离
-                    restaurant['distance_to_factory'] = distance  # 添加新的键
-                self.file_path_excel_exists(self.restaurantList, self.default_save_path)
-                # 关闭进度消息框
-                progress_msg.accept()
-                # 显示保存成功信息
-                QMessageBox.information(self, "成功", f"Excel文件已保存到：\n{self.default_save_path}")
-            except Exception as e:
-                # 如果出错，也关闭进度消息框并显示错误信息
-                progress_msg.accept()
-                QMessageBox.critical(self, "错误", f"Excel生成失败: {str(e)}")
-        except Exception as e:
-            # 处理任何异常
-            if progress_msg:
-                progress_msg.accept()
-            QMessageBox.critical(self, "错误", f"Excel生成过程中出错: {str(e)}")
+    def on_restaurant_list_updated(self, restaurant_list):
+        """处理餐厅列表更新"""
+        self.restaurantList = restaurant_list
     
     def on_view_results(self):
         """查看生成的Excel文件内容"""

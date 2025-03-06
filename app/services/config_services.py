@@ -38,9 +38,9 @@ class ConfigValidator:
         """验证 CAR 中所有值是否为 int 或 float"""
         logger.info(f"[CONFIG] 正在验证 CAR 字段。")
         for key, value in car_section.items():
-            if not isinstance(value, (int, float)):
-                logger.error(f"[CONFIG] CAR 中的 '{key}' 值 '{value}' 无效，必须是 int 或 float。")
-                raise ValueError(f"CAR 中的 '{key}' 值 '{value}' 无效，必须是 int 或 float。")
+            if not isinstance(value, (int, float, str)):
+                logger.error(f"[CONFIG] CAR 中的 '{key}' 值 '{value}' 无效，必须是 int 或 float 或 str。")
+                raise ValueError(f"CAR 中的 '{key}' 值 '{value}' 无效，必须是 int 或 float 或 str。")
         logger.info(f"[CONFIG] CAR 字段验证成功。")
 
     @staticmethod
