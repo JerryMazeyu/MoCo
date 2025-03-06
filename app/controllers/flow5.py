@@ -38,7 +38,7 @@ def flow5_write_to_excel(datalist, filename):
             sheet.write(i + 1, 8, datalist[i]['distance_to_factory'])  
 
         book.save(filename)  # r'东莞市.xlsx'
-        print('save success')
+        print('保存成功，保存路径为：', filename)
 ## 根据地区获得经纬度
 def flow5_location_change(city_name):
     gps = Nominatim(user_agent='myuseragent')

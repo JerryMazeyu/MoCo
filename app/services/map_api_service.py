@@ -265,7 +265,6 @@ class RestaurantInfo:
                 urls = self.create_google_url()
             types = 'google'
             restaurantList = self.get_google_restaurant(urls)
-        print(len(restaurantList))
         ## 写入excel
         # fileName = types + '-' + self.address + '-' + self.keywords + '.xls'
         # if self.maptype == 3:

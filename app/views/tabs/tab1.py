@@ -43,27 +43,30 @@ class Tab1(QWidget):
         self.left_layout.setSpacing(10)
 
         self.import_button = QPushButton("导入餐厅数据")
-        self.extract_street_button = QPushButton("获取街道信息")
-        self.extract_restaurant_type_button = QPushButton("获取餐厅类型")
+        self.generate_info_button = QPushButton("餐厅补充信息生成\n(街道信息&餐厅类型)")
+        # self.extract_street_button = QPushButton("获取街道信息")
+        # self.extract_restaurant_type_button = QPushButton("获取餐厅类型")
         # self.edit_button = QPushButton("配置信息")
         # self.next_button = QPushButton("下一步")
 
         # 强制按钮不要垂直拉伸
-        for btn in (self.import_button, self.extract_street_button, self.extract_restaurant_type_button):
+        for btn in (self.import_button, self.generate_info_button):
             btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            btn.setFixedWidth(120)
+            btn.setFixedWidth(150)
         
         # 设置按钮固定宽度
-        button_width = 120
+        button_width = 150
         self.import_button.setFixedWidth(button_width)
-        self.extract_street_button.setFixedWidth(button_width)
-        self.extract_restaurant_type_button.setFixedWidth(button_width)
+        self.generate_info_button.setFixedWidth(button_width)
+        # self.extract_street_button.setFixedWidth(button_width)
+        # self.extract_restaurant_type_button.setFixedWidth(button_width)
         # self.edit_button.setFixedWidth(button_width)
         # self.next_button.setFixedWidth(button_width)
         
         self.left_layout.addWidget(self.import_button)
-        self.left_layout.addWidget(self.extract_street_button)
-        self.left_layout.addWidget(self.extract_restaurant_type_button)
+        self.left_layout.addWidget(self.generate_info_button)
+        # self.left_layout.addWidget(self.extract_street_button)
+        # self.left_layout.addWidget(self.extract_restaurant_type_button)
         # self.left_layout.addWidget(self.edit_button)
         # self.left_layout.addWidget(self.next_button)
 
@@ -106,8 +109,7 @@ class Tab1(QWidget):
 
         # ========== 按钮信号绑定 ==========
         self.import_button.clicked.connect(self.load_data)
-        self.extract_street_button.clicked.connect(self.extract_street)
-        self.extract_restaurant_type_button.clicked.connect(self.extract_restaurant_type)
+        self.generate_info_button.clicked.connect(self.generate_info)
 
     def update_message(self, message: str):
         self.msg = message
@@ -144,28 +146,32 @@ class Tab1(QWidget):
                 QMessageBox.critical(self, "错误", f"加载 Excel 文件时出错：\n{str(e)}")
                 return
     
-    def extract_street(self):
-        """提取街道信息"""
+    def generate_info(self):
+        """生成餐厅补充信息"""
         try:
+            # 添加一个对话框询问是否使用LLM
+            reply = QMessageBox.question(
+                self,
+                "使用LLM辅助",
+                "是否使用LLM辅助查询无法匹配的街道和餐厅类型？\n(这将使用KiMi API，可能需要更长时间)",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            use_llm = reply == QMessageBox.Yes
+            
             self.update_message("正在提取街道信息...")
-            df_with_street, restaurants_with_street = flow1_generate_candidate_street(self.xlsx_viewer.file_path)
+            df_with_street, restaurants_with_street = flow1_generate_candidate_street(self.xlsx_viewer.file_path, use_llm)
             global_context.data["restaurants"] = restaurants_with_street
             self.xlsx_viewer.refresh_data(df=df_with_street)
             self.update_message("街道信息提取成功")
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"提取街道信息时出错：\n{str(e)}")
-            return
-    
-    def extract_restaurant_type(self):
-        """提取餐厅类型"""
-        try:
+            
             self.update_message("正在提取餐厅类型...")
-            df_with_type, restaurant_with_rest_type = flow1_generate_restaurant_type(self.xlsx_viewer.file_path)
+            df_with_type, restaurant_with_rest_type = flow1_generate_restaurant_type(self.xlsx_viewer.file_path, use_llm)
             global_context.data["restaurants"] = restaurant_with_rest_type
             self.xlsx_viewer.refresh_data(df=df_with_type)
-            self.update_message("餐厅类型提取成功")
+            self.update_message("餐厅补充信息生成成功")
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"提取餐厅类型时出错：\n{str(e)}")
+            QMessageBox.critical(self, "错误", f"生成餐厅补充信息时出错：\n{str(e)}")
             return
     
     def save_last_directory(self, path):

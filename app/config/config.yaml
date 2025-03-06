@@ -105,7 +105,7 @@ BUSINESS:
       province: Province
 OTHER:
   Tab1:
-    last_dir: C:/Users/H3C/WorkSpace/GXC/MoCo/app/assets
+    last_dir: F:/WorkSpace/Project2025/MoCo/app/assets
   Tab2:
     last_dir: C:/Users/H3C/WorkSpace/GXC/MoCo/app/assets
   Tab5:
@@ -276,7 +276,7 @@ SYSTEM:
   - abcdegfh
   - '87654321'
   gaode_keys:
-  - qwertyuio
+  - ddf7c7c20bd1d026703c0b84d07be541
   - '87654321'
   kimi_keys:
   - '12345678'

@@ -42,39 +42,41 @@ def flow1_load_df(file_path: str) -> pd.DataFrame:
     except Exception as e:
         logger.error(f"加载餐厅数据时出错: {str(e)}")
 
-def flow1_generate_candidate_street(file_path: str) -> pd.DataFrame:
+def flow1_generate_candidate_street(file_path: str, use_llm: bool = False) -> pd.DataFrame:
     """
     从 DataFrame 中生成街道候选列表
-    :param df: DataFrame
+    :param file_path: Excel文件路径
+    :param use_llm: 是否使用LLM辅助查询
     :return: 街道候选列表
     """
     logger = setup_logger("moco.log")
-    logger.info(f"正在生成候选街道。")
+    logger.info(f"正在生成候选街道。使用LLM: {use_llm}")
     global restaurant_service
     # restaurant_service = RestaurantService()
     # restaurant_service.load(file_path)
     # 从 DataFrame 中生成街道候选列表
     try:
-        df_with_street, restaurants_with_street = restaurant_service.extract_street_base_batch()
+        df_with_street, restaurants_with_street = restaurant_service.extract_street_base_batch(use_llm=use_llm)
         return df_with_street, restaurants_with_street
     except Exception as e:
         logger.error(f"生成街道候选列表时出错: {str(e)}")
 
-def flow1_generate_restaurant_type(file_path: str) -> pd.DataFrame:
+def flow1_generate_restaurant_type(file_path: str, use_llm: bool = False) -> pd.DataFrame:
     """
     从 DataFrame 中生成餐厅类型
-    :param df: DataFrame
-    :return: 餐厅类型
+    :param file_path: Excel文件路径
+    :param use_llm: 是否使用LLM辅助查询
+    :return: 餐厅类型列表
     """
     logger = setup_logger("moco.log")
-    logger.info(f"正在生成餐厅类型。")
+    logger.info(f"正在生成餐厅类型。使用LLM: {use_llm}")
     global restaurant_service
     # restaurant_service = RestaurantService()
     # restaurant_service.load(file_path)
     # 从 DataFrame 中生成餐厅类型
     try:
-        df_with_rest_type, restaurant_with_rest_type = restaurant_service.extract_restaurant_type_batch()
-        return df_with_rest_type, restaurant_with_rest_type
+        df_with_type, restaurants_with_type = restaurant_service.extract_restaurant_type_batch(use_llm=use_llm)
+        return df_with_type, restaurants_with_type
     except Exception as e:
         logger.error(f"生成餐厅类型时出错: {str(e)}")
 
