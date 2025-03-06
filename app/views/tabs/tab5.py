@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
     QGridLayout, QListWidget, QListWidgetItem, QFrame, QSizePolicy, QCheckBox,
     QSplitter, QDialogButtonBox, QFileDialog, QTextEdit
 )
-from PyQt5.QtCore import Qt, QCoreApplication, QThread, pyqtSignal, QObject
+from PyQt5.QtCore import Qt, QCoreApplication, QThread, pyqtSignal, QObject, QTimer
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIntValidator, QDoubleValidator, QColor, QPalette
 import pandas as pd
 from app.controllers import flow5_get_restaurantinfo, flow5_location_change, flow5_write_to_excel, flow5_test_api_connectivity
@@ -13,7 +13,8 @@ from app.config import get_config
 from app.utils import rp, setup_logger
 import xlrd
 import math
-
+from app.views.components.xlsxviewer import XlsxViewer
+from app.utils import rp
 
 
 class ApiStatusIndicator(QLabel):
@@ -69,6 +70,7 @@ class ExcelGeneratorWorker(QObject):
     progress = pyqtSignal(str)  # 进度信息
     finished = pyqtSignal(bool, str)  # 完成信号，参数：是否成功，消息
     restaurant_list_updated = pyqtSignal(list)  # 餐厅列表更新信号
+    file_exists = pyqtSignal(list, str)  # 文件已存在信号，参数：餐厅列表，文件名
 
     def __init__(self, tab5_instance):
         super().__init__()
@@ -93,7 +95,7 @@ class ExcelGeneratorWorker(QObject):
             
             # 动态生成保存路径
             sanitized_city = "".join([c if c.isalnum() or c.isspace() else "_" for c in self.tab5.city_input_value])
-            self.tab5.default_save_path = os.path.join(os.getcwd(), f"{sanitized_city}__restaurant_data.xlsx")
+            self.tab5.default_save_path = rp(f"{sanitized_city}_restaurant_data.xlsx")
             
             # 获取关键字
             keywords_list = self.tab5.get_keywords()
@@ -159,21 +161,49 @@ class ExcelGeneratorWorker(QObject):
 
                 # 计算每个餐厅与工厂的距离并添加到字典中
                 self.progress.emit("正在计算餐厅与工厂的距离...")
-                for restaurant in self.tab5.restaurantList:
-                    # 提取餐厅的坐标
-                    res_lon, res_lat = map(float, restaurant['location'].split(','))  # 假设坐标格式为 "经度,纬度"
-                    distance = self.tab5.haversine((res_lat, res_lon), self.tab5.factory_lat_lon)  # 计算距离
-                    restaurant['distance_to_factory'] = distance  # 添加新的键
+                
+                # 首先检查工厂坐标是否有效
+                if not self.tab5.factory_lat_lon:
+                    self.progress.emit("警告: 工厂坐标未设置，跳过距离计算")
+                    # 给所有餐厅设置一个默认距离
+                    for restaurant in self.tab5.restaurantList:
+                        restaurant['distance_to_factory'] = 0
+                else:
+                    for restaurant in self.tab5.restaurantList:
+                        try:
+                            # 提取餐厅的坐标
+                            location = restaurant.get('location', '')
+                            if not location:
+                                self.progress.emit(f"警告: 餐厅 {restaurant.get('name', '未知')} 没有坐标信息，跳过距离计算")
+                                restaurant['distance_to_factory'] = 0
+                                continue
+                                
+                            res_lon, res_lat = map(float, location.split(','))  # 假设坐标格式为 "经度,纬度"
+                            distance = self.tab5.haversine((res_lat, res_lon), self.tab5.factory_lat_lon)  # 计算距离
+                            restaurant['distance_to_factory'] = distance  # 添加新的键
+                        except Exception as e:
+                            self.progress.emit(f"警告: 计算餐厅 {restaurant.get('name', '未知')} 的距离时出错: {str(e)}")
+                            restaurant['distance_to_factory'] = 0  # 设置默认值
                 
                 self.progress.emit("正在保存Excel文件...")
-                self.tab5.file_path_excel_exists(self.tab5.restaurantList, self.tab5.default_save_path)
                 
-                # 发送更新后的餐厅列表
-                self.restaurant_list_updated.emit(self.tab5.restaurantList)
-                
-                success = True
-                message = f"Excel文件已保存到：\n{self.tab5.default_save_path}"
-                self.progress.emit(f"成功: {message}")
+                # 检查文件是否存在
+                if os.path.exists(self.tab5.default_save_path):
+                    # 不在线程中显示对话框，而是发出信号
+                    self.file_exists.emit(self.tab5.restaurantList, self.tab5.default_save_path)
+                    # 信号处理程序会处理后续操作和完成信号，所以这里直接返回
+                    return
+                else:
+                    # 文件不存在，直接写入
+                    flow5_write_to_excel(self.tab5.restaurantList, self.tab5.default_save_path)
+                    self.progress.emit(f"文件已保存到: {self.tab5.default_save_path}")
+                    
+                    # 发送更新后的餐厅列表
+                    self.restaurant_list_updated.emit(self.tab5.restaurantList)
+                    
+                    success = True
+                    message = f"Excel文件已保存到：\n{self.tab5.default_save_path}"
+                    self.progress.emit(f"成功: {message}")
             except Exception as e:
                 success = False
                 message = f"Excel生成失败: {str(e)}"
@@ -184,7 +214,10 @@ class ExcelGeneratorWorker(QObject):
             self.progress.emit(f"错误: {message}")
         
         self.is_running = False
-        self.finished.emit(success, message)
+        # 只有在文件不存在的情况下才会发送完成信号
+        # 如果文件存在，完成信号由on_file_exists处理程序发送
+        if not os.path.exists(self.tab5.default_save_path):
+            self.finished.emit(success, message)
 
     def stop(self):
         """停止任务"""
@@ -413,6 +446,10 @@ class Tab5(QWidget):
         buttons_layout.addWidget(self.distance_button)
         main_layout.addLayout(buttons_layout)
         
+        # 添加Excel查看器用于显示Excel数据
+        self.xlsx_viewer = XlsxViewer(self)
+        main_layout.addWidget(self.xlsx_viewer)
+        
         # 连接信号与槽
         self.reset_button.clicked.connect(self.on_reset)
         self.generate_excel_button.clicked.connect(self.on_generate_excel)
@@ -421,10 +458,6 @@ class Tab5(QWidget):
         self.translate_button.clicked.connect(self.on_translate_addresses)
         self.distance_button.clicked.connect(self.on_calculate_distances)
 
-        # 添加表格视图用于显示Excel数据
-        self.table_view = QTableView(self)
-        main_layout.addWidget(self.table_view)
-        
         # 设置主布局到窗口
         self.setLayout(main_layout)
     
@@ -554,7 +587,21 @@ class Tab5(QWidget):
         # 获取工厂经纬度
         lat = self.latitude_input.text().strip()
         lon = self.longitude_input.text().strip()
-        self.factory_lat_lon = f"{lat},{lon}"
+        
+        # 检查经纬度是否有效
+        if not lat or not lon:
+            QMessageBox.warning(self, "警告", "工厂经纬度不能为空")
+            return False
+            
+        try:
+            # 尝试将经纬度转换为浮点数，确保它们是有效的数字
+            float_lat = float(lat)
+            float_lon = float(lon)
+            # 格式化为 "纬度,经度" 字符串
+            self.factory_lat_lon = f"{float_lat},{float_lon}"
+        except ValueError:
+            QMessageBox.warning(self, "警告", "工厂经纬度必须是有效的数字")
+            return False
         
         # 检查是否选择了API
         if not self.selected_apis:
@@ -628,50 +675,63 @@ class Tab5(QWidget):
     def haversine(self,coord1, coord2):
         """计算两个经纬度之间的距离（单位：公里）"""
         R = 6371  # 地球半径，单位为公里
-        lat1, lon1 = coord1
-        lat2, lon2 = map(float, coord2.split(','))
-
-        dlat = math.radians(lat2 - lat1)
-        dlon = math.radians(lon2 - lon1)
-
-        a = (math.sin(dlat / 2) ** 2 +
-            math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
-        c = 2 * math.asin(math.sqrt(a))
-        return R * c  # 返回距离，单位为公里
-    
-    def file_path_excel_exists(self,datalist, filename):
-        # 检查文件是否存在
-        if os.path.exists(filename):
-            # 弹出对话框询问用户
-            # 创建消息框
-            msg_box = QMessageBox()
-            msg_box.setWindowTitle('文件已存在')
-            msg_box.setText('文件已存在，您想要替换原文件还是在源文件上新增数据？')
-
-            # 添加自定义按钮
-            replace_button = msg_box.addButton('替换', QMessageBox.ActionRole)
-            append_button = msg_box.addButton('新增', QMessageBox.ActionRole)
-            cancel_button = msg_box.addButton('取消', QMessageBox.RejectRole)
-            # 显示消息框并等待用户响应
-            msg_box.exec_()
-
-            if msg_box.clickedButton() == replace_button:
-                # 用户选择替换
-                print("Replacing the existing file.")
-                flow5_write_to_excel(datalist, filename)  # 直接写入文件
-            elif msg_box.clickedButton() == append_button:
-                # 用户选择新增
-                print("Appending to the existing file.")
-                existing_data = pd.read_excel(filename)  # 读取现有文件
-                combined_data = pd.concat([existing_data, pd.DataFrame(datalist)])  # 合并数据
-                combined_data = combined_data.drop_duplicates(subset=['name', 'address'], keep='first')  # 根据名称和地址去重
-                flow5_write_to_excel(combined_data.to_dict(orient='records'), filename)  # 写入去重后的数据
+        
+        # 处理第一个坐标
+        try:
+            if isinstance(coord1, tuple) and len(coord1) == 2:
+                lat1, lon1 = coord1
+            elif isinstance(coord1, list) and len(coord1) == 2:
+                lat1, lon1 = coord1
+            elif isinstance(coord1, str):
+                lat1, lon1 = map(float, coord1.split(','))
             else:
-                print("Operation cancelled.")
-                return  # 用户选择取消，退出函数
-        else:
-            # 文件不存在，直接写入
-            flow5_write_to_excel(datalist, filename)
+                print(f"无效的坐标1格式: {coord1}")
+                return 0
+        except Exception as e:
+            print(f"处理坐标1出错: {e}, 坐标值: {coord1}")
+            return 0
+        
+        # 处理第二个坐标
+        try:
+            if isinstance(coord2, tuple) and len(coord2) == 2:
+                lat2, lon2 = coord2
+            elif isinstance(coord2, list) and len(coord2) == 2:
+                lat2, lon2 = coord2
+            elif isinstance(coord2, str):
+                # 确保是字符串且包含逗号
+                lat2, lon2 = map(float, coord2.split(','))
+            else:
+                print(f"无效的坐标2格式: {coord2}")
+                return 0
+        except Exception as e:
+            print(f"处理坐标2出错: {e}, 坐标值: {coord2}")
+            return 0
+
+        # 确保所有值都是数值类型
+        try:
+            lat1, lon1, lat2, lon2 = float(lat1), float(lon1), float(lat2), float(lon2)
+            
+            dlat = math.radians(lat2 - lat1)
+            dlon = math.radians(lon2 - lon1)
+
+            a = (math.sin(dlat / 2) ** 2 +
+                math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
+            c = 2 * math.asin(math.sqrt(a))
+            return R * c  # 返回距离，单位为公里
+        except Exception as e:
+            print(f"计算距离出错: {e}, 坐标值: {lat1},{lon1} 和 {lat2},{lon2}")
+            return 0
+    
+    def update_xlsx_viewer(self, file_path):
+        """更新XlsxViewer显示"""
+        try:
+            if os.path.exists(file_path):
+                df = pd.read_excel(file_path)
+                self.xlsx_viewer.get_file_path(file_path)
+                self.xlsx_viewer.load_data(df)
+                print(f"已更新XlsxViewer，显示文件：{file_path}")
+        except Exception as e:
+            print(f"更新XlsxViewer失败: {str(e)}")
 
 
     ## 生成excel提示框
@@ -736,6 +796,7 @@ class Tab5(QWidget):
         self.excel_worker.progress.connect(self.on_excel_progress)
         self.excel_worker.finished.connect(self.on_excel_finished)
         self.excel_worker.restaurant_list_updated.connect(self.on_restaurant_list_updated)
+        self.excel_worker.file_exists.connect(self.on_file_exists)
         self.excel_worker.finished.connect(self.excel_thread.quit)
         self.excel_worker.finished.connect(self.excel_worker.deleteLater)
         self.excel_thread.finished.connect(self.excel_thread.deleteLater)
@@ -805,6 +866,14 @@ class Tab5(QWidget):
         # 显示结果消息
         if success:
             QMessageBox.information(self, "成功", message)
+            # 如果成功生成Excel，自动加载并显示结果
+            try:
+                if hasattr(self, 'default_save_path') and os.path.exists(self.default_save_path):
+                    df = pd.read_excel(self.default_save_path)
+                    self.xlsx_viewer.get_file_path(self.default_save_path)
+                    self.xlsx_viewer.load_data(df)
+            except Exception as e:
+                print(f"自动加载Excel失败: {str(e)}")
         else:
             QMessageBox.critical(self, "错误", message)
 
@@ -817,25 +886,13 @@ class Tab5(QWidget):
         try:
             if hasattr(self, 'default_save_path') and os.path.exists(self.default_save_path):
                 df = pd.read_excel(self.default_save_path)
-                model = self.pandas_to_model(df)
-                self.table_view.setModel(model)
-                self.table_view.resizeColumnsToContents()
+                self.xlsx_viewer.get_file_path(self.default_save_path)
+                self.xlsx_viewer.load_data(df)
             else:
                 QMessageBox.warning(self, "警告", "请先生成Excel文件")
         except Exception as e:
             QMessageBox.critical(self, "错误", f"无法读取Excel文件: {str(e)}")
     
-    def pandas_to_model(self, df):
-        """将 pandas DataFrame 转换为 QStandardItemModel"""
-        model = QStandardItemModel()
-        model.setHorizontalHeaderLabels(df.columns)
-        
-        for row_idx, row in df.iterrows():
-            items = [QStandardItem(str(cell)) for cell in row]
-            model.appendRow(items)
-            
-        return model
-        
     def on_verify_restaurants(self):
         """餐厅智能验证功能"""
         print("开始进行餐厅智能验证...")
@@ -884,6 +941,67 @@ class Tab5(QWidget):
             pass
         except Exception as e:
             QMessageBox.critical(self, "错误", f"餐厅距离获取过程中出错: {str(e)}")
+
+    def on_file_exists(self, datalist, filename):
+        """处理文件已存在的情况（在主线程中执行）"""
+        # 创建消息框
+        msg_box = QMessageBox()
+        msg_box.setWindowTitle('文件已存在')
+        msg_box.setText('文件已存在，您想要替换原文件还是在源文件上新增数据？')
+
+        # 添加自定义按钮
+        replace_button = msg_box.addButton('替换', QMessageBox.ActionRole)
+        append_button = msg_box.addButton('新增', QMessageBox.ActionRole)
+        cancel_button = msg_box.addButton('取消', QMessageBox.RejectRole)
+        
+        # 显示消息框并等待用户响应
+        msg_box.exec_()
+        
+        if msg_box.clickedButton() == replace_button:
+            # 用户选择替换
+            print("Replacing the existing file.")
+            flow5_write_to_excel(datalist, filename)  # 直接写入文件
+            # 更新XlsxViewer
+            self.update_xlsx_viewer(filename)
+            # 更新进度对话框
+            if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+                self.progress_dialog.append_log(f"已替换文件: {filename}")
+            # 发送成功信号
+            if hasattr(self, 'excel_worker'):
+                # 需要在安全的时间发送完成信号
+                success_message = f"Excel文件已保存到：\n{filename}"
+                QTimer.singleShot(500, lambda: self.excel_worker.finished.emit(True, success_message))
+        elif msg_box.clickedButton() == append_button:
+            # 用户选择新增
+            print("Appending to the existing file.")
+            try:
+                existing_data = pd.read_excel(filename)  # 读取现有文件
+                combined_data = pd.concat([existing_data, pd.DataFrame(datalist)])  # 合并数据
+                combined_data = combined_data.drop_duplicates(subset=['name', 'address'], keep='first')  # 根据名称和地址去重
+                flow5_write_to_excel(combined_data.to_dict(orient='records'), filename)  # 写入去重后的数据
+                # 更新XlsxViewer
+                self.update_xlsx_viewer(filename)
+                # 更新进度对话框
+                if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+                    self.progress_dialog.append_log(f"已添加数据到: {filename}")
+                # 发送成功信号
+                if hasattr(self, 'excel_worker'):
+                    # 需要在安全的时间发送完成信号
+                    success_message = f"数据已添加到Excel文件：\n{filename}"
+                    QTimer.singleShot(500, lambda: self.excel_worker.finished.emit(True, success_message))
+            except Exception as e:
+                error_message = f"添加数据失败: {str(e)}"
+                if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+                    self.progress_dialog.append_log(error_message)
+                if hasattr(self, 'excel_worker'):
+                    QTimer.singleShot(500, lambda: self.excel_worker.finished.emit(False, error_message))
+        else:
+            # 用户选择取消
+            print("Operation cancelled.")
+            if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+                self.progress_dialog.append_log("操作已取消")
+            if hasattr(self, 'excel_worker'):
+                QTimer.singleShot(500, lambda: self.excel_worker.finished.emit(False, "用户取消了操作"))
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

@@ -4,6 +4,9 @@ from app.models.restaurant_model import Restaurant
 from app.config import get_config
 from typing import Optional, Union
 from app.utils.logger import setup_logger
+import requests
+import json
+import re
 
 
 CONF = get_config()
@@ -15,6 +18,67 @@ class RestaurantService:
         self.restaurants = []
         self.restaurants_df = None
         self.logger = setup_logger("moco.log")
+    
+    def call_kimi_api(self, query, api_key=None):
+        """
+        调用KiMi API进行搜索
+        
+        :param query: 搜索查询
+        :param api_key: API密钥，如果为None则从配置文件中获取
+        :return: API响应
+        """
+        if not api_key:
+            # 从配置中获取API密钥
+            kimi_keys = CONF.get("SYSTEM.kimi_keys", default=[])
+            if not kimi_keys or len(kimi_keys) == 0:
+                self.logger.error("未找到KiMi API密钥")
+                return None
+            api_key = kimi_keys[0]  # 使用第一个密钥
+        
+        self.logger.info(f"调用KiMi API进行搜索: {query}")
+        
+        # KiMi API的URL和请求头
+        url = "https://kimi.moonshot.cn/api/chat"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+        
+        # 构建请求体
+        payload = {
+            "model": "moonshot-v1-128k",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": f"请帮我联网搜索：{query}，返回简洁的结果。"
+                }
+            ],
+            "temperature": 0.7,
+            "tools": [
+                {
+                    "type": "web_search"
+                }
+            ]
+        }
+        
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            response.raise_for_status()  # 如果响应状态码不是200，则抛出异常
+            
+            response_data = response.json()
+            self.logger.info(f"KiMi API响应: {response_data}")
+            
+            # 提取回答内容
+            if "choices" in response_data and len(response_data["choices"]) > 0:
+                content = response_data["choices"][0]["message"]["content"]
+                return content
+            else:
+                self.logger.warning("KiMi API响应格式不正确")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"调用KiMi API时出错: {str(e)}")
+            return None
     
     def load(self, file: Union[str, pd.DataFrame]) -> List[Restaurant]:
         """加载餐厅数据"""
@@ -122,12 +186,23 @@ class RestaurantService:
         df.to_excel(file_path, index=False)
     
     
-    def extract_street_base_batch(self) -> pd.DataFrame:
-        """批量生成街道候选列表"""
+    def extract_street_base_batch(self, use_llm=False) -> pd.DataFrame:
+        """
+        批量生成街道候选列表
+        
+        :param use_llm: 是否使用LLM辅助查询
+        :return: 更新后的DataFrame和餐厅列表
+        """
         tmp = []
         for restaurant in self.restaurants:
             try:
-                candidate_street = self.extract_street_base(restaurant.city, restaurant.district, restaurant.chinese_address)
+                candidate_street = self.extract_street_base(
+                    restaurant.city, 
+                    restaurant.district, 
+                    restaurant.chinese_address, 
+                    use_llm=use_llm,
+                    restaurant_name=restaurant.chinese_name
+                )
                 setattr(restaurant, "street", candidate_street)
                 tmp.append(restaurant)
             except Exception as e:
@@ -140,13 +215,15 @@ class RestaurantService:
         return self.restaurants_df, self.restaurants
 
 
-    def extract_street_base(self, city: str, district: str, address: str) -> Optional[str]:
+    def extract_street_base(self, city: str, district: str, address: str, use_llm=False, restaurant_name=None) -> Optional[str]:
         """
         根据城市、区域和地址从配置中匹配对应的街道。
         
         :param city: 城市名称（如：惠州市）
         :param district: 区域名称（如：博罗县）
         :param address: 完整地址字符串（如：惠州市博罗县石湾镇兴业大道东侧壹嘉广场1楼）
+        :param use_llm: 是否使用LLM辅助查询
+        :param restaurant_name: 餐厅名称，用于LLM查询时提供更多上下文
         :return: 匹配到的街道名称，如果没有匹配到则返回 None
         """
         # 获取城市和区域对应的街道列表
@@ -154,8 +231,35 @@ class RestaurantService:
 
         if not streets:
             return None  # 如果没有配置对应的街道列表，返回 None
+            
         # 从地址中提取街道名
-        return self._extract_street_from_address(streets, address)
+        street = self._extract_street_from_address(streets, address)
+        
+        # 如果常规匹配没有结果且启用了LLM，则使用KiMi API进行查询
+        if street is None and use_llm and streets:
+            self.logger.info(f"使用LLM查询街道: {city} {district} {restaurant_name} {address}")
+            query = f"在{city}{district}中，'{address}'这个地址属于哪个街道？可能的街道有：{', '.join(streets)}"
+            
+            if restaurant_name:
+                query += f"，餐厅名称为'{restaurant_name}'"
+                
+            kimi_response = self.call_kimi_api(query)
+            
+            if kimi_response:
+                # 在KiMi响应中查找所有可能的街道
+                found_streets = []
+                for street_name in streets:
+                    if street_name in kimi_response:
+                        found_streets.append(street_name)
+                
+                if found_streets:
+                    # 如果找到多个街道，选择第一个
+                    street = found_streets[0]
+                    self.logger.info(f"通过LLM找到街道: {street}")
+                else:
+                    self.logger.info(f"LLM未能匹配到任何街道")
+        
+        return street
 
 
     def _get_streets_from_config(self, city: str, district: str) -> Optional[list]:
@@ -187,38 +291,74 @@ class RestaurantService:
         return None
 
 
-    def assign_restaurant_type_base(self, name: str, address: str) -> Optional[str]:
+    def assign_restaurant_type_base(self, name: str, address: str, use_llm=False) -> Optional[str]:
         """
-        根据餐厅名称或地址分配餐厅类型
+        根据餐厅名称和地址匹配对应的餐厅类型。
+        
         :param name: 餐厅名称
         :param address: 餐厅地址
-        :return: 匹配到的餐厅类型关键字
+        :param use_llm: 是否使用LLM辅助查询
+        :return: 匹配到的餐厅类型，如果没有匹配到则返回 None
         """
-        type_mapping = CONF.get("BUSINESS.RESTAURANT.收油关系映射", {})
-        matched_types = []
+        # 获取所有可能的餐厅类型映射
+        name_mapping = RESTCONF_NAME_MAP
 
-        for keywords, values in type_mapping.items():
-            for keyword in keywords.split("/"):
-                if keyword in name or keyword in address:
-                    # 解析配置的类型编号并获取最大值
-                    possible_values = [int(v) for v in str(values).split(",")]
-                    max_value = max(possible_values)
-                    matched_types.append((keywords, max_value))
+        # 在名称中查找关键字
+        restaurant_type = None
+        for keyword, res_type in name_mapping.items():
+            if keyword in name:
+                restaurant_type = res_type
+                break
 
-        if not matched_types:
-            return None  # 未匹配到任何类型
+        # 如果在名称中没有找到，则在地址中查找
+        if not restaurant_type:
+            for keyword, res_type in name_mapping.items():
+                if keyword in address:
+                    restaurant_type = res_type
+                    break
+                    
+        # 如果常规匹配没有结果且启用了LLM，则使用KiMi API进行查询
+        if restaurant_type is None and use_llm:
+            self.logger.info(f"使用LLM查询餐厅类型: {name} {address}")
+            
+            # 准备关键字列表用于查询
+            keywords = list(name_mapping.keys())
+            query = f"餐厅'{name}'位于'{address}'，它可能是以下哪种类型的餐厅？{', '.join(keywords)}"
+            
+            kimi_response = self.call_kimi_api(query)
+            
+            if kimi_response:
+                # 在KiMi响应中查找所有可能的关键字
+                found_keywords = []
+                for keyword in keywords:
+                    if keyword in kimi_response:
+                        found_keywords.append(keyword)
+                
+                if found_keywords:
+                    # 如果找到多个关键字，选择第一个
+                    matched_keyword = found_keywords[0]
+                    restaurant_type = name_mapping[matched_keyword]
+                    self.logger.info(f"通过LLM找到餐厅类型: {matched_keyword} -> {restaurant_type}")
+                else:
+                    self.logger.info(f"LLM未能匹配到任何餐厅类型")
 
-        # 按最大值降序排序，选择最大值对应的关键字
-        matched_types.sort(key=lambda x: x[1], reverse=True)
-        return matched_types[0][0]  # 返回最大值对应的关键字组（例如“酒楼/酒家/烤鱼”）
+        return restaurant_type
 
-
-    def extract_restaurant_type_batch(self) -> pd.DataFrame:
-        """批量生成餐厅类型"""
+    def extract_restaurant_type_batch(self, use_llm=False) -> pd.DataFrame:
+        """
+        批量生成餐厅类型
+        
+        :param use_llm: 是否使用LLM辅助查询
+        :return: 更新后的DataFrame和餐厅列表
+        """
         tmp = []
         for restaurant in self.restaurants:
             try:
-                restaurant_type = self.assign_restaurant_type_base(restaurant.chinese_name, restaurant.chinese_address)
+                restaurant_type = self.assign_restaurant_type_base(
+                    restaurant.chinese_name, 
+                    restaurant.chinese_address,
+                    use_llm=use_llm
+                )
                 setattr(restaurant, "restaurant_type", restaurant_type)
                 tmp.append(restaurant)
             except Exception as e:

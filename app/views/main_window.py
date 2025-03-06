@@ -61,7 +61,7 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.tab0, "配置项")
         self.tab_widget.addTab(self.tab1, "查找&确认餐厅信息")
         self.tab_widget.addTab(self.tab2, "配置车辆信息")
-        self.tab_widget.addTab(self.tab3, "生成&审核")
+        self.tab_widget.addTab(self.tab3, "查看审核关键信息")
         self.tab_widget.addTab(self.tab6, "油品收集和平衡表")
         
 
