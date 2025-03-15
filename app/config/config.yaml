@@ -109,6 +109,16 @@ OTHER:
   Tab2:
     last_dir: C:/Users/H3C/WorkSpace/GXC/MoCo/app/assets
   Tab5:
+    高德表格字段对应:
+        店名: name
+        地址: address
+        电话: tel
+        坐标: location
+        所属区县: adname
+        类型: type
+        与地区中心距离(m): distance
+        城市: cityname
+        与工厂距离(KM): distance_to_factory
     关键词:
     - 酸菜鱼
     - 小吃
@@ -276,7 +286,7 @@ SYSTEM:
   - abcdegfh
   - '87654321'
   gaode_keys:
-  - ddf7c7c20bd1d026703c0b84d07be541
+  - '1234567'
   - '87654321'
   kimi_keys:
   - '12345678'
