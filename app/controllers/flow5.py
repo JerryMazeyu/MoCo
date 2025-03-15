@@ -4,7 +4,7 @@ from geopy.geocoders import Nominatim
 import xlwt
 import random
 import time
-
+import numpy as np 
 def flow5_get_restaurantinfo(n: int, token: str, keywords: str, address: str, maptype: int,filename: str):
     c = RestaurantInfo(n, token, keywords, address, maptype,filename)
     restaurantList=c.get_info_write_file()
@@ -27,15 +27,19 @@ def flow5_write_to_excel(datalist, filename):
 
 
         for i in range(len(datalist)):
-            sheet.write(i + 1, 0, datalist[i]['name'])
-            sheet.write(i + 1, 1, datalist[i]['address'])
-            sheet.write(i + 1, 2, datalist[i]['tel'])
-            sheet.write(i + 1, 3, datalist[i]['location'])
-            sheet.write(i + 1, 4, datalist[i]['adname'])
-            sheet.write(i + 1, 5, datalist[i]['type'])
-            sheet.write(i + 1, 6, datalist[i]['distance'])
-            sheet.write(i + 1, 7, datalist[i]['cityname'])
-            sheet.write(i + 1, 8, datalist[i]['distance_to_factory'])  
+            sheet.write(i + 1, 0, datalist[i].get('name', ''))  # 店名
+            sheet.write(i + 1, 1, datalist[i].get('address', ''))  # 地址
+            sheet.write(i + 1, 2, datalist[i].get('tel', ''))  # 电话
+            sheet.write(i + 1, 3, datalist[i].get('location', ''))  # 坐标
+            sheet.write(i + 1, 4, datalist[i].get('adname', ''))  # 所属区县
+            sheet.write(i + 1, 5, datalist[i].get('type', ''))  # 类型
+            distance_value = datalist[i].get('distance', 0)  # 默认值为0
+            if isinstance(distance_value, float) and np.isnan(distance_value):  # 检查是否为 NaN
+                distance_value = 0  # 将 NaN 替换为0
+            sheet.write(i + 1, 6,distance_value)  # 与地区中心距离(m)，默认值为0
+            sheet.write(i + 1, 7, datalist[i].get('cityname', ''))  # 城市
+            sheet.write(i + 1, 8, datalist[i].get('distance_to_factory', 0))  # 与工厂距离(KM)，默认值为0
+
 
         book.save(filename)  # r'东莞市.xlsx'
         print('保存成功，保存路径为：', filename)

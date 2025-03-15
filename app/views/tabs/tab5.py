@@ -15,6 +15,7 @@ import xlrd
 import math
 from app.views.components.xlsxviewer import XlsxViewer
 from app.utils import rp
+import numpy as np
 
 
 class ApiStatusIndicator(QLabel):
@@ -278,7 +279,7 @@ class Tab5(QWidget):
         self.keywords_input_value = "" # 餐厅关键词
         self.city_lat_lon = "" # 经纬度
         self.api_type = "高德地图"  # 默认API类型
-        self.page_number = 1
+        self.page_number = 30
         
         # API状态指示器字典
         self.api_indicators = {}
@@ -754,7 +755,17 @@ class Tab5(QWidget):
         unique_list = []
         for restaurant in restaurant_list:
             # 假设我们根据 'name' 和 'address' 来去重
-            identifier = (restaurant['name'], restaurant['address'])
+            # 如果name和address是unhashble则打印
+            # 检查是否是不可哈希的类型
+            if isinstance(restaurant['name'], (list, dict)):
+                print(f"不可哈希的类型 detected in name: {name}")
+            if isinstance(restaurant['address'], (list, dict)):
+                print(f"不可哈希的类型 detected in address: {address}")
+
+             # 确保 name 和 address 都是字符串
+            name = str(restaurant['name']) if not isinstance(restaurant['name'], str) else restaurant['name']
+            address = str(restaurant['address']) if not isinstance(restaurant['address'], str) else restaurant['address']
+            identifier = (name, address)
             if identifier not in seen:
                 seen.add(identifier)
                 unique_list.append(restaurant)
@@ -766,19 +777,44 @@ class Tab5(QWidget):
         if not self.prepare_search():
             return
         
-        # 如果已经有线程在运行，则不启动新线程
-        if hasattr(self, 'excel_thread') and self.excel_thread.isRunning():
-            reply = QMessageBox.question(
-                self, "确认", "已有一个Excel生成任务正在进行中，是否取消当前任务？",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-            )
-            if reply == QMessageBox.Yes:
-                self.excel_worker.stop()
-                self.generate_excel_button.setText("生成餐厅excel")
-            return
+         # 检查并处理已存在的线程
+        if hasattr(self, 'excel_thread') and self.excel_thread is not None:
+            try:
+                if self.excel_thread.isRunning():
+                    reply = QMessageBox.question(
+                        self, "确认", "已有一个Excel生成任务正在进行中，是否取消当前任务？",
+                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                    )
+                    if reply == QMessageBox.Yes:
+                        self.excel_worker.stop()  # 停止当前线程的工作
+                        self.excel_thread.quit()  # 请求线程退出
+                        if not self.excel_thread.wait(5000):  # 等待最多5秒
+                            self.excel_thread.terminate()  # 强制终止（不推荐，仅作为最后手段）
+                            self.excel_thread.wait()
+                        del self.excel_thread  # 删除引用
+                        self.excel_thread = None
+                        self.generate_excel_button.setText("生成餐厅excel")
+                        return
+            except RuntimeError:
+                # 如果遇到RuntimeError，表示QThread对象已经被销毁
+                self.excel_thread = None  # 清理引用
         
+        # 清理旧线程
+        # 确保旧线程已被完全清理
+        if hasattr(self, 'excel_thread'):
+            try:
+                if self.excel_thread is not None:
+                    self.excel_thread.quit()
+                    self.excel_thread.wait()
+                    self.excel_thread.deleteLater()
+                    del self.excel_thread
+            except RuntimeError:
+                pass
+            finally:
+                self.excel_thread = None
+
         # 禁用生成按钮，防止重复点击
-        self.generate_excel_button.setEnabled(True)  # 保持启用状态，但改变文本
+        self.generate_excel_button.setEnabled(False)  # 保持启用状态，但改变文本
         self.generate_excel_button.setText("取消生成")
         
         # 创建并显示进度对话框
@@ -800,16 +836,17 @@ class Tab5(QWidget):
         self.excel_worker.finished.connect(self.excel_thread.quit)
         self.excel_worker.finished.connect(self.excel_worker.deleteLater)
         self.excel_thread.finished.connect(self.excel_thread.deleteLater)
+        self.excel_thread.finished.connect(self.enable_generate_button)  # 新增：线程结束时重新启用按钮
         
         # 连接进度对话框的取消按钮
         self.progress_dialog.rejected.connect(self.on_cancel_excel_generation)
         
-        # 修改按钮功能为取消
-        self.generate_excel_button.clicked.disconnect()
-        self.generate_excel_button.clicked.connect(self.on_cancel_excel_generation)
-        
         # 启动线程
         self.excel_thread.start()
+    def enable_generate_button(self):
+        """当线程完成后启用生成按钮"""
+        self.generate_excel_button.setEnabled(True)
+        self.generate_excel_button.setText("生成餐厅excel")
 
     def on_cancel_excel_generation(self):
         """取消Excel生成任务"""
@@ -820,7 +857,7 @@ class Tab5(QWidget):
             )
             if reply == QMessageBox.Yes:
                 print("正在取消Excel生成任务...")
-                self.excel_worker.stop()
+                self.excel_worker.stop()  # 停止工作线程
                 self.generate_excel_button.setText("生成餐厅excel")
                 
                 # 更新进度对话框
@@ -846,6 +883,7 @@ class Tab5(QWidget):
     def on_excel_finished(self, success, message):
         """处理Excel生成完成"""
         # 恢复按钮状态和功能
+        self.generate_excel_button.setEnabled(True)  # 确保按钮可用
         self.generate_excel_button.setText("生成餐厅excel")
         
         # 恢复按钮功能
@@ -975,8 +1013,12 @@ class Tab5(QWidget):
             # 用户选择新增
             print("Appending to the existing file.")
             try:
-                existing_data = pd.read_excel(filename)  # 读取现有文件
-                combined_data = pd.concat([existing_data, pd.DataFrame(datalist)])  # 合并数据
+
+                existing_data = pd.read_excel(filename, dtype=str)  # 读取现有文件
+                column_change_list = self.conf.get("OTHER.Tab5.高德表格字段对应", default=[])
+                existing_data.rename(columns={k: v for k, v in column_change_list.items()}, inplace=True)
+                df_new = pd.DataFrame(datalist)
+                combined_data = pd.concat([existing_data, df_new])  # 合并数据
                 combined_data = combined_data.drop_duplicates(subset=['name', 'address'], keep='first')  # 根据名称和地址去重
                 flow5_write_to_excel(combined_data.to_dict(orient='records'), filename)  # 写入去重后的数据
                 # 更新XlsxViewer

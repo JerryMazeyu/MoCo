@@ -128,7 +128,16 @@ class RestaurantInfo:
                     print(i)
                     j += 1
                     print(j)
-                    dict1 = {'name': i.get('name'), 'address': i.get('address'), 'tel': i.get('tel'), 'location': i.get('location'), 'adname': i.get('adname'), 'type': i.get('type'), 'distance': i.get('distance'), 'cityname': i.get('cityname')}
+                    dict1 = {
+                        'name': i.get('name') if i.get('name') is not None else '',
+                        'address': i.get('address') if i.get('address') is not None else '',
+                        'tel': i.get('tel') if i.get('tel') is not None else '',
+                        'location': i.get('location') if i.get('location') is not None else '',
+                        'adname': i.get('adname') if i.get('adname') is not None else '',
+                        'type': i.get('type') if i.get('type') is not None else '',
+                        'distance': i.get('distance') if i.get('distance') is not None else '',
+                        'cityname': i.get('cityname') if i.get('cityname') is not None else ''
+                    }
                     datalist.append(dict1)
                 if len(l)<20: ## 当最后一次小于20的话说明最后一页，退出
                     break
