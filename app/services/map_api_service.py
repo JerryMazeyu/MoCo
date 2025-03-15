@@ -304,6 +304,6 @@ if __name__ == '__main__':
             print("{}查询失败".format(key_word))
 
     # 谷歌地图serp示例，每次调用每一页至多返回20条，第三个参数默认为英语，第四个参数无作用
-    # google_key = '8fee04febd8ef9f2ef5e3732b9a81519e8e97fea28687e8f7aaf5a43c0a1cd50'
+    # google_key = ''
     # c = RestaurantInfo(12, google_key, 'restaurant', '美食', '1.666889,101.400299', 3)
     # c.get_info_write_file()
