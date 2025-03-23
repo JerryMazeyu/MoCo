@@ -287,5 +287,11 @@ SYSTEM:
   tripadvisor_keys: 
   - '12345678'
   - '87654321'
+  oss:
+    access_key_id: 'exampleAccessKeyId'
+    access_key_secret: 'exampleAccessKeySecret'
+    endpoint: 'http://oss-cn-shanghai.aliyuncs.com'
+    bucket_name: 'moco-data'
+    region: 'cn-shanghai'
 
 
