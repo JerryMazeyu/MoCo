@@ -6,13 +6,17 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QVBo
 from PyQt5.QtCore import Qt
 from tabs import Tab0, Tab1, Tab2, Tab5, Tab6
 from app.views.components.message_console import MessageConsoleWidget, StdoutRedirector, MessageManager
+from app.views.login_window import LoginWindow  # 导入登录窗口
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, user_info=None):
         super().__init__()
+        
+        # 保存用户信息
+        self.user_info = user_info
 
-        self.setWindowTitle("MoCo 数据助手")
+        self.setWindowTitle(f"MoCo 数据助手 - 用户: {user_info['username']}")
         self.setGeometry(100, 100, 1000, 600)
 
         # 创建一个中央窗口部件
@@ -94,15 +98,43 @@ class MainWindow(QMainWindow):
         self.tab6.setLayout(self.tab6.layout)
         
         # 打印欢迎信息到控制台
-        print("欢迎使用 MoCo 数据助手！所有输出信息将显示在此控制台中。")
+        print(f"欢迎使用 MoCo 数据助手！用户: {self.user_info['username']}，角色: {self.user_info['role']}")
+        print("所有输出信息将显示在此控制台中。")
+        
+        # 根据用户角色加载不同的配置
+        self.load_user_config()
+
+    def load_user_config(self):
+        """根据用户角色从云端加载配置"""
+        try:
+            # 这里实现从OSS获取配置文件的逻辑
+            print(f"正在加载 {self.user_info['role']} 角色的配置...")
+            # 实际实现中，可以根据角色下载并应用不同的配置文件
+        except Exception as e:
+            print(f"加载配置失败: {str(e)}")
 
     def closeEvent(self, event):
         """窗口关闭时还原标准输出"""
         sys.stdout = sys.__stdout__
         super().closeEvent(event)
 
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    main_window = MainWindow()
-    main_window.show()
+    
+    # 首先显示登录窗口
+    login_window = LoginWindow()
+    
+    # 创建主窗口但不显示
+    main_window = None
+    
+    # 连接登录成功信号
+    def on_login_successful(user_info):
+        global main_window
+        main_window = MainWindow(user_info)
+        main_window.show()
+    
+    login_window.loginSuccessful.connect(on_login_successful)
+    login_window.show()
+    
     sys.exit(app.exec_())
