@@ -5,6 +5,7 @@ from .message_utils import (
     print_message, print_info, print_warning, 
     print_error, print_success, print_debug
 )
+from .hash import hash_text
 
 __all__ = [
     'rp',  # from file_io
@@ -14,5 +15,6 @@ __all__ = [
     'print_warning',
     'print_error',
     'print_success',
-    'print_debug'
+    'print_debug',
+    'hash_text'
 ]
