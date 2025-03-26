@@ -288,8 +288,8 @@ SYSTEM:
   - '12345678'
   - '87654321'
   oss:
-    access_key_id: 'exampleAccessKeyId'
-    access_key_secret: 'exampleAccessKeySecret'
+    access_key_id: 'exampleAccessKeyId' # exampleAccessKeyId
+    access_key_secret: 'exampleAccessKeySecret' #exampleAccessKeySecret
     endpoint: 'http://oss-cn-shanghai.aliyuncs.com'
     bucket_name: 'moco-data'
     region: 'cn-shanghai'
