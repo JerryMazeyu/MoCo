@@ -38,12 +38,12 @@ class Flow6Controller:
         coeff_number: 计算用的转换系数
         current_date: 当前日期字符串，格式为'YYYY-MM-DD'
     """
-    def step1_generate_oil_collection(self, restaurant_df: pd.DataFrame, vehicle_df: pd.DataFrame) -> dict:
+    def step1_generate_oil_collection(self, restaurant_df: pd.DataFrame, vehicle_df: pd.DataFrame,total_barrels: int) -> dict:
         """第一步：生成收油表"""
         try:
             self.logger.info("开始执行步骤1：生成收油表")
             sorted_restaurants = self.rule_service.oil_restaurant_sort(restaurant_df)
-            assigned_vehicles = self.rule_service.oil_assign_vehicle_numbers(sorted_restaurants, vehicle_df)
+            assigned_vehicles = self.rule_service.oil_assign_vehicle_numbers(sorted_restaurants, vehicle_df,total_barrels)
             
             self.results['sorted_restaurants'] = sorted_restaurants
             self.results['assigned_vehicles'] = assigned_vehicles
@@ -84,11 +84,11 @@ class Flow6Controller:
             self.logger.error(f"步骤3执行失败: {str(e)}")
             raise
         
-    def step4_generate_receipt_confirmation(self, balance_df: pd.DataFrame, vehicle_df: pd.DataFrame) -> pd.DataFrame:
+    def step4_generate_receipt_confirmation(self, oil_weight: float, days: int, df_oil: pd.DataFrame, df_car: pd.DataFrame,current_date:str) -> pd.DataFrame:
         """第四步：生成收货确认书"""
         try:
             self.logger.info("开始执行步骤4：生成收货确认书")
-            receipt_confirmation = self.rule_service.generate_df_check(balance_df, vehicle_df)
+            receipt_confirmation = self.rule_service.generate_df_check(oil_weight, days, df_oil, df_car,current_date)
             
             self.results['receipt_confirmation'] = receipt_confirmation
             

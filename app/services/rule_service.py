@@ -63,23 +63,27 @@ class RuleService:
     分配车辆号码
     传入餐厅信息和车辆信息，根据收油数分配车辆号码，并将结果与原DataFrame合并
     """
-    def oil_assign_vehicle_numbers(df_restaurants: pd.DataFrame, df_vehicles: pd.DataFrame) -> pd.DataFrame:
+    def oil_assign_vehicle_numbers(df_restaurants: pd.DataFrame, df_vehicles: pd.DataFrame,total_barrels: int) -> pd.DataFrame:
         """
         根据收油数分配车辆号码，并将结果与原DataFrame合并
         
         :param df_restaurants: 包含'镇/街道', '区域', '餐厅类型', '收油数'的DataFrame
         :param df_vehicles: 包含'车牌号'的DataFrame
+        :param total_barrels: 总桶数限制
         :return: 处理后的DataFrame
         """
-        # 初始化一些变量
-        vehicle_numbers = df_vehicles['车牌号'].sample(frac=1, replace=False).tolist() #乱序车牌号
+        # 初始化变量
+        vehicle_numbers = df_vehicles['车牌号'].sample(frac=1, replace=False).tolist()  # 乱序车牌号
         result_rows = []
         current_vehicle_index = 0
+        total_accumulated = 0  # 所有车辆的累计收油数
+        should_break = False  # 控制外层循环的标志
         
         # 按区域分组
         grouped = df_restaurants.groupby('区域')
         
         for area, group in grouped:
+            
             accumulated_sum = 0
             temp_group = []
             
@@ -87,36 +91,47 @@ class RuleService:
                 temp_group.append(row)
                 accumulated_sum += row['收油数']
                 
-                # 如果累计值在35-44之间，则分配车牌号并重置累计值
-                if 35 <= accumulated_sum <= 44:
+                # 如果累计值达到在35-44之间，则分配车牌号并重置累计值
+                if accumulated_sum>=35:
+                    # 检查添加这组数据是否会超过总桶数限制
+                    if total_accumulated > total_barrels:
+                        should_break = True  # 设置跳出标志
+                        break
+                        
+                    # 分配车牌号
                     for temp_row in temp_group:
                         temp_row = temp_row.copy()  # 防止修改原DataFrame
                         temp_row['车牌号'] = vehicle_numbers[current_vehicle_index]
                         temp_row['累计收油数'] = accumulated_sum
                         result_rows.append(temp_row)
+                    
+                    total_accumulated += accumulated_sum
+                    print(f"当前累计桶数: {total_accumulated}, 目标桶数: {total_barrels}")  # 调试信息
+                
                     current_vehicle_index = (current_vehicle_index + 1) % len(vehicle_numbers)
                     accumulated_sum = 0
                     temp_group = []
             
-            # 清理未达标的数据
-            if accumulated_sum < 35 and temp_group:
-                continue  # 跳过最后未达标的记录
+            # 如果外层循环需要跳出，则不处理剩余数据
+            if should_break:
+                break
             
-            # 如果有剩余但大于等于35，则分配最后一个车牌号
-            if accumulated_sum >= 35:
-                for temp_row in temp_group:
-                    temp_row = temp_row.copy()  # 防止修改原DataFrame
-                    temp_row['车牌号'] = vehicle_numbers[current_vehicle_index]
-                    temp_row['累计收油数'] = accumulated_sum
-                    result_rows.append(temp_row)
-                current_vehicle_index = (current_vehicle_index + 1) % len(vehicle_numbers)
-        
-        # 返回新的DataFrame
+
+     
+        # 创建结果DataFrame
         result_df = pd.DataFrame(result_rows)
         
         # 将结果与原DataFrame进行左连接，确保所有原始数据都在结果中
         merged_df = pd.merge(df_restaurants, result_df[['镇/街道', '区域', '车牌号', '累计收油数']], 
                             on=['镇/街道', '区域'], how='left')
+        
+        # 打印统计信息
+        print("\n统计信息:")
+        print(f"总分配桶数: {total_accumulated}")
+        print(f"总桶数限制: {total_barrels}")
+        print(f"已分配车辆数: {len(set(result_df['车牌号']))}")
+        print(f"已处理餐厅数: {len(result_rows)}")
+        print(f"总餐厅数: {len(df_restaurants)}")
         
         return merged_df
 
@@ -280,77 +295,133 @@ class RuleService:
         
         return new_df
     """
-    收货确认书，传入五月平衡表和车辆信息
+    收货确认书，传入收油表、销售车牌信息、收油重量、天数
     """
-    def generate_df_check(df_balance: pd.DataFrame, df_car: pd.DataFrame) -> pd.DataFrame:
-    # 步骤1：新建一个dataframe名为df_check，包含提货日期、名称、车牌号、重量、司机、磅单号、毛重、皮重、净重、卸货重量
-        df_check = pd.DataFrame(columns=['提货日期', '名称', '车牌号', '重量', '司机', '磅单号', '毛重', '皮重', '净重', '卸货重量'])
+    def generate_df_check(self, oil_weight: float, days: int, df_oil: pd.DataFrame, df_car: pd.DataFrame,currrnt_date:str) -> pd.DataFrame:
+        """
+        生成检查数据表
         
-        # 步骤2：复制输入的dataframe中的磅单编号作为df_check的磅单号
-        df_check['磅单号'] = df_balance['磅单编号']
+        :param oil_weight: 收油重量（吨）
+        :param days: 天数
+        :param df_oil: 收油表DataFrame
+        :param df_car: 销售车牌表DataFrame
+        :param current_date: 当前月
+        :return: 生成的检查数据表DataFrame
+        """
+        def random_weight():
+            """生成随机重量（吨）"""
+            return np.random.randint(3050, 3496) / 100
         
-        # 步骤3：df_check的重量列值=RANDBETWEEN(3050,3495)/100，保证所有行的重量和在3000的上下5%范围内，否则的话重新赋值重量列为RANDBETWEEN(3050,3495)/100
-        total_weight_target = 3000
-        tolerance = 0.05
+        def get_difference_value():
+            """查表获取差值"""
+            lookup_keys = [0,3,6,10,15,30,60,90,150,200,300,350,480,550,700,800,850,900,940,970,990,995,1001]
+            lookup_values = [-15,-14,-13,-12,-11,-7,-6,-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,11,12]
+            random_num = np.random.randint(1, 1001)
+            
+            # 找到对应区间
+            for i, key in enumerate(lookup_keys):
+                if random_num <= key:
+                    return lookup_values[i] / 100
+            return 0
+
+        # 步骤1：创建df_check基本结构
+        df_check = pd.DataFrame(columns=[
+            '提货日期', '名称', '车牌号', '重量', '司机', '磅单号',
+            '毛重', '皮重', '净重', '卸货重量', '差值'
+        ])
+    
+        # 步骤2：确定行数和重量
+        total_weight = 0
+        weights = []
         while True:
-            df_check['重量'] = [np.random.randint(3050, 3496) / 100 for _ in range(len(df_check))]
-            total_weight = df_check['重量'].sum()
-            if (1 - tolerance) * total_weight_target <= total_weight <= (1 + tolerance) * total_weight_target:
-                break
-        
-        # 步骤4：确定输入的dataframe的日期列一共有多少天，用92除以天数为每一天的车次car_number_of_day，
-        # df_check的提货日期列的从df_oil的第一天+1开始，每个日期循环car_number_of_day加减1次做为提货日期值；
-            days = len(df_balance['日期'].unique())
-            car_number_of_day = 92 // days
-            start_date = pd.to_datetime(df_balance['日期'].min()) + pd.Timedelta(days=1)
-            dates = []
-            current_date = start_date
-            for day in range(days):
-                date = current_date
-                for _ in range(car_number_of_day + np.random.choice([-1, 0, 1])): #循环
-                    dates.append(date)
-                current_date += pd.Timedelta(days=1)
+            weight = random_weight()
+            weights.append(weight)
+            total_weight = sum(weights)
+                # 检查是否在目标重量的±5%范围内
+            if total_weight >= oil_weight:
+                lower_bound = oil_weight * 0.95
+                upper_bound = oil_weight * 1.05
+                if lower_bound <= total_weight <= upper_bound:
+                    break
+                else:
+                    # 重新开始
+                    weights = []
+                    total_weight = 0
+        rows_count = len(weights)
+    
+        # 步骤3：分配日期
+        start_date = pd.to_datetime(df_oil['提货日期'].min()) + timedelta(days=1)
+        base_cars_per_day = rows_count // days  # 基本每日车次
+        remaining_total_cars = rows_count       # 剩余需要分配的总车次
+        dates = []
+
+        for day in range(days):
+            current_date = start_date + timedelta(days=day)
             
-            # 确保dates列表长度与df_check行数相同
-            if len(dates) < len(df_check):
-                additional_days_needed = len(df_check) - len(dates)
-                last_date = dates[-1]
-                for i in range(additional_days_needed):
-                    dates.append(last_date + pd.Timedelta(days=i + 1))
-            elif len(dates) > len(df_check):
-                dates = dates[:len(df_check)]
+            if day == days - 1:  # 最后一天
+                # 将剩余所有车次分配到最后一天
+                day_cars = remaining_total_cars
+            else:
+                # 随机生成当天车次 (基础车次 ± 1)
+                day_cars = base_cars_per_day + np.random.choice([-1, 0, 1])
+                # 确保不会分配过多或过少
+                if remaining_total_cars - day_cars < (days - day - 1):  # 确保后面的天数至少每天能分配1辆车
+                    day_cars = remaining_total_cars - (days - day - 1)
+                elif remaining_total_cars - day_cars > (days - day - 1) * (base_cars_per_day + 1):  # 确保后面的天数不会超出最大可能车次
+                    day_cars = remaining_total_cars - (days - day - 1) * (base_cars_per_day + 1)
             
-            df_check['提货日期'] = dates
+            # 确保当天车次不会小于0
+            day_cars = max(1, min(day_cars, remaining_total_cars))
+            remaining_total_cars -= day_cars
+            
+            # 添加当天的日期
+            dates.extend([current_date] * day_cars)
         
-        # 步骤5：先对df_car按照车牌号随机打乱行顺序，
+        # 步骤5：分配车辆信息
+        # 随机打乱车辆信息
         df_car_shuffled = df_car.sample(frac=1).reset_index(drop=True)
+        car_info = df_car_shuffled.iloc[:(rows_count % len(df_car_shuffled) + 1)].copy()
+        while len(car_info) < rows_count:
+            car_info = pd.concat([car_info, df_car_shuffled])
+        car_info = car_info.iloc[:rows_count]
         
-        # df_check的车牌号列的值循环从打乱后df_car的车牌号列取值，
-        # df_check的司机列的值对应df_car表相同行的`司机`列的值，
-        # df_check的皮重列=df_car表的皮重+RANDBETWEEN(1,13)*10
-        for i in range(len(df_check)):
-            car_idx = i % len(df_car_shuffled)
-            df_check.at[i, '车牌号'] = df_car_shuffled.loc[car_idx, '车牌号']
-            df_check.at[i, '司机'] = df_car_shuffled.loc[car_idx, '司机']
-            df_check.at[i, '皮重'] = df_car_shuffled.loc[car_idx, '皮重'] + np.random.randint(1, 14) * 10
+        # 创建最终DataFrame
+        df_check = pd.DataFrame({
+            '提货日期': dates,
+            '重量': weights,
+            '车牌号': car_info['车牌号'].values,
+            '司机': car_info['司机'].values,
+            '皮重': car_info['皮重'].values + np.random.randint(1, 14, size=rows_count) * 10
+        })
         
-        # 步骤6：df_check的净重列=重量*1000，df_check的毛重列=皮重+净重；
-        df_check['净重'] = df_check['重量'] * 1000
+        # 步骤6：计算其他列
+        df_check['净重'] = (df_check['重量'] * 1000).astype(int)
         df_check['毛重'] = df_check['皮重'] + df_check['净重']
+        df_check['差值'] = [get_difference_value() for _ in range(len(df_check))]
         
-        # df_check的差值列=LOOKUP(RANDBETWEEN(1,1000),{0,3,6,10,15,30,60,90,150,200,300,350,480,550,700,800,850,900,940,970,990,995,1001},{-15,-14,-13,-12,-11,-7,-6,-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,11,12})/100
-        lookup_values = np.array([0, 3, 6, 10, 15, 30, 60, 90, 150, 200, 300, 350, 480, 550, 700, 800, 850, 900, 940, 970, 990, 995, 1001])
-        lookup_results = np.array([-15, -14, -13, -12, -11, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 11, 12])
-        random_lookup = np.random.randint(1, 1002, size=len(df_check))
-        df_check['差值'] = np.interp(random_lookup, lookup_values, lookup_results) / 100
-        
-        # 步骤7：df_check卸货重量=重量+差值
+        # 步骤7：计算卸货重量
         df_check['卸货重量'] = df_check['重量'] + df_check['差值']
+        
+        # 生成磅单号（示例：使用日期和序号组合）
+        current_date = datetime.strptime(current_date, '%Y-%m-%d')
+        df_check['磅单号'] = df_check.apply(
+            lambda row: f"BD{current_date.strftime('%Y%m')}{str(row.name+1).zfill(3)}", 
+            axis=1
+        )
+        
+        # 添加名称列（如果需要可以根据实际需求修改）
+        df_check['名称'] = "工业级混合油"
+        
+        # 调整列顺序
+        df_check = df_check[[
+            '提货日期', '名称', '车牌号', '重量', '司机', '磅单号',
+            '毛重', '皮重', '净重', '卸货重量', '差值'
+        ]]
         
         return df_check
     
     """
-    复制收货确认书的“数据透视表”的每日重量一列至物料平衡表-总表，对齐日期
+    复制收货确认书的"数据透视表"的每日重量一列至物料平衡表-总表，对齐日期
     传入收货确认书和平衡表-总表
     """
     def process_check_to_sum(df_generate_check: pd.DataFrame, df_generate_sum: pd.DataFrame) -> pd.DataFrame:
@@ -382,7 +453,7 @@ class RuleService:
         return df_final
     
     """
-    复制平衡表-5月表的“流水号 车牌号 交付时间”到收油表的“流水号 车牌号 收购时间”
+    复制平衡表-5月表的"流水号 车牌号 交付时间"到收油表的"流水号 车牌号 收购时间"
     输入平衡表-5月表，收油表-->输出收油表
     """
     def copy_balance_to_oil(df_generate_balance: pd.DataFrame, df_generate_oil: pd.DataFrame) -> pd.DataFrame:
