@@ -2,12 +2,36 @@ from app.services.rule_service import RuleService
 import pandas as pd
 from datetime import datetime
 from app.config.logging_config import LogConfig
-
+from pydantic import BaseModel, Field
 logger = LogConfig.setup_logger('flow6')
+"""输入参数：
+    restaurant_df: 包含餐厅信息的DataFrame
+    df_vehicles: 包含收油表车辆信息的DataFrame
+    total_barrels: 收油总桶数限制
+    collect_days: 收油天数
+    oil_weight: 收油重量
+    check_days: 收货确认天数
+    check_vehicle_df: 包含销售车牌信息的DataFrame
+    current_date: 当前日期字符串，格式为'YYYY-MM-DD'
+
+"""
+class flow6_input_params(BaseModel):
+    class Config:
+        arbitrary_types_allowed = True  # 允许任意类型
+    
+    restaurant_df: pd.DataFrame = Field(..., description="包含餐厅信息的DataFrame")
+    df_vehicles: pd.DataFrame = Field(..., description="包含收油表车辆信息的DataFrame")
+    total_barrels: int = Field(..., description="收油总桶数限制")
+    collect_days: int = Field(..., description="收油天数")
+    oil_weight: float = Field(..., description="收油重量")
+    check_days: int = Field(..., description="收货确认天数")
+    check_vehicle_df: pd.DataFrame = Field(..., description="包含销售车牌信息的DataFrame")
+    current_date: str = Field(..., description="当前日期字符串，格式为'YYYY-MM-DD'")
 
 class Flow6Controller:
     def __init__(self):
         self.rule_service = RuleService()
+        self.logger = logger
         # 存储每个步骤的结果
         self.results = {
             'sorted_restaurants': pd.DataFrame(),    # 排序后的餐厅信息DataFrame
@@ -32,11 +56,14 @@ class Flow6Controller:
     参数:
         restaurant_df: 包含餐厅信息的DataFrame
         total_df: 总表
-        vehicle_df: 包含车辆信息的DataFrame
+        vehicle_df: 包含收油表车辆信息的DataFrame
         last_month_balance：上个月的平衡表
-        days: 完成操作的天数
+        days: 完成收油的天数
         coeff_number: 计算用的转换系数
         current_date: 当前日期字符串，格式为'YYYY-MM-DD'
+        total_barrels: 总桶数限制
+        check_days: 收货确认天数
+        check_vehicle_df: 包含销售车牌信息的DataFrame
     """
     def step1_generate_oil_collection(self, restaurant_df: pd.DataFrame, vehicle_df: pd.DataFrame,total_barrels: int) -> dict:
         """第一步：生成收油表"""
@@ -56,11 +83,11 @@ class Flow6Controller:
         except Exception as e:
             self.logger.error(f"步骤1执行失败: {str(e)}")
             raise
-    def step2_generate_balance(self, assigned_vehicles: pd.DataFrame, days: int) -> pd.DataFrame:
+    def step2_generate_balance(self, assigned_vehicles: pd.DataFrame, collect_days: int,current_date: str) -> pd.DataFrame:
         """第二步：生成平衡表"""
         try:
             self.logger.info("开始执行步骤2：生成平衡表")
-            balance_df = self.rule_service.process_balance_dataframe(assigned_vehicles, days)
+            balance_df = self.rule_service.process_balance_dataframe(assigned_vehicles, collect_days,current_date)
             
             self.results['balance_df'] = balance_df
             
@@ -84,11 +111,11 @@ class Flow6Controller:
             self.logger.error(f"步骤3执行失败: {str(e)}")
             raise
         
-    def step4_generate_receipt_confirmation(self, oil_weight: float, days: int, df_oil: pd.DataFrame, df_car: pd.DataFrame,current_date:str) -> pd.DataFrame:
+    def step4_generate_receipt_confirmation(self, oil_weight: float, check_days: int, df_oil: pd.DataFrame, check_vehicle_df: pd.DataFrame,current_date:str) -> pd.DataFrame:
         """第四步：生成收货确认书"""
         try:
             self.logger.info("开始执行步骤4：生成收货确认书")
-            receipt_confirmation = self.rule_service.generate_df_check(oil_weight, days, df_oil, df_car,current_date)
+            receipt_confirmation = self.rule_service.generate_df_check(oil_weight, check_days, df_oil, check_vehicle_df,current_date)
             
             self.results['receipt_confirmation'] = receipt_confirmation
             

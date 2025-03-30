@@ -11,7 +11,7 @@ from app.utils import rp
 import numpy as np
 from datetime import datetime, timedelta
 import random
-
+from math import ceil
 class RuleService:
     def __init__(self):
         self.conf = get_config()
@@ -48,7 +48,7 @@ class RuleService:
             raise ValueError("DataFrame缺少必要的列")
 
         # 增加一列随机数作为桶数
-        df['桶数'] = np.random.rand(size=df.shape[0])
+        df['桶数'] = np.random.rand(df.shape[0])
         
         # 根据区域，镇/街道、桶数进行排序
         df_sorted = df.sort_values(by=['区域', '镇/街道', '桶数'])
@@ -63,7 +63,7 @@ class RuleService:
     分配车辆号码
     传入餐厅信息和车辆信息，根据收油数分配车辆号码，并将结果与原DataFrame合并
     """
-    def oil_assign_vehicle_numbers(df_restaurants: pd.DataFrame, df_vehicles: pd.DataFrame,total_barrels: int) -> pd.DataFrame:
+    def oil_assign_vehicle_numbers(self,df_restaurants: pd.DataFrame, df_vehicles: pd.DataFrame,total_barrels: int) -> pd.DataFrame:
         """
         根据收油数分配车辆号码，并将结果与原DataFrame合并
         
@@ -119,12 +119,7 @@ class RuleService:
 
      
         # 创建结果DataFrame
-        result_df = pd.DataFrame(result_rows)
-        
-        # 将结果与原DataFrame进行左连接，确保所有原始数据都在结果中
-        merged_df = pd.merge(df_restaurants, result_df[['镇/街道', '区域', '车牌号', '累计收油数']], 
-                            on=['镇/街道', '区域'], how='left')
-        
+        result_df = pd.DataFrame(result_rows)        
         # 打印统计信息
         print("\n统计信息:")
         print(f"总分配桶数: {total_accumulated}")
@@ -133,7 +128,7 @@ class RuleService:
         print(f"已处理餐厅数: {len(result_rows)}")
         print(f"总餐厅数: {len(df_restaurants)}")
         
-        return merged_df
+        return result_df
 
     """
     写入Excel文件，并合并分配的车牌号和对应的累加收油数单元格
@@ -179,7 +174,7 @@ class RuleService:
     步骤7：计算辅助列
     """
 
-    def process_balance_dataframe(self,df: pd.DataFrame, n: int) -> pd.DataFrame:
+    def process_balance_dataframe(self,df: pd.DataFrame, n: int,current_date: str) -> pd.DataFrame:
         """
         根据给定的步骤处理输入的DataFrame。
         
@@ -189,19 +184,19 @@ class RuleService:
         """
         # 步骤1：读取dataframe中的'区域', '车牌号', '累计收油数'字段作为新的dataframe的字段，并去重
         new_df = df[['区域', '车牌号', '累计收油数']].drop_duplicates()
-
+        new_df['收集城市'] = new_df['区域']
         # 步骤2：新建一列榜单净重，公式为累计收油数*0.18-RANDBETWEEN(1,5)/100
         new_df['榜单净重'] = new_df['累计收油数'].apply(lambda x: x * 0.18 - random.randint(1, 5) / 100)
 
         # 步骤3：新建几列固定值的列
-        current_year_month = datetime.now().strftime('%Y%m')
+        current_year_month = datetime.strptime(current_date, '%Y-%m-%d')
         new_df['货物类型'] = '餐厨废油'
         new_df['运输方式'] = '大卡车'
         new_df['流水号'] = [f"{current_year_month}{str(i+1).zfill(3)}" for i in range(len(new_df))]
         new_df['榜单编号'] = 'B' + new_df['流水号']
 
         # 步骤4：计算车数car_number_of_day并新增交付日期列
-        car_number_of_day = len(df) // n
+        car_number_of_day = ceil(len(new_df) // n) ## 计算每天大概需要多少辆车
         dates_in_month = pd.date_range(start=datetime(datetime.now().year, datetime.now().month, 1), 
                                     end=(datetime(datetime.now().year, datetime.now().month, 1) + pd.offsets.MonthEnd(0)))
         delivery_dates = []
@@ -239,7 +234,7 @@ class RuleService:
         """
         处理DataFrame并与总表合并
         
-        :param df: 输入的DataFrame，至少包含'日期', '车牌号', '榜单净重', '榜单编号', '收集城市'字段
+        :param df: 当月平衡表，输入的DataFrame，至少包含'日期', '车牌号', '榜单净重', '榜单编号', '收集城市'字段
         :param total_df: 总表DataFrame，如果为None则创建新的DataFrame
         :return: 处理后的DataFrame
         """
@@ -295,7 +290,7 @@ class RuleService:
         
         return new_df
     """
-    收货确认书，传入收油表、销售车牌信息、收油重量、天数
+    收货确认书，传入收油表、销售车牌信息、收油重量、收货确认天数
     """
     def generate_df_check(self, oil_weight: float, days: int, df_oil: pd.DataFrame, df_car: pd.DataFrame,currrnt_date:str) -> pd.DataFrame:
         """
@@ -403,7 +398,7 @@ class RuleService:
         df_check['卸货重量'] = df_check['重量'] + df_check['差值']
         
         # 生成磅单号（示例：使用日期和序号组合）
-        current_date = datetime.strptime(current_date, '%Y-%m-%d')
+        current_date = datetime.strptime(current_date, '%Y-%m-%d').strftime('%Y%m')
         df_check['磅单号'] = df_check.apply(
             lambda row: f"BD{current_date.strftime('%Y%m')}{str(row.name+1).zfill(3)}", 
             axis=1
@@ -428,8 +423,8 @@ class RuleService:
         """
         处理两个DataFrame并生成一个新的DataFrame。
         
-        :param df_generate_check: 包含提货日期和重量的DataFrame
-        :param df_generate_sum: 包含供应日期和售出数量的DataFrame
+        :param df_generate_check: 包含提货日期和重量的DataFrame,收货确认书
+        :param df_generate_sum: 包含供应日期和售出数量的DataFrame，物料平衡表-总表
         :return: 处理后的DataFrame
         """
         # 步骤1：对df_generate_check表根据提货日期对重量进行求和汇总得到df_sum
