@@ -319,35 +319,6 @@ class ConfigService:
         else:
             logger.error(f"从OSS下载用户配置失败")
             return False
-        # 首先检查是否已配置OSS
-        # oss_config = self.sys_config.get("KEYS", {}).get("oss")
-        # if not oss_config:
-        #     logger.error("未配置OSS，无法下载配置")
-        #     return False
-        
-        # try:
-        #     # 创建OSS客户端
-        #     auth = oss2.Auth(oss_config["access_key_id"], oss_config["access_key_secret"])
-        #     bucket = oss2.Bucket(auth, oss_config["endpoint"], oss_config["bucket_name"])
-            
-        #     # 下载用户配置
-        #     remote_path = f"configs/{self.username}.yaml"
-        #     user_conf_path = os.path.join("config", f"{self.username}.yaml")
-            
-        #     # 确保config目录存在
-        #     os.makedirs("config", exist_ok=True)
-            
-        #     # 下载配置文件
-        #     result = bucket.get_object_to_file(remote_path, user_conf_path)
-        #     if result.status == 200:
-        #         logger.info(f"已从OSS下载用户配置: {remote_path} -> {user_conf_path}")
-        #         return True
-        #     else:
-        #         logger.error(f"从OSS下载用户配置失败，状态码: {result.status}")
-        #         return False
-        # except Exception as e:
-        #     logger.error(f"从OSS下载用户配置失败: {e}")
-        #     return False
     
     def get_special_yaml(self) -> str:
         """

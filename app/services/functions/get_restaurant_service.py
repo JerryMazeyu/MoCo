@@ -8,15 +8,16 @@ import time
 from app.services.instances.restaurant import Restaurant, RestaurantsGroup
 from app.utils.logger import setup_logger
 from app.utils.file_io import rp
+from app.config.config import CONF
 
 # 设置日志
-logger = setup_logger()
+LOGGER = setup_logger("moco.log")
 
 class GetRestaurantsService:
     """
     餐厅信息获取服务，用于从各种API中获取餐厅信息
     """
-    def __init__(self, conf=None, benchmark_path=None):
+    def __init__(self, conf=CONF, benchmark_path=None):
         """
         初始化餐厅获取服务
         
@@ -44,19 +45,19 @@ class GetRestaurantsService:
             if file_ext == '.json':
                 with open(path, 'r', encoding='utf-8') as f:
                     self.benchmark = json.load(f)
-                logger.info(f"已从JSON文件加载基准数据: {path}, 共 {len(self.benchmark)} 条")
+                LOGGER.info(f"已从JSON文件加载基准数据: {path}, 共 {len(self.benchmark)} 条")
             elif file_ext in ['.xlsx', '.xls']:
                 df = pd.read_excel(path)
                 self.benchmark = df.to_dict('records')
-                logger.info(f"已从Excel文件加载基准数据: {path}, 共 {len(self.benchmark)} 条")
+                LOGGER.info(f"已从Excel文件加载基准数据: {path}, 共 {len(self.benchmark)} 条")
             elif file_ext == '.csv':
                 df = pd.read_csv(path)
                 self.benchmark = df.to_dict('records')
-                logger.info(f"已从CSV文件加载基准数据: {path}, 共 {len(self.benchmark)} 条")
+                LOGGER.info(f"已从CSV文件加载基准数据: {path}, 共 {len(self.benchmark)} 条")
             else:
-                logger.error(f"不支持的文件类型: {file_ext}")
+                LOGGER.error(f"不支持的文件类型: {file_ext}")
         except Exception as e:
-            logger.error(f"加载基准数据失败: {e}")
+            LOGGER.error(f"加载基准数据失败: {e}")
     
     def _load_from_file(self, path):
         """
@@ -78,7 +79,7 @@ class GetRestaurantsService:
                 df = pd.read_csv(path)
                 data = df.to_dict('records')
             else:
-                logger.error(f"不支持的文件类型: {file_ext}")
+                LOGGER.error(f"不支持的文件类型: {file_ext}")
                 return
             
             # 添加来源标记
@@ -86,9 +87,9 @@ class GetRestaurantsService:
                 item['source'] = 'file'
             
             self.info.extend(data)
-            logger.info(f"已从文件加载餐厅信息: {path}, 共 {len(data)} 条")
+            LOGGER.info(f"已从文件加载餐厅信息: {path}, 共 {len(data)} 条")
         except Exception as e:
-            logger.error(f"从文件加载餐厅信息失败: {e}")
+            LOGGER.error(f"从文件加载餐厅信息失败: {e}")
     
     def _gaode_search(self, keywords=None, city=None, radius=None) -> bool:
         """
@@ -103,7 +104,7 @@ class GetRestaurantsService:
         # try:
         #     # 检查是否有API密钥
         #     if not self.conf or not hasattr(self.conf, 'KEYS') or not hasattr(self.conf.KEYS, 'gaode_keys') or not self.conf.KEYS.gaode_keys:
-        #         logger.error("未配置高德地图API密钥")
+        #         LOGGER.error("未配置高德地图API密钥")
         #         return False
             
         #     # 获取API密钥
@@ -152,19 +153,19 @@ class GetRestaurantsService:
                         
         #                 results.append(restaurant_info)
                     
-        #             logger.info(f"高德地图API搜索 '{keyword}' 返回 {len(data['pois'])} 条结果")
+        #             LOGGER.info(f"高德地图API搜索 '{keyword}' 返回 {len(data['pois'])} 条结果")
         #         else:
-        #             logger.warning(f"高德地图API搜索 '{keyword}' 失败: {data.get('info', '')}")
+        #             LOGGER.warning(f"高德地图API搜索 '{keyword}' 失败: {data.get('info', '')}")
                 
         #         # 避免请求过快被限制
         #         time.sleep(0.5)
             
         #     # 将结果添加到信息列表中
         #     self.info.extend(results)
-        #     logger.info(f"高德地图API共获取 {len(results)} 条餐厅信息")
+        #     LOGGER.info(f"高德地图API共获取 {len(results)} 条餐厅信息")
         #     return True
         # except Exception as e:
-        #     logger.error(f"从高德地图API获取餐厅信息失败: {e}")
+        #     LOGGER.error(f"从高德地图API获取餐厅信息失败: {e}")
         #     return False
     
     def _baidu_search(self, keywords=None, city=None, radius=None) -> bool:
@@ -176,72 +177,8 @@ class GetRestaurantsService:
         :param radius: 搜索半径（米）
         :return: 是否获取成功
         """
-        try:
-            # 检查是否有API密钥
-            if not self.conf or not hasattr(self.conf, 'KEYS') or not hasattr(self.conf.KEYS, 'baidu_keys') or not self.conf.KEYS.baidu_keys:
-                logger.error("未配置百度地图API密钥")
-                return False
-            
-            # 获取API密钥
-            api_key = self.conf.KEYS.baidu_keys[0]
-            
-            # 获取搜索关键词
-            if not keywords:
-                if hasattr(self.conf, 'OTHER') and hasattr(self.conf.OTHER, 'Tab5') and hasattr(self.conf.OTHER.Tab5, '关键词'):
-                    keywords = self.conf.OTHER.Tab5.关键词
-                else:
-                    keywords = ['餐厅', '餐馆', '饭店', '小吃', '美食']
-            
-            # 如果是字符串，转换为列表
-            if isinstance(keywords, str):
-                keywords = [keywords]
-            
-            # 存储结果
-            results = []
-            
-            # 遍历关键词进行搜索
-            for keyword in keywords:
-                # 构建API请求URL
-                url = f"http://api.map.baidu.com/place/v2/search?query={keyword}&region={city}&output=json&ak={api_key}&scope=2&filter=sort_name:distance|category:美食"
-                
-                # 发送请求
-                response = requests.get(url)
-                data = response.json()
-                
-                # 检查请求是否成功
-                if data.get('status') == 0 and 'results' in data:
-                    for poi in data['results']:
-                        # 转换为餐厅信息格式
-                        restaurant_info = {
-                            'rest_chinese_name': poi.get('name', ''),
-                            'rest_city': city or '',
-                            'rest_province': '',  # 百度API没有直接提供省份信息
-                            'rest_chinese_address': poi.get('address', ''),
-                            'rest_location': f"{poi['location']['lat']},{poi['location']['lng']}",  # 转换为 "纬度,经度" 格式
-                            'rest_type': poi.get('detail_info', {}).get('tag', ''),
-                            'source': 'baidu'
-                        }
-                        
-                        # 如果有电话信息，添加
-                        if 'telephone' in poi.get('detail_info', {}):
-                            restaurant_info['rest_contact_phone'] = poi['detail_info']['telephone']
-                        
-                        results.append(restaurant_info)
-                    
-                    logger.info(f"百度地图API搜索 '{keyword}' 返回 {len(data['results'])} 条结果")
-                else:
-                    logger.warning(f"百度地图API搜索 '{keyword}' 失败: {data.get('message', '')}")
-                
-                # 避免请求过快被限制
-                time.sleep(0.5)
-            
-            # 将结果添加到信息列表中
-            self.info.extend(results)
-            logger.info(f"百度地图API共获取 {len(results)} 条餐厅信息")
-            return True
-        except Exception as e:
-            logger.error(f"从百度地图API获取餐厅信息失败: {e}")
-            return False
+        LOGGER.info("Serp API搜索功能尚未实现")
+        return False
     
     def _serp_search(self, keywords=None, city=None) -> bool:
         """
@@ -252,7 +189,7 @@ class GetRestaurantsService:
         :return: 是否获取成功
         """
         # 这里是示例实现，真实情况下需要根据实际API调整
-        logger.info("Serp API搜索功能尚未实现")
+        LOGGER.info("Serp API搜索功能尚未实现")
         return False
     
     def _tripadvisor_search(self, keywords=None, city=None) -> bool:
@@ -264,7 +201,7 @@ class GetRestaurantsService:
         :return: 是否获取成功
         """
         # 这里是示例实现，真实情况下需要根据实际API调整
-        logger.info("TripAdvisor API搜索功能尚未实现")
+        LOGGER.info("TripAdvisor API搜索功能尚未实现")
         return False
     
     def _dedup(self) -> None:
@@ -291,7 +228,7 @@ class GetRestaurantsService:
         self.info = deduped_info
         count_after = len(self.info)
         
-        logger.info(f"去重前餐厅信息: {count_before}条，去重后: {count_after}条，去除了 {count_before - count_after} 条重复信息")
+        LOGGER.info(f"去重前餐厅信息: {count_before}条，去重后: {count_after}条，去除了 {count_before - count_after} 条重复信息")
     
     def _info_to_restaurant(self, model_class=None, cp_id=None) -> None:
         """
@@ -316,7 +253,7 @@ class GetRestaurantsService:
             # 添加到餐厅列表
             self.restaurants.append(restaurant)
         
-        logger.info(f"已将 {len(self.info)} 条餐厅信息转换为餐厅实体")
+        LOGGER.info(f"已将 {len(self.info)} 条餐厅信息转换为餐厅实体")
     
     def get_restaurants_group(self, group_type='all') -> RestaurantsGroup:
         """
@@ -351,7 +288,7 @@ class GetRestaurantsService:
             
             # 遍历城市进行搜索
             for city in cities:
-                logger.info(f"开始搜索城市: {city}")
+                LOGGER.info(f"开始搜索城市: {city}")
                 
                 # 使用高德地图API
                 self._gaode_search(keywords=keywords, city=city)
@@ -395,16 +332,16 @@ class GetRestaurantsService:
             json_path = os.path.join(folder_path, f"{filename_prefix}_raw_{timestamp}.json")
             with open(json_path, 'w', encoding='utf-8') as f:
                 json.dump(self.info, f, ensure_ascii=False, indent=2)
-            logger.info(f"已将原始餐厅信息保存为JSON: {json_path}")
+            LOGGER.info(f"已将原始餐厅信息保存为JSON: {json_path}")
             
             # 保存餐厅实体为Excel
             if self.restaurants:
                 group = self.get_restaurants_group()
                 excel_path = os.path.join(folder_path, f"{filename_prefix}_{timestamp}.xlsx")
                 group.save_to_excel(excel_path)
-                logger.info(f"已将餐厅实体保存为Excel: {excel_path}")
+                LOGGER.info(f"已将餐厅实体保存为Excel: {excel_path}")
             
             return True
         except Exception as e:
-            logger.error(f"保存餐厅信息失败: {e}")
+            LOGGER.error(f"保存餐厅信息失败: {e}")
             return False 

@@ -12,7 +12,7 @@ from app.utils.logger import setup_logger
 from app.utils.file_io import rp
 
 # 设置日志
-logger = setup_logger()
+logger = setup_logger("moco.log")
 
 def manually_create_restaurant():
     """
@@ -87,9 +87,9 @@ def create_restaurants_group():
     logger.info(f"餐厅组合: {group}")
     
     # 保存到Excel
-    file_path = rp("example_restaurants_group.xlsx", folder="assets")
-    group.save_to_excel(file_path)
-    logger.info(f"已将餐厅组合保存到: {file_path}")
+    # file_path = rp("example_restaurants_group.xlsx", folder="assets")
+    # group.save_to_excel(file_path)
+    # logger.info(f"已将餐厅组合保存到: {file_path}")
     
     return group
 
