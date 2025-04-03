@@ -7,7 +7,7 @@ from app.utils.logger import setup_logger
 from app.utils.file_io import rp
 
 # 设置日志
-logger = setup_logger()
+LOGGER = setup_logger("moco.log")
 
 class Restaurant(BaseInstance):
     """
@@ -47,10 +47,10 @@ class Restaurant(BaseInstance):
                 # 使用餐厅中文名生成哈希ID
                 name = self.inst.rest_chinese_name
                 self.inst.rest_id = hash_text(name)[:16]  # 取哈希的前16位作为ID
-                logger.info(f"已为餐厅 '{name}' 生成ID: {self.inst.rest_id}")
+                LOGGER.info(f"已为餐厅 '{name}' 生成ID: {self.inst.rest_id}")
             return True
         except Exception as e:
-            logger.error(f"生成餐厅ID失败: {e}")
+            LOGGER.error(f"生成餐厅ID失败: {e}")
             return False
     
     def _generate_english_name(self) -> bool:
@@ -75,10 +75,10 @@ class Restaurant(BaseInstance):
                     # 简单地添加"Restaurant"后缀作为示例
                     self.inst.rest_english_name = f"{chinese_name} Restaurant"
                 
-                logger.info(f"已为餐厅 '{chinese_name}' 生成英文名: {self.inst.rest_english_name}")
+                LOGGER.info(f"已为餐厅 '{chinese_name}' 生成英文名: {self.inst.rest_english_name}")
             return True
         except Exception as e:
-            logger.error(f"生成餐厅英文名失败: {e}")
+            LOGGER.error(f"生成餐厅英文名失败: {e}")
             return False
     
     def _generate_english_address(self) -> bool:
@@ -102,10 +102,10 @@ class Restaurant(BaseInstance):
                     # 简单地添加标记作为示例
                     self.inst.rest_english_address = f"{chinese_address} (translated)"
                 
-                logger.info(f"已为餐厅生成英文地址: {self.inst.rest_english_address}")
+                LOGGER.info(f"已为餐厅生成英文地址: {self.inst.rest_english_address}")
             return True
         except Exception as e:
-            logger.error(f"生成餐厅英文地址失败: {e}")
+            LOGGER.error(f"生成餐厅英文地址失败: {e}")
             return False
     
     def _extract_district_and_street(self) -> bool:
@@ -146,10 +146,10 @@ class Restaurant(BaseInstance):
                 if not hasattr(self.inst, 'rest_street') or not self.inst.rest_street:
                     self.inst.rest_street = "未知街道"
                 
-                logger.info(f"已为餐厅提取区域和街道: {self.inst.rest_district}, {self.inst.rest_street}")
+                LOGGER.info(f"已为餐厅提取区域和街道: {self.inst.rest_district}, {self.inst.rest_street}")
             return True
         except Exception as e:
-            logger.error(f"提取区域和街道失败: {e}")
+            LOGGER.error(f"提取区域和街道失败: {e}")
             return False
     
     def _generate_contact_info(self) -> bool:
@@ -164,16 +164,16 @@ class Restaurant(BaseInstance):
                 # 在实际项目中，这应该通过查询API获取
                 # 这里使用示例值
                 self.inst.rest_contact_person = f"{self.inst.rest_chinese_name}负责人"
-                logger.info(f"已为餐厅生成联系人: {self.inst.rest_contact_person}")
+                LOGGER.info(f"已为餐厅生成联系人: {self.inst.rest_contact_person}")
             
             if not hasattr(self.inst, 'rest_contact_phone') or not self.inst.rest_contact_phone:
                 # 生成示例电话号码
                 self.inst.rest_contact_phone = f"1388888{hash(self.inst.rest_chinese_name) % 10000:04d}"
-                logger.info(f"已为餐厅生成联系电话: {self.inst.rest_contact_phone}")
+                LOGGER.info(f"已为餐厅生成联系电话: {self.inst.rest_contact_phone}")
             
             return True
         except Exception as e:
-            logger.error(f"生成联系人信息失败: {e}")
+            LOGGER.error(f"生成联系人信息失败: {e}")
             return False
     
     def _calculate_distance(self) -> bool:
@@ -197,11 +197,11 @@ class Restaurant(BaseInstance):
                 distance_km = 1 + abs(distance_hash % 20)  # 1-20公里范围内
                 
                 self.inst.rest_distance = distance_km
-                logger.info(f"已计算餐厅到CP的距离: {distance_km}公里")
+                LOGGER.info(f"已计算餐厅到CP的距离: {distance_km}公里")
             
             return True
         except Exception as e:
-            logger.error(f"计算餐厅距离失败: {e}")
+            LOGGER.error(f"计算餐厅距离失败: {e}")
             return False
     
     def generate(self) -> bool:
@@ -231,7 +231,7 @@ class Restaurant(BaseInstance):
         # 如果全部成功，更新状态为就绪
         if success:
             self.status = 'ready'
-            logger.info(f"餐厅 '{self.inst.rest_chinese_name}' 的所有字段已生成完成")
+            LOGGER.info(f"餐厅 '{self.inst.rest_chinese_name}' 的所有字段已生成完成")
         
         return success
     
@@ -259,14 +259,14 @@ class RestaurantsGroup(BaseGroup):
         """
         super().__init__(restaurants, group_type)
     
-    def filter_by_city(self, city: str) -> 'RestaurantsGroup':
+    def filter_by_district(self, district: str) -> 'RestaurantsGroup':
         """
-        按城市筛选餐厅
+        按区域筛选餐厅
         
-        :param city: 城市名称
+        :param district: 区域名称
         :return: 筛选后的餐厅组合
         """
-        return self.filter(lambda r: hasattr(r.inst, 'rest_city') and r.inst.rest_city == city)
+        return self.filter(lambda r: hasattr(r.inst, 'rest_district') and r.inst.rest_district == district)
     
     def filter_by_cp(self, cp_id: str) -> 'RestaurantsGroup':
         """
