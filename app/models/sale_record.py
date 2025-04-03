@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Literal, Any
 
 
-class SaleRecord(BaseModel):
+class SaleRecordModel(BaseModel):
     """发货记录模型，表示CP到TP或者客户的发货记录"""
     
     sr_contract_id: Any = Field(description="销售合同号")

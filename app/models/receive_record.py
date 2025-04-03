@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any
 
 
-class ReceiveRecord(BaseModel):
+class ReceiveRecordModel(BaseModel):
     """收油记录模型，表示从餐厅到CP的一条记录"""
     
     rr_id: Any = Field(description="收油合同号")

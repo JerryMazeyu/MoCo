@@ -62,9 +62,9 @@ BUSINESS:
     每车收购量范围: 35,44
 MISC:  # 一些杂项
   Tab1: 
-	last_dir: xxxx  # 上次Tab1页面中保存的路径
+    last_dir: xxxx  # 上次Tab1页面中保存的路径
   Tab2:
-	last_dir: xxxx  # 上次Tab2页面中保存的路径
+    last_dir: xxxx  # 上次Tab2页面中保存的路径
 KEYS:  # 整个流程中涉及到的一些apikeys（用户可以自定义覆盖部分SYSCONF）
   kimi_keys: # 调用大模型的keys
     - 'xxxx'
@@ -115,7 +115,7 @@ __all__ = ['CONF']
 
 采用pydantic定义数据模型，便于管理。注意，在模型字段中不做校验，以便于敏捷开发。
 
-### 3.1 餐厅模型：restaurant_model.py
+### 1.1 餐厅模型：restaurant_model.py
 
 餐厅一般来自于小工厂CP附近，CP从附近的各个餐厅中进行收油。餐厅模型应包含以下字段：
 
@@ -139,7 +139,7 @@ __all__ = ['CONF']
 * rest_allocated_barrel：分配的桶数（可以暂时没有）
 * rest_other_info：其他信息，可以暂时为空字典
 
-### 3.2 车辆模型：vehicle_model.py
+### 1.2 车辆模型：vehicle_model.py
 
  车辆主要来自于小工厂CP，不同的车辆负责从餐厅收油、给贸易场销售等。车辆模型应包含以下字段：
 
@@ -157,7 +157,7 @@ __all__ = ['CONF']
 * vehicle_last_use：上次使用的日期
 * vehicle_other_info：其他信息，可以暂时为空字典
 
-### 3.3 小工厂CP：cp_models.py
+### 1.3 小工厂CP：cp_models.py
 
 小工厂CP是收油的中转站，一方面从附近的餐厅中收油，另一方面将收来的油发货给贸易场TP或者直接发送给客户。CP模型应包含以下字段：
 
@@ -176,7 +176,7 @@ __all__ = ['CONF']
 * cp_vehicle_to_rest：CP所属的面向餐厅收油的车辆列表
 * cp_vehicle_to_sale：CP所属的面向销售的车辆列表
 
-### 3.4 收油记录：receive_record.py
+### 1.4 收油记录：receive_record.py
 
 收油记录是指从餐厅到CP的一条记录，由CP的车辆进行收集，模型应包含以下字段：
 
@@ -187,7 +187,7 @@ __all__ = ['CONF']
 * rr_restaurant：收油对应的餐厅
 * rr_amount：单次收油量
 
-### 3.5 发货记录：sale_record.py
+### 1.5 发货记录：sale_record.py
 
 发货记录是指CP到TP或者客户的发货记录，该模型应该包含以下字段：
 
@@ -196,23 +196,19 @@ __all__ = ['CONF']
 * sr_date：出货时间
 * sr_to：TP或者客户Cus
 
-### 3.6 集合：groups.py
-
-在真实的业务中，经常涉及到将同类的对象组合成一个组的问题。例如餐厅，最终需要是一个表，这个表中包含多个餐厅；而收油记录，最终多条收油记录组合成一天的收油记录，而多天的记录则组合成一个平衡表，因此，这里我需要你涉及一个group_model。这里是比较复杂的，首先，不同的对象组合应该有一个不同的类型，比如餐厅的组合，我可能会将其命名为RestaurantsGroup类，其中可以存在一个self.members作为列表；其次，每个类可能会有一些共有的特性，比如同天的收油记录，可能其ReceiveRrecordsGroup的类中应该有一个多个属性能表现这件事；最后，这个集合应该是可以将之前的集合类作为参数进行组合的，比如同一天的多条收油记录是一个集合，而不同天的收油记录集合又是一个集合。
-
 ## 2. 业务（app/services）
 
-业务逻辑主要是指对于关键的数据类型进行操作，其中又分成两个部分，第一是和模型相关的业务逻辑（services/models），其中主要承载的对于各类模型的数值的变换以及保存，一般与模型相对应；而另外是业务服务（service/functions)，主要承载的则是一些业务逻辑。
+业务逻辑主要是指对于关键的数据类型进行操作，其中又分成两个部分，第一是和模型相关的业务逻辑，其主要目的是将这个模型转化成实体（services/instances），举例来说，models/restauarant.py中定义了Restaurant类中定义了有哪些属性，而services/instances/restaurant.py中则是给这个模型增加了一些方法，比如自动获得id、获得英文名等等，还有就是承载的对于各类模型的数值的变换以及保存，一般与模型相对应；而另外是业务服务（service/functions)，主要承载的则是一些业务逻辑。
 
-### 2.1 模型业务逻辑基类（services/models/base.py）
+### 2.1 模型业务逻辑基类（services/instances/base.py）
 
-这里主要包含关于业务逻辑的基础操作，如Excel以及JSON的IO等内容，针对模型的Service类都应该继承这个基类。
+这里主要包含关于实体的基础操作，如Excel以及JSON的IO等内容，针对模型的Service类都应该继承这个基类。
 
 ```python
 import abc, abstractmethod
 
-class BaseService(abc):
-    def __init__(self, conf, model):
+class BaseInstance(abc):
+    def __init__(self, model):
         pass
     @abstractmethod
     def load_from_excel(self):
@@ -222,14 +218,80 @@ class BaseService(abc):
         pass
 ```
 
-### 2.1 餐厅获取业务(service/functions/get_restaurant_service.py)
+特别的，经常涉及到将同类的实例组合成一个组的问题。例如餐厅，最终需要是一个表，这个表中包含多个餐厅；而收油记录，最终多条收油记录组合成一天的收油记录，而多天的记录则组合成一个平衡表，因此，这里我需要你涉及一个group_model。这里是比较复杂的，首先，不同的对象组合应该有一个不同的类型，比如餐厅的组合，我可能会将其命名为RestaurantsGroup类，其中可以存在一个self.members作为列表；其次，每个类可能会有一些共有的特性，比如同天的收油记录，可能其ReceiveRrecordsGroup的类中应该有一个多个属性能表现这件事；最后，这个集合应该是可以将之前的集合类作为参数进行组合的，比如同一天的多条收油记录是一个集合，而不同天的收油记录集合又是一个集合。因此在services/instances/base.py中还应该存在一个这样的功能的类。
+
+### 2.2 餐厅实体（services/instances/restaurant.py）
+
+餐厅实体是指对于某个具体的餐厅进行实例化。
+
+```python
+class Restaurant(BaseInstance):
+    def __init__(self, info:dict, model=RestaurantModel, conf=CONF):
+        self.inst = model(info)
+        # 根据info将model实例化并进行填充
+        assert info.get('rest_chinese_name') != None, "必须有餐厅名称"
+        self.status = 'pending'  # 当一个餐厅所有字段都齐备的时候我们会转成'ready'，只有部分字段则是'pending'
+    
+    def _generate_id_by_name(self): -> bool
+        # 根据餐厅的名字hash构建id
+        pass
+    
+    def _generate_english_name(self): -> bool
+        # 生成英文翻译
+        pass
+    
+    def generate(self):
+        # 自动根据没有填充的部分生成其余字段
+        flag = 1
+        if self.inst.id == None:
+        	flag *= self._generate_id_by_name()
+        flag *= self._generate_english_name()
+        ...
+        if flag:
+            self.status = ready
+    
+    def get_status(self):
+        return self
+   
+	def __str__(self):
+        # 这里需要进行一个较好的表示
+    
+    #...其他的函数可以参考models中的部分，逻辑先可以不填
+```
+
+### 2.3 餐厅获取业务(service/functions/get_restaurant_service.py)
 
 这里主要的功能是希望能从各种api渠道获取这些餐厅信息，然后进行整合。
 
 ```python
 class GetRestaurantsService():
-    def __init__(self, conf):
-        self.restaurants = xxx  # 创造一个Restaurant的集合类
-        self.backends = []
+    def __init__(self, conf, benchmark_path=None):
+        self.benchmark = _load_benchmark_from_path(benchmark_path)  # 如果提供了benchmark的path，那么只需要在此基础上进行验证每家餐厅是否存在即可，而不是从头更新
+        self.backends = ['gaode', 'baidu', 'serp', 'tripadvisor']
+        self.info = []
+   	def _load_from_file(self, path):
+   		pass  # 从本地导入文件，将其添加进
+    def _gaode_search(self)：-> list[dict]
+    	# 从查询所有的餐厅信息
+    	pass
+    	self.info.append(xxx)
+    def _baidu_search(self):
+        # 从百度查询所有的餐厅信息
+        self.info.append(xxx)
+    # ...其他的后端也是一样
+    def _dedup(self):
+        # 针对每个后端查到的info进行去重
+    def _info_to_restaurant(self):
+        # 将这些信息info进行实例化
+        self.restaurants = []
+        for data in self.info:
+            restaurant = Restaurant(info)
+            restaurant.generate()
+            self.restaurants.append(restaurant)
+        # 再将self.restaurants整合为一个组
+    def run(self):
+        self._load_from_file()
+        self._gaode_search()
+        # ...将全部流程整理好
 ```
 
