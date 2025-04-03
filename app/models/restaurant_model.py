@@ -3,7 +3,7 @@ from typing import Dict, Optional, Any
 from datetime import datetime
 
 
-class Restaurant(BaseModel):
+class RestaurantModel(BaseModel):
     """餐厅模型，表示产生废油的餐厅信息"""
     
     rest_id: Any = Field(description="餐厅id（根据中文名hash后生成，唯一）")

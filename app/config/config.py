@@ -1,133 +1,20 @@
+import os
 import yaml
-from app.utils import rp
+import logging
+from typing import Optional, Dict, Any, List, Union
+import oss2  # 阿里云OSS SDK
 
-class ConfigService:
-    def __init__(self, config_path: str=rp("default.yaml", folder="config")):
-        """初始化配置服务，加载 YAML 文件"""
-        with open(config_path, "r", encoding="utf-8") as file:
-            self._config = yaml.safe_load(file)
-            self._config_path = config_path
-        
-        self._special = {}
-        self.special_list = self._config.get("SPECIAL", [])
-        if not isinstance(self.special_list, list):
-            self.special_list = []
-            
-        for sp_path in self.special_list:
-            val = self._get_value_by_path(sp_path, self._config)
-            if val is not None:
-                self._set_value_by_path(sp_path, val, self._special)
+from app.utils import rp, oss_get_yaml_file
 
-        self.special = ConfigWrapper(self._special)
-        self.common = ConfigWrapper(self._config)
-
-    def get(self, key_path: str, default=None):
-        """
-        通过路径访问配置，例如 "SYSTEM.database.host"
-        :param key_path: 点分隔的路径字符串，例如 "SYSTEM.database.host"
-        :param default: 如果路径不存在，返回的默认值
-        :return: 对应配置值或默认值
-        """
-        keys = key_path.split(".")
-        value = self._config
-        try:
-            for key in keys:
-                value = value[key]
-            return value
-        except (KeyError, TypeError):
-            return default
-
-    def __getattr__(self, item):
-        """
-        支持通过属性访问配置，例如 config.SYSTEM.database.host
-        """
-        return self._get_nested_dict(self._config.get(item, {}))
-
-    def _get_nested_dict(self, config_subtree):
-        """
-        将嵌套字典转化为支持点式访问的对象
-        """
-        if isinstance(config_subtree, dict):
-            return ConfigWrapper(config_subtree)
-        return config_subtree
-
-    def save(self, config_path: str=None):
-        """
-        保存配置到文件
-        :param config_path: 保存的配置文件路径
-        """
-        if not config_path:
-            config_path = self._config_path
-        
-        with open(config_path, "w", encoding="utf-8") as file:
-            yaml.dump(self._config, file, allow_unicode=True)
-    
-    def _get_value_by_path(self, path: str, data: dict):
-        keys = path.split(".")
-        current = data
-        for k in keys:
-            if not isinstance(current, dict) or k not in current:
-                return None
-            current = current[k]
-        return current
-
-    def _set_value_by_path(self, path: str, value, data: dict):
-        if isinstance(data, ConfigWrapper):
-            data = data._config_dict
-
-        keys = path.split(".")
-        current = data
-        for i, k in enumerate(keys):
-
-            if isinstance(current, ConfigWrapper):
-                current = current._config_dict
-
-            if i == len(keys) - 1:
-                current[k] = value
-            else:
-                if k not in current or not isinstance(current[k], dict):
-                    current[k] = {}
-                current = current[k]
-    
-    def get_special_yaml(self) -> str:
-        """
-        将当前 self._special 序列化为 YAML 文本。
-        这样 UI 只需要把这个文本放到编辑器里展示即可。
-        """
-        return yaml.dump(self._special, allow_unicode=True)
-    
-    def update_special_yaml(self, yaml_text: str):
-        """
-        接收用户改好的 YAML 文本，解析后更新到 self._special，
-        同时把修改同步回 self._config (如果你需要双向联动)。
-        """
-        new_special = yaml.safe_load(yaml_text)
-        if not isinstance(new_special, dict):
-            raise ValueError("special 配置必须是字典结构")
-
-        # 1) 更新 self._special
-        self._special.clear()
-        self._special.update(new_special)
-        self._sync_special_to_config()
-    
-    def _sync_special_to_config(self):
-        """
-        将 self._special 的内容写回 self._config.
-        如果你想保留 [SPECIAL] 列表中各个 path 指向的内容，一种简易做法是直接整块替换
-        或者遍历自定义。
-        这里的做法要根据你实际 'special 只是指针' 的逻辑来决定。
-        """
-        for key, val in self._special.items():
-            # 简化示例：把每个顶级key都放到 _config 里
-            self._config[key] = val
-
-
+# 日志配置
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("moco.log")
 
 class ConfigWrapper:
     """
-    用于封装嵌套配置字典，支持点式访问
+    配置包装器，支持以属性方式访问配置
     """
-    def __init__(self, config_dict):
+    def __init__(self, config_dict: Dict[str, Any]):
         self._config_dict = config_dict
 
     def __getattr__(self, item):
@@ -137,6 +24,15 @@ class ConfigWrapper:
                 return ConfigWrapper(value)
             return value
         raise AttributeError(f"配置项 {item} 不存在")
+    
+    def __getitem__(self, key):
+        """支持以字典方式访问配置"""
+        if isinstance(key, str) and key in self._config_dict:
+            value = self._config_dict[key]
+            if isinstance(value, dict):
+                return ConfigWrapper(value)
+            return value
+        raise KeyError(f"配置项 {key} 不存在")
     
     def __setattr__(self, key, value):
         if key == "_config_dict":
@@ -149,18 +45,364 @@ class ConfigWrapper:
             del self._config_dict[key]
         else:
             raise AttributeError(f"配置项 {key} 不存在")
+    
+    def keys(self):
+        """返回配置的所有键"""
+        return self._config_dict.keys()
+    
+    def get(self, key, default=None):
+        """获取指定键的值，如果不存在返回默认值"""
+        return self._config_dict.get(key, default)
 
-default_config = ConfigService()
 
-def get_config():
-    try:
-        return ConfigService(config_path=rp("config.yaml", folder="config"))
-    except:
-        return default_config
+class ConfigService:
+    """配置服务，负责加载、保存和管理配置"""
+    
+    def __init__(self, username: str):
+        """
+        初始化配置服务
+        
+        :param username: 用户名，用于加载用户特定配置
+        """
+        self.username = username
+        self._config_dict = {}
+        self.special_list = []
+        self._special = {}
+        
+        # 加载系统配置
+        self._load_sys_config()
+        
+        # 加载用户配置
+        self._load_user_config()
+        
+        # 合并配置
+        self._merge_configs()
+        
+        # 初始化特殊配置
+        self._init_special_configs()
+        
+    def _load_sys_config(self):
+        """加载系统配置"""
+        # 首先尝试加载本地 SYSCONF.yaml
+        sys_conf_path = rp("SYSCONF.yaml", folder="config")
+        default_sys_conf_path = rp("SYSCONF_default.yaml", folder="config")
+        
+        self.sys_config = {}
+        if os.path.exists(sys_conf_path):
+            try:
+                with open(sys_conf_path, "r", encoding="utf-8") as f:
+                    self.sys_config = yaml.safe_load(f) or {}
+                logger.info(f"已从本地加载系统配置: {sys_conf_path}")
+            except Exception as e:
+                logger.error(f"加载系统配置失败: {e}")
+                
+                # 如果本地配置加载失败，尝试加载默认配置
+                if os.path.exists(default_sys_conf_path):
+                    try:
+                        with open(default_sys_conf_path, "r", encoding="utf-8") as f:
+                            self.sys_config = yaml.safe_load(f) or {}
+                        logger.info(f"已从默认配置加载系统配置: {default_sys_conf_path}")
+                    except Exception as e:
+                        logger.error(f"加载默认系统配置失败: {e}")
+        elif os.path.exists(default_sys_conf_path):
+            # 如果本地配置不存在，尝试加载默认配置
+            try:
+                with open(default_sys_conf_path, "r", encoding="utf-8") as f:
+                    self.sys_config = yaml.safe_load(f) or {}
+                logger.info(f"已从默认配置加载系统配置: {default_sys_conf_path}")
+            except Exception as e:
+                logger.error(f"加载默认系统配置失败: {e}")
+    
+    def _load_user_config(self):
+        """加载用户配置"""
+        # 首先检查是否存在临时用户配置
+        user_temp_conf_path = rp(f"{self.username}_temp.yaml", folder="config")
+        user_conf_path = rp(f"{self.username}.yaml", folder="config")
+        
+        self.user_config = {}
+        if os.path.exists(user_temp_conf_path):
+            # 如果存在临时配置，优先加载
+            try:
+                with open(user_temp_conf_path, "r", encoding="utf-8") as f:
+                    self.user_config = yaml.safe_load(f) or {}
+                logger.info(f"已从临时配置加载用户配置: {user_temp_conf_path}")
+            except Exception as e:
+                logger.error(f"加载临时用户配置失败: {e}")
+        elif self.sys_config.get("KEYS", {}).get("oss"):
+            # 如果没有临时配置且系统配置中包含OSS配置，尝试从OSS下载
+            try:
+                self._download_from_oss()
+                
+                # 下载完成后，检查是否已经生成了用户配置文件
+                if os.path.exists(user_conf_path):
+                    with open(user_conf_path, "r", encoding="utf-8") as f:
+                        self.user_config = yaml.safe_load(f) or {}
+                    logger.info(f"已从OSS下载并加载用户配置: {user_conf_path}")
+            except Exception as e:
+                logger.error(f"从OSS加载用户配置失败: {e}")
+        elif os.path.exists(user_conf_path):
+            # 如果OSS下载失败但本地存在用户配置，直接加载
+            try:
+                with open(user_conf_path, "r", encoding="utf-8") as f:
+                    self.user_config = yaml.safe_load(f) or {}
+                logger.info(f"已从本地加载用户配置: {user_conf_path}")
+            except Exception as e:
+                logger.error(f"加载本地用户配置失败: {e}")
+    
+    def _merge_configs(self):
+        """合并系统配置和用户配置"""
+        # 深度合并两个配置字典，用户配置优先级更高
+        self._config_dict = self._deep_merge(self.sys_config, self.user_config)
+        
+        # 将合并后的配置放入ConfigWrapper
+        self.config = ConfigWrapper(self._config_dict)
+    
+    def _deep_merge(self, dict1: Dict[str, Any], dict2: Dict[str, Any]) -> Dict[str, Any]:
+        """深度合并两个字典，dict2的值会覆盖dict1的值"""
+        result = dict1.copy()
+        
+        for key, value in dict2.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = self._deep_merge(result[key], value)
+            else:
+                result[key] = value
+                
+        return result
+    
+    def _init_special_configs(self):
+        """初始化特殊配置"""
+        # 获取特殊配置列表
+        self.special_list = self._config_dict.get("SPECIAL", [])
+        if not isinstance(self.special_list, list):
+            self.special_list = []
+        
+        # 提取特殊配置
+        for sp_path in self.special_list:
+            val = self._get_value_by_path(sp_path, self._config_dict)
+            if val is not None:
+                self._set_value_by_path(sp_path, val, self._special)
+        
+        # 将特殊配置放入ConfigWrapper
+        self.special = ConfigWrapper(self._special)
+    
+    def _get_value_by_path(self, path: str, data: dict) -> Any:
+        """通过路径获取字典中的值"""
+        keys = path.split(".")
+        current = data
+        
+        for k in keys:
+            if not isinstance(current, dict) or k not in current:
+                return None
+            current = current[k]
+            
+        return current
+    
+    def _set_value_by_path(self, path: str, value: Any, data: dict) -> None:
+        """通过路径设置字典中的值"""
+        if isinstance(data, ConfigWrapper):
+            data = data._config_dict
+            
+        keys = path.split(".")
+        current = data
+        
+        for i, k in enumerate(keys):
+            if isinstance(current, ConfigWrapper):
+                current = current._config_dict
+                
+            if i == len(keys) - 1:
+                current[k] = value
+            else:
+                if k not in current or not isinstance(current[k], dict):
+                    current[k] = {}
+                current = current[k]
+    
+    def __getattr__(self, item):
+        """支持以属性方式访问配置"""
+        if item in self._config_dict:
+            value = self._config_dict[item]
+            if isinstance(value, dict):
+                return ConfigWrapper(value)
+            return value
+        raise AttributeError(f"配置项 {item} 不存在")
+    
+    def __getitem__(self, key):
+        """支持以字典方式访问配置"""
+        return self.__getattr__(key)
+    
+    def get(self, key_path: str, default=None):
+        """
+        通过路径访问配置，例如 "SYSTEM.database.host"
+        
+        :param key_path: 点分隔的路径字符串，例如 "SYSTEM.database.host"
+        :param default: 如果路径不存在，返回的默认值
+        :return: 对应配置值或默认值
+        """
+        return self._get_value_by_path(key_path, self._config_dict) or default
+    
+    def save(self):
+        """保存配置"""
+        # 将用户配置保存为临时文件
+        user_temp_conf_path = rp(f"{self.username}_temp.yaml", folder="config")
+        
+        try:
+            # 确保config目录存在
+            os.makedirs("config", exist_ok=True)
+            
+            # 保存用户配置
+            with open(user_temp_conf_path, "w", encoding="utf-8") as f:
+                yaml.dump(self.user_config, f, allow_unicode=True)
+            logger.info(f"用户配置已保存至: {user_temp_conf_path}")
+        except Exception as e:
+            logger.error(f"保存用户配置失败: {e}")
+    
+    def upload(self):
+        """将配置上传到OSS"""
+        # 首先检查是否已配置OSS
+        oss_config = self.sys_config.get("KEYS", {}).get("oss")
+        if not oss_config:
+            logger.error("未配置OSS，无法上传配置")
+            return False
+        
+        try:
+            # 创建OSS客户端
+            auth = oss2.Auth(oss_config["access_key_id"], oss_config["access_key_secret"])
+            bucket = oss2.Bucket(auth, oss_config["endpoint"], oss_config["bucket_name"])
+            
+            # 上传用户配置
+            user_temp_conf_path = rp(f"{self.username}_temp.yaml", folder="config")
+            if os.path.exists(user_temp_conf_path):
+                # 读取配置文件内容
+                with open(user_temp_conf_path, "rb") as f:
+                    content = f.read()
+                
+                # 上传到OSS
+                remote_path = f"configs/{self.username}.yaml"
+                bucket.put_object(remote_path, content)
+                logger.info(f"用户配置已上传至OSS: {remote_path}")
+                return True
+            else:
+                logger.error(f"用户临时配置文件不存在: {user_temp_conf_path}")
+                return False
+        except Exception as e:
+            logger.error(f"上传配置到OSS失败: {e}")
+            return False
+    
+    def refresh(self):
+        """刷新配置，从OSS重新下载"""
+        # 删除临时配置文件
+        user_temp_conf_path = rp(f"{self.username}_temp.yaml", folder="config")
+        if os.path.exists(user_temp_conf_path):
+            try:
+                os.remove(user_temp_conf_path)
+                logger.info(f"已删除临时配置文件: {user_temp_conf_path}")
+            except Exception as e:
+                logger.error(f"删除临时配置文件失败: {e}")
+        
+        # 重新从OSS下载配置
+        self._download_from_oss()
+        
+        # 重新加载配置
+        self._load_user_config()
+        self._merge_configs()
+        self._init_special_configs()
+        
+        return True
+    
+    def _download_from_oss(self):
+        """从OSS下载用户配置"""
+        info = oss_get_yaml_file(f"configs/{self.username}.yaml")
+        if info:
+            with open(rp(f"{self.username}_temp.yaml", folder="config"), "w", encoding="utf-8") as f:
+                yaml.dump(info, f, allow_unicode=True)
+            logger.info(f"已从OSS下载用户配置: {rp(f'{self.username}.yaml', folder='config')}")
+            return True
+        else:
+            logger.error(f"从OSS下载用户配置失败")
+            return False
+        # 首先检查是否已配置OSS
+        # oss_config = self.sys_config.get("KEYS", {}).get("oss")
+        # if not oss_config:
+        #     logger.error("未配置OSS，无法下载配置")
+        #     return False
+        
+        # try:
+        #     # 创建OSS客户端
+        #     auth = oss2.Auth(oss_config["access_key_id"], oss_config["access_key_secret"])
+        #     bucket = oss2.Bucket(auth, oss_config["endpoint"], oss_config["bucket_name"])
+            
+        #     # 下载用户配置
+        #     remote_path = f"configs/{self.username}.yaml"
+        #     user_conf_path = os.path.join("config", f"{self.username}.yaml")
+            
+        #     # 确保config目录存在
+        #     os.makedirs("config", exist_ok=True)
+            
+        #     # 下载配置文件
+        #     result = bucket.get_object_to_file(remote_path, user_conf_path)
+        #     if result.status == 200:
+        #         logger.info(f"已从OSS下载用户配置: {remote_path} -> {user_conf_path}")
+        #         return True
+        #     else:
+        #         logger.error(f"从OSS下载用户配置失败，状态码: {result.status}")
+        #         return False
+        # except Exception as e:
+        #     logger.error(f"从OSS下载用户配置失败: {e}")
+        #     return False
+    
+    def get_special_yaml(self) -> str:
+        """
+        将当前特殊配置序列化为YAML文本
+        
+        :return: YAML格式的特殊配置
+        """
+        return yaml.dump(self._special, allow_unicode=True)
+    
+    def update_special_yaml(self, yaml_text: str):
+        """
+        更新特殊配置
+        
+        :param yaml_text: YAML格式的特殊配置
+        """
+        try:
+            new_special = yaml.safe_load(yaml_text)
+            if not isinstance(new_special, dict):
+                raise ValueError("特殊配置必须是字典结构")
+            
+            # 更新特殊配置
+            self._special.clear()
+            self._special.update(new_special)
+            
+            # 同步回主配置
+            self._sync_special_to_config()
+            
+            # 更新包装器
+            self.special = ConfigWrapper(self._special)
+            
+            logger.info("特殊配置已更新")
+            return True
+        except Exception as e:
+            logger.error(f"更新特殊配置失败: {e}")
+            return False
+    
+    def _sync_special_to_config(self):
+        """将特殊配置同步回主配置"""
+        for sp_path in self.special_list:
+            # 从special中获取值
+            val = self._get_value_by_path(sp_path.split(".")[-1], self._special)
+            if val is not None:
+                # 设置到主配置中
+                self._set_value_by_path(sp_path, val, self._config_dict)
 
+
+# 初始化配置服务
 try:
-    CONF = ConfigService(config_path=rp("config.yaml", folder="config"))
-except:
-    CONF = default_config
+    # 获取用户名，如果未指定则使用默认用户名
+    username = os.environ.get("MoCo_USERNAME", "huizhou")
+    CONF = ConfigService(username)
+except Exception as e:
+    logger.error(f"初始化配置服务失败: {e}")
+    # 使用空配置作为后备
+    CONF = ConfigService("default")
 
-__all__ = ["ConfigService" ,"default_config", "CONF", "get_config"]
+# 导出配置服务和配置实例
+__all__ = ["CONF"] 

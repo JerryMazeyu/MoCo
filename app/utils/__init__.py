@@ -6,6 +6,7 @@ from .message_utils import (
     print_error, print_success, print_debug
 )
 from .hash import hash_text
+from .oss import oss_get_json_file, oss_get_yaml_file
 
 __all__ = [
     'rp',  # from file_io
@@ -16,5 +17,7 @@ __all__ = [
     'print_error',
     'print_success',
     'print_debug',
-    'hash_text'
+    'hash_text',
+    'oss_get_json_file',
+    'oss_get_yaml_file'
 ]

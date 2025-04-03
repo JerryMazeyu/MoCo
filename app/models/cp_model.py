@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 from typing import Dict, List, Any, Optional
 
 
-class CP(BaseModel):
+class CPModel(BaseModel):
     """小工厂CP模型，表示收油的中转站"""
     
     cp_id: Any = Field(description="CP的ID（自动随机生成，但也可以指定）")

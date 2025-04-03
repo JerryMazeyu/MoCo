@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Any, Literal
 from datetime import datetime
 
 
-class Vehicle(BaseModel):
+class VehicleModel(BaseModel):
     """车辆模型，表示用于收油和销售的车辆信息"""
     
     vehicle_id: Any = Field(description="车辆ID（根据车牌号hash后生成）")
