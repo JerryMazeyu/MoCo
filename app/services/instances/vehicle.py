@@ -1,0 +1,471 @@
+import random
+import datetime
+import uuid
+from typing import Dict, Any, List, Optional, Union
+from app.services.instances.base import BaseInstance, BaseGroup
+from app.utils.hash import hash_text
+from app.utils.logger import setup_logger, logger
+from app.utils.file_io import rp
+
+# 设置日志
+LOGGER = setup_logger("moco.log")
+
+class Vehicle(BaseInstance):
+    """
+    车辆实体类，表示一个油品运输车辆
+    """
+    def __init__(
+        self, 
+        info: Dict[str, Any],
+        model: Optional[Any] = None,
+        conf: Optional[Dict[str, Any]] = None
+    ):
+        """
+        初始化车辆实例
+        
+        Args:
+            info: 车辆信息字典
+            model: 模型实例
+            conf: 配置信息
+        """
+        super().__init__(info, model, conf)
+        
+        # 必要字段检查
+        assert "plate_number" in info, "车牌号码必须存在"
+        
+        # 设置默认值
+        if "vehicle_id" not in info:
+            self.info["vehicle_id"] = self._generate_id()
+        
+        if "driver_name" not in info:
+            self.info["driver_name"] = ""
+            
+        if "driver_phone" not in info:
+            self.info["driver_phone"] = ""
+            
+        if "type" not in info:
+            self.info["type"] = "oil_truck"  # 默认为油罐车
+            
+        if "capacity" not in info:
+            self.info["capacity"] = 0  # 默认运力为0
+            
+        if "status" not in info:
+            self.info["status"] = "active"  # 默认为激活状态
+    
+    def _generate_id(self) -> str:
+        """生成唯一车辆ID"""
+        return f"V-{str(uuid.uuid4())[:8]}"
+    
+    def update_driver_info(self, name: str, phone: str) -> None:
+        """
+        更新司机信息
+        
+        Args:
+            name: 司机姓名
+            phone: 司机电话
+        """
+        self.info["driver_name"] = name
+        self.info["driver_phone"] = phone
+        
+    def set_status(self, status: str) -> None:
+        """
+        设置车辆状态
+        
+        Args:
+            status: 状态 (active/inactive/maintenance)
+        """
+        allowed_status = ["active", "inactive", "maintenance"]
+        if status not in allowed_status:
+            logger.warning(f"无效的车辆状态: {status}，允许的状态为: {allowed_status}")
+            return
+            
+        self.info["status"] = status
+        
+    def update_capacity(self, capacity: float) -> None:
+        """
+        更新车辆容量
+        
+        Args:
+            capacity: 容量（单位：吨）
+        """
+        if capacity < 0:
+            logger.warning(f"车辆容量不能为负数: {capacity}")
+            return
+            
+        self.info["capacity"] = capacity
+    
+    def _generate_weights(self) -> bool:
+        """
+        生成车辆的重量信息
+        
+        :return: 是否生成成功
+        """
+        try:
+            # 检查车辆类型
+            if not hasattr(self.inst, 'vehicle_type'):
+                # 默认为收集车
+                self.inst.vehicle_type = "to_rest"
+                LOGGER.info(f"未指定车辆类型，设置为默认类型: {self.inst.vehicle_type}")
+            
+            # 生成原始皮重
+            if not hasattr(self.inst, 'vehicle_tare_weight') or not self.inst.vehicle_tare_weight:
+                # 根据车辆类型计算原始皮重
+                if self.inst.vehicle_type == "to_rest":
+                    # 收集车公式：RANDBETWEEN(43,46)*100+RANDBETWEEN(1,9)*10
+                    base = random.randint(43, 46) * 100
+                    offset = random.randint(1, 9) * 10
+                    self.inst.vehicle_tare_weight = base + offset
+                elif self.inst.vehicle_type == "to_sale":
+                    # 销售车公式：RANDBETWEEN(145,159)*100+RANDBETWEEN(1,9)*10
+                    base = random.randint(145, 159) * 100
+                    offset = random.randint(1, 9) * 10
+                    self.inst.vehicle_tare_weight = base + offset
+                else:
+                    # 未知类型，使用默认范围
+                    self.inst.vehicle_tare_weight = random.randint(4300, 4690)
+                
+                LOGGER.info(f"已为车辆生成皮重: {self.inst.vehicle_tare_weight}kg")
+            
+            # 生成临时毛重
+            if not hasattr(self.inst, 'vehicle_rough_weight') or not self.inst.vehicle_rough_weight:
+                # 在原始皮重的基础上增加随机值
+                if self.inst.vehicle_type == "to_rest":
+                    # 收集车增加10~90的随机值
+                    offset = random.randint(10, 90)
+                    self.inst.vehicle_rough_weight = self.inst.vehicle_tare_weight + offset
+                elif self.inst.vehicle_type == "to_sale":
+                    # 销售车增加10~130的随机值
+                    offset = random.randint(10, 130)
+                    self.inst.vehicle_rough_weight = self.inst.vehicle_tare_weight + offset
+                else:
+                    # 未知类型，增加10~100的随机值
+                    self.inst.vehicle_rough_weight = self.inst.vehicle_tare_weight + random.randint(10, 100)
+                
+                LOGGER.info(f"已为车辆生成毛重: {self.inst.vehicle_rough_weight}kg")
+            
+            # 计算净重
+            if not hasattr(self.inst, 'vehicle_net_weight') or not self.inst.vehicle_net_weight:
+                self.inst.vehicle_net_weight = self.inst.vehicle_rough_weight - self.inst.vehicle_tare_weight
+                LOGGER.info(f"已为车辆计算净重: {self.inst.vehicle_net_weight}kg")
+            
+            return True
+        except Exception as e:
+            LOGGER.error(f"生成车辆重量失败: {e}")
+            return False
+    
+    def _initialize_history(self) -> bool:
+        """
+        初始化车辆历史记录
+        
+        :return: 是否初始化成功
+        """
+        try:
+            if not hasattr(self.inst, 'vehicle_historys') or self.inst.vehicle_historys is None:
+                self.inst.vehicle_historys = []
+                LOGGER.info("已初始化车辆历史记录")
+            return True
+        except Exception as e:
+            LOGGER.error(f"初始化车辆历史记录失败: {e}")
+            return False
+    
+    def _set_default_status(self) -> bool:
+        """
+        设置默认状态
+        
+        :return: 是否设置成功
+        """
+        try:
+            if not hasattr(self.inst, 'vehicle_status') or not self.inst.vehicle_status:
+                self.inst.vehicle_status = "available"
+                LOGGER.info(f"已为车辆设置默认状态: {self.inst.vehicle_status}")
+            
+            if not hasattr(self.inst, 'vehicle_last_use') or not self.inst.vehicle_last_use:
+                # 设置上次使用时间为现在
+                self.inst.vehicle_last_use = datetime.datetime.now().strftime("%Y-%m-%d")
+                LOGGER.info(f"已为车辆设置上次使用时间: {self.inst.vehicle_last_use}")
+            
+            return True
+        except Exception as e:
+            LOGGER.error(f"设置车辆默认状态失败: {e}")
+            return False
+    
+    def _set_other_info(self) -> bool:
+        """
+        设置其他信息
+        
+        :return: 是否设置成功
+        """
+        try:
+            if not hasattr(self.inst, 'vehicle_other_info') or self.inst.vehicle_other_info is None:
+                self.inst.vehicle_other_info = {}
+                LOGGER.info("已初始化车辆其他信息")
+            return True
+        except Exception as e:
+            LOGGER.error(f"设置车辆其他信息失败: {e}")
+            return False
+    
+    def generate(self) -> bool:
+        """
+        生成车辆的所有缺失字段
+        
+        :return: 是否全部生成成功
+        """
+        success = True
+        
+        # 生成ID
+        success &= self._generate_id()
+        
+        # 生成重量信息
+        success &= self._generate_weights()
+        
+        # 初始化历史记录
+        success &= self._initialize_history()
+        
+        # 设置默认状态
+        success &= self._set_default_status()
+        
+        # 设置其他信息
+        success &= self._set_other_info()
+        
+        # 如果全部成功，更新状态为就绪
+        if success:
+            self.info["status"] = "active"
+            LOGGER.info(f"车辆 '{self.info['plate_number']}' 的所有字段已生成完成")
+        
+        return success
+    
+    def is_available(self, date=None) -> bool:
+        """
+        检查车辆在指定日期是否可用
+        
+        :param date: 日期字符串，格式为 'YYYY-MM-DD'，默认为当前日期
+        :return: 是否可用
+        """
+        if not hasattr(self.inst, 'vehicle_status'):
+            return False
+        
+        if self.inst.vehicle_status != "available":
+            return False
+        
+        # 如果没有指定日期，使用当前日期
+        if not date:
+            date = datetime.datetime.now().strftime("%Y-%m-%d")
+        
+        # 如果有上次使用日期，检查是否已过冷却期
+        if hasattr(self.inst, 'vehicle_last_use') and self.inst.vehicle_last_use:
+            last_use = datetime.datetime.strptime(self.inst.vehicle_last_use, "%Y-%m-%d")
+            current = datetime.datetime.strptime(date, "%Y-%m-%d")
+            
+            # 简单示例：3天冷却期
+            cooldown_days = 3
+            
+            if (current - last_use).days < cooldown_days:
+                return False
+        
+        return True
+    
+    def go(self, date, payload=None) -> bool:
+        """
+        执行车辆运送动作
+        
+        :param date: 日期字符串，格式为 'YYYY-MM-DD'
+        :param payload: 运送的负载信息，可选
+        :return: 是否运送成功
+        """
+        try:
+            # 检查车辆是否可用
+            if not self.is_available(date):
+                LOGGER.warning(f"车辆 '{self.info['plate_number']}' 在 {date} 不可用")
+                return False
+            
+            # 准备历史记录
+            history_record = {
+                'date': date,
+                'payload': payload or {}
+            }
+            
+            # 添加历史记录
+            if not hasattr(self.inst, 'vehicle_historys'):
+                self.inst.vehicle_historys = []
+            
+            # 添加新记录，并保持最多5条记录
+            self.inst.vehicle_historys.append(history_record)
+            if len(self.inst.vehicle_historys) > 5:
+                self.inst.vehicle_historys = self.inst.vehicle_historys[-5:]
+            
+            # 更新状态
+            self.inst.vehicle_status = "unavailable"
+            self.inst.vehicle_last_use = date
+            
+            LOGGER.info(f"车辆 '{self.info['plate_number']}' 在 {date} 完成运送任务")
+            return True
+        except Exception as e:
+            LOGGER.error(f"车辆运送失败: {e}")
+            return False
+    
+    def __str__(self) -> str:
+        """
+        返回车辆的字符串表示
+        
+        :return: 字符串表示
+        """
+        if hasattr(self.inst, 'vehicle_license_plate') and hasattr(self.inst, 'vehicle_id'):
+            return f"Vehicle(id={self.inst.vehicle_id}, plate={self.info['plate_number']}, type={getattr(self.inst, 'vehicle_type', 'unknown')}, status={getattr(self.inst, 'vehicle_status', 'unknown')})"
+        return f"Vehicle(未完成初始化, status={self.info['status']})"
+
+
+class VehicleGroup(BaseGroup):
+    """
+    车辆组，用于管理多个车辆实体
+    """
+    def __init__(
+        self, 
+        vehicles: Optional[List[Vehicle]] = None,
+        model: Optional[Any] = None,
+        conf: Optional[Dict[str, Any]] = None
+    ):
+        """
+        初始化车辆组
+        
+        Args:
+            vehicles: 车辆实例列表
+            model: 模型实例
+            conf: 配置信息
+        """
+        super().__init__(vehicles or [], model, conf)
+    
+    def add_vehicle(self, vehicle: Vehicle) -> None:
+        """
+        添加车辆到组
+        
+        Args:
+            vehicle: 车辆实例
+        """
+        self.instances.append(vehicle)
+    
+    def get_by_plate_number(self, plate_number: str) -> Optional[Vehicle]:
+        """
+        根据车牌号获取车辆
+        
+        Args:
+            plate_number: 车牌号
+            
+        Returns:
+            匹配的车辆实例，未找到则返回None
+        """
+        for vehicle in self.instances:
+            if vehicle.info.get("plate_number") == plate_number:
+                return vehicle
+        return None
+    
+    def get_active_vehicles(self) -> List[Vehicle]:
+        """
+        获取所有激活状态的车辆
+        
+        Returns:
+            激活状态的车辆列表
+        """
+        return [v for v in self.instances if v.info.get("status") == "active"]
+    
+    def get_by_type(self, vehicle_type: str) -> List[Vehicle]:
+        """
+        根据车辆类型筛选车辆
+        
+        Args:
+            vehicle_type: 车辆类型
+            
+        Returns:
+            匹配类型的车辆列表
+        """
+        return [v for v in self.instances if v.info.get("type") == vehicle_type]
+    
+    def get_total_capacity(self) -> float:
+        """
+        计算所有激活车辆的总容量
+        
+        Returns:
+            总容量
+        """
+        active_vehicles = self.get_active_vehicles()
+        return sum(v.info.get("capacity", 0) for v in active_vehicles)
+    
+    def filter_by_type(self, vehicle_type: str) -> 'VehicleGroup':
+        """
+        按类型筛选车辆
+        
+        :param vehicle_type: 车辆类型
+        :return: 筛选后的车辆组合
+        """
+        return self.filter(lambda v: hasattr(v.inst, 'vehicle_type') and v.inst.vehicle_type == vehicle_type)
+    
+    def filter_by_cp(self, cp_id: str) -> 'VehicleGroup':
+        """
+        按所属CP筛选车辆
+        
+        :param cp_id: CP ID
+        :return: 筛选后的车辆组合
+        """
+        return self.filter(lambda v: hasattr(v.inst, 'vehicle_belonged_cp') and v.inst.vehicle_belonged_cp == cp_id)
+    
+    def filter_available(self, date=None) -> 'VehicleGroup':
+        """
+        筛选可用车辆
+        
+        :param date: 日期字符串，格式为 'YYYY-MM-DD'，默认为当前日期
+        :return: 筛选后的车辆组合
+        """
+        return self.filter(lambda v: v.is_available(date))
+    
+    def get_by_id(self, vehicle_id: str) -> Optional[Vehicle]:
+        """
+        按ID获取车辆
+        
+        :param vehicle_id: 车辆ID
+        :return: 车辆实体或None
+        """
+        for vehicle in self.members:
+            if hasattr(vehicle.inst, 'vehicle_id') and vehicle.inst.vehicle_id == vehicle_id:
+                return vehicle
+        return None
+    
+    def get_by_license_plate(self, license_plate: str) -> Optional[Vehicle]:
+        """
+        按车牌号获取车辆
+        
+        :param license_plate: 车牌号
+        :return: 车辆实体或None
+        """
+        for vehicle in self.members:
+            if hasattr(vehicle.inst, 'vehicle_license_plate') and vehicle.inst.vehicle_license_plate == license_plate:
+                return vehicle
+        return None
+    
+    def allocate(self, date=None, min_payload=0) -> Optional[Vehicle]:
+        """
+        分配一辆可用车辆
+        
+        :param date: 日期字符串，格式为 'YYYY-MM-DD'，默认为当前日期
+        :param min_payload: 最小负载要求
+        :return: 分配的车辆或None
+        """
+        # 获取可用车辆
+        available_vehicles = self.filter_available(date)
+        
+        if available_vehicles.count() == 0:
+            LOGGER.warning(f"没有可用车辆分配")
+            return None
+        
+        # 随机选择一辆车辆
+        selected_index = random.randint(0, available_vehicles.count() - 1)
+        selected_vehicle = available_vehicles[selected_index]
+        
+        LOGGER.info(f"已分配车辆: {selected_vehicle}")
+        return selected_vehicle
+    
+    def __str__(self) -> str:
+        """
+        返回车辆组合的字符串表示
+        
+        :return: 字符串表示
+        """
+        return f"VehicleGroup(数量={self.count()}, 类型={self.group_type})" 

@@ -220,7 +220,7 @@ class BaseInstance(abc):
 
 特别的，经常涉及到将同类的实例组合成一个组的问题。例如餐厅，最终需要是一个表，这个表中包含多个餐厅；而收油记录，最终多条收油记录组合成一天的收油记录，而多天的记录则组合成一个平衡表，因此，这里我需要你涉及一个group_model。这里是比较复杂的，首先，不同的对象组合应该有一个不同的类型，比如餐厅的组合，我可能会将其命名为RestaurantsGroup类，其中可以存在一个self.members作为列表；其次，每个类可能会有一些共有的特性，比如同天的收油记录，可能其ReceiveRrecordsGroup的类中应该有一个多个属性能表现这件事；最后，这个集合应该是可以将之前的集合类作为参数进行组合的，比如同一天的多条收油记录是一个集合，而不同天的收油记录集合又是一个集合。因此在services/instances/base.py中还应该存在一个这样的功能的类。
 
-### 2.2 餐厅实体（services/instances/restaurant.py）
+### 2.2 餐厅实体(services/instances/restaurant.py)
 
 餐厅实体是指对于某个具体的餐厅进行实例化。
 
@@ -294,4 +294,52 @@ class GetRestaurantsService():
         self._gaode_search()
         # ...将全部流程整理好
 ```
+
+### 2.4 车辆实体(services/instances/vehicle.py)
+
+车辆实体是实例化一个车辆的信息，其最终应该包含以下类及方法。
+
+```python
+class Vehicle(BaseInstance):
+    def __init__(self, info:dict, model=VehicleModel, conf=CONF):
+        self.inst = model(info)
+        # 根据info将model实例化并进行填充
+        assert info.get('vehicle_license_plate') != None, "必须有车牌号"
+        self.status = 'pending'  # 当一个车辆所有字段都齐备的时候我们会转成'ready'，只有部分字段则是'pending'
+    
+    def is_available(self, date):
+        # 根据车辆的vehicle_status返回是否可用
+    
+    def _generate_rough_weight_benchmark(self):
+        # 根据车辆的类型计算原始皮重，如果是类型是“to_rest”，那么则公式为=RANDBETWEEN(43,46)*100+RANDBETWEEN(1,9)*10
+        # 如果类型是“to_sale”，那么则公式为=RANDBETWEEN(145,159)*100+RANDBETWEEN(1,9)*10
+        # 注意这个是每次初始化后就不动了
+    
+    def _generate_rough_weight_temporary(self):
+        # 根据车辆的类型计算临时皮重，如果是类型是“to_rest”，在原始的重量上再加10~90的随机值
+        # 如果类型是“to_sale”，在原始的重量上再加10~130的随机值
+
+    def generate(self):
+        # 针对各种属性进行生成，生成的逻辑除了上述两个之外暂时不用别的，并在生成后将状态改为ready
+    
+    def go(self, date, payload):
+        # 运送的动作，首先需要检查车辆状态是否是可用的，一旦可用则进行运送,vehicle_historys会增加一条，available将会在变成unavailable，直到某个期限后（例如3天才会重新变成可用），vehicle_last_use则是进行更新为本次date的时间
+
+class VehicleGroup(BaseGroup):
+    def __init__(self, vehicles, group_type):
+        # 进行初始化
+    
+    def allocate(self, min_payload=0):
+        # 随机分配该车队中的一辆可用的车，并将
+    
+    def get_by_license(self):
+        # 根据车牌号找车辆
+    
+    def __str__(self):
+        # 车辆组合的表示
+```
+
+### 2.5 收油记录实体(services/instances/receive_record.py)
+
+实例化收油一条收油记录，同时定义其集合形式，其内容与之前的类似。
 

@@ -4,10 +4,17 @@
 
 from app.services.instances.base import BaseInstance, BaseGroup
 from app.services.instances.restaurant import Restaurant, RestaurantsGroup
+from app.services.instances.vehicle import Vehicle, VehicleGroup
+from app.services.instances.receive_record import ReceiveRecord, ReceiveRecordsGroup, ReceiveRecordsBalance
 
 __all__ = [
     'BaseInstance', 
     'BaseGroup',
     'Restaurant',
-    'RestaurantsGroup'
+    'RestaurantsGroup',
+    'Vehicle',
+    'VehicleGroup',
+    'ReceiveRecord',
+    'ReceiveRecordsGroup',
+    'ReceiveRecordsBalance'
 ] 

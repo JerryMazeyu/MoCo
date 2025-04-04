@@ -1,28 +1,100 @@
+"""
+配置服务测试示例
+"""
 import os
-os.environ["MoCo_USERNAME"] = 'huizhou'
-
+import yaml
 
 from app.config.config import CONF
 
 
+def test_config_runtime():
+    """测试runtime属性"""
+    print("测试runtime属性...")
+    
+    # 设置runtime属性
+    CONF.runtime.test_value = "这是一个测试值"
+    CONF.runtime.test_dict = {"key": "value"}
+    
+    # 读取runtime属性
+    print(f"runtime.test_value = {CONF.runtime.test_value}")
+    print(f"runtime.test_dict = {CONF.runtime.test_dict}")
+    
+    # 修改runtime属性
+    CONF.runtime.test_value = "修改后的值"
+    print(f"修改后的runtime.test_value = {CONF.runtime.test_value}")
 
-# 通过属性访问配置
-api_key = CONF.KEYS.kimi_keys[0]
 
-# 通过字典访问配置
-api_key = CONF._config_dict["KEYS"]["kimi_keys"][0]
-print(api_key)
+def test_config_save():
+    """测试配置保存功能"""
+    print("\n测试配置保存功能...")
+    
+    # 添加一些测试配置
+    if "TEST" not in CONF._config_dict:
+        CONF._config_dict["TEST"] = {}
+    
+    CONF._config_dict["TEST"]["test_key"] = "test_value"
+    CONF._config_dict["TEST"]["test_number"] = 123
+    CONF._config_dict["TEST"]["test_list"] = [1, 2, 3]
+    
+    # 保存配置
+    result = CONF.save()
+    print(f"保存配置结果: {'成功' if result else '失败'}")
+    
+    # 显示保存的文件路径
+    temp_file_path = os.path.join("config", f"{CONF.username}_temp.yaml")
+    if os.path.exists(temp_file_path):
+        print(f"配置已保存到: {temp_file_path}")
+        
+        # 读取保存的文件内容并显示
+        try:
+            with open(temp_file_path, "r", encoding="utf-8") as f:
+                content = yaml.safe_load(f)
+            print("\n保存的配置内容:")
+            print(f"TEST.test_key = {content.get('TEST', {}).get('test_key')}")
+            print(f"TEST.test_number = {content.get('TEST', {}).get('test_number')}")
+            print(f"TEST.test_list = {content.get('TEST', {}).get('test_list')}")
+        except Exception as e:
+            print(f"读取保存的配置失败: {e}")
+    else:
+        print(f"配置文件不存在: {temp_file_path}")
 
-# 保存配置
-CONF.save()
 
-# # 上传配置到OSS
-# CONF.upload()
+def test_streetmaps_format():
+    """测试街道地图格式"""
+    print("\n测试街道地图格式...")
+    
+    streets = CONF.get("STREETMAPS.huizhou.博罗县")
+    if streets:
+        if isinstance(streets, str):
+            print("博罗县街道 (字符串格式):")
+            streets_list = streets.split(",")
+            for street in streets_list:
+                print(f"  - {street}")
+        elif isinstance(streets, list):
+            print("博罗县街道 (列表格式):")
+            for street in streets:
+                print(f"  - {street}")
+        else:
+            print(f"未知格式的街道数据: {type(streets)}")
+    else:
+        print("未找到博罗县街道数据")
 
-# 从OSS刷新配置
-# CONF.refresh()
 
-# 获取特殊配置
-special_yaml = CONF.get_special_yaml()
-print(special_yaml)
+def main():
+    """主函数"""
+    print("配置服务测试示例")
+    print("=" * 50)
+    
+    # 测试runtime属性
+    test_config_runtime()
+    
+    # 测试配置保存功能
+    test_config_save()
+    
+    # 测试街道地图格式
+    test_streetmaps_format()
+
+
+if __name__ == "__main__":
+    main()
 
