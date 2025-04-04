@@ -8,7 +8,7 @@ from app.utils import rp, oss_get_yaml_file
 
 # 日志配置
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("moco.log")
+LOGGER = logging.getLogger("moco.log")
 
 class ConfigWrapper:
     """
@@ -69,6 +69,9 @@ class ConfigService:
         self.special_list = []
         self._special = {}
         
+        # 初始化runtime属性，用于存储运行时的临时配置
+        self.runtime = type('RuntimeConfig', (), {})()
+        
         # 加载系统配置
         self._load_sys_config()
         
@@ -92,26 +95,26 @@ class ConfigService:
             try:
                 with open(sys_conf_path, "r", encoding="utf-8") as f:
                     self.sys_config = yaml.safe_load(f) or {}
-                logger.info(f"已从本地加载系统配置: {sys_conf_path}")
+                LOGGER.info(f"已从本地加载系统配置: {sys_conf_path}")
             except Exception as e:
-                logger.error(f"加载系统配置失败: {e}")
+                LOGGER.error(f"加载系统配置失败: {e}")
                 
                 # 如果本地配置加载失败，尝试加载默认配置
                 if os.path.exists(default_sys_conf_path):
                     try:
                         with open(default_sys_conf_path, "r", encoding="utf-8") as f:
                             self.sys_config = yaml.safe_load(f) or {}
-                        logger.info(f"已从默认配置加载系统配置: {default_sys_conf_path}")
+                        LOGGER.info(f"已从默认配置加载系统配置: {default_sys_conf_path}")
                     except Exception as e:
-                        logger.error(f"加载默认系统配置失败: {e}")
+                        LOGGER.error(f"加载默认系统配置失败: {e}")
         elif os.path.exists(default_sys_conf_path):
             # 如果本地配置不存在，尝试加载默认配置
             try:
                 with open(default_sys_conf_path, "r", encoding="utf-8") as f:
                     self.sys_config = yaml.safe_load(f) or {}
-                logger.info(f"已从默认配置加载系统配置: {default_sys_conf_path}")
+                LOGGER.info(f"已从默认配置加载系统配置: {default_sys_conf_path}")
             except Exception as e:
-                logger.error(f"加载默认系统配置失败: {e}")
+                LOGGER.error(f"加载默认系统配置失败: {e}")
     
     def _load_user_config(self):
         """加载用户配置"""
@@ -125,9 +128,9 @@ class ConfigService:
             try:
                 with open(user_temp_conf_path, "r", encoding="utf-8") as f:
                     self.user_config = yaml.safe_load(f) or {}
-                logger.info(f"已从临时配置加载用户配置: {user_temp_conf_path}")
+                LOGGER.info(f"已从临时配置加载用户配置: {user_temp_conf_path}")
             except Exception as e:
-                logger.error(f"加载临时用户配置失败: {e}")
+                LOGGER.error(f"加载临时用户配置失败: {e}")
         elif self.sys_config.get("KEYS", {}).get("oss"):
             # 如果没有临时配置且系统配置中包含OSS配置，尝试从OSS下载
             try:
@@ -137,17 +140,17 @@ class ConfigService:
                 if os.path.exists(user_conf_path):
                     with open(user_conf_path, "r", encoding="utf-8") as f:
                         self.user_config = yaml.safe_load(f) or {}
-                    logger.info(f"已从OSS下载并加载用户配置: {user_conf_path}")
+                    LOGGER.info(f"已从OSS下载并加载用户配置: {user_conf_path}")
             except Exception as e:
-                logger.error(f"从OSS加载用户配置失败: {e}")
+                LOGGER.error(f"从OSS加载用户配置失败: {e}")
         elif os.path.exists(user_conf_path):
             # 如果OSS下载失败但本地存在用户配置，直接加载
             try:
                 with open(user_conf_path, "r", encoding="utf-8") as f:
                     self.user_config = yaml.safe_load(f) or {}
-                logger.info(f"已从本地加载用户配置: {user_conf_path}")
+                LOGGER.info(f"已从本地加载用户配置: {user_conf_path}")
             except Exception as e:
-                logger.error(f"加载本地用户配置失败: {e}")
+                LOGGER.error(f"加载本地用户配置失败: {e}")
     
     def _merge_configs(self):
         """合并系统配置和用户配置"""
@@ -244,23 +247,28 @@ class ConfigService:
         # 将用户配置保存为临时文件
         user_temp_conf_path = rp(f"{self.username}_temp.yaml", folder="config")
         
+        # 确保user_config包含最新的合并配置
+        self.user_config = self._config_dict.copy()
+        
         try:
             # 确保config目录存在
-            os.makedirs("config", exist_ok=True)
+            os.makedirs(os.path.dirname(user_temp_conf_path), exist_ok=True)
             
             # 保存用户配置
             with open(user_temp_conf_path, "w", encoding="utf-8") as f:
                 yaml.dump(self.user_config, f, allow_unicode=True)
-            logger.info(f"用户配置已保存至: {user_temp_conf_path}")
+            LOGGER.info(f"用户配置已保存至: {user_temp_conf_path}")
+            return True
         except Exception as e:
-            logger.error(f"保存用户配置失败: {e}")
+            LOGGER.error(f"保存用户配置失败: {e}")
+            return False
     
     def upload(self):
         """将配置上传到OSS"""
         # 首先检查是否已配置OSS
         oss_config = self.sys_config.get("KEYS", {}).get("oss")
         if not oss_config:
-            logger.error("未配置OSS，无法上传配置")
+            LOGGER.error("未配置OSS，无法上传配置")
             return False
         
         try:
@@ -278,13 +286,13 @@ class ConfigService:
                 # 上传到OSS
                 remote_path = f"configs/{self.username}.yaml"
                 bucket.put_object(remote_path, content)
-                logger.info(f"用户配置已上传至OSS: {remote_path}")
+                LOGGER.info(f"用户配置已上传至OSS: {remote_path}")
                 return True
             else:
-                logger.error(f"用户临时配置文件不存在: {user_temp_conf_path}")
+                LOGGER.error(f"用户临时配置文件不存在: {user_temp_conf_path}")
                 return False
         except Exception as e:
-            logger.error(f"上传配置到OSS失败: {e}")
+            LOGGER.error(f"上传配置到OSS失败: {e}")
             return False
     
     def refresh(self):
@@ -294,9 +302,9 @@ class ConfigService:
         if os.path.exists(user_temp_conf_path):
             try:
                 os.remove(user_temp_conf_path)
-                logger.info(f"已删除临时配置文件: {user_temp_conf_path}")
+                LOGGER.info(f"已删除临时配置文件: {user_temp_conf_path}")
             except Exception as e:
-                logger.error(f"删除临时配置文件失败: {e}")
+                LOGGER.error(f"删除临时配置文件失败: {e}")
         
         # 重新从OSS下载配置
         self._download_from_oss()
@@ -314,10 +322,10 @@ class ConfigService:
         if info:
             with open(rp(f"{self.username}_temp.yaml", folder="config"), "w", encoding="utf-8") as f:
                 yaml.dump(info, f, allow_unicode=True)
-            logger.info(f"已从OSS下载用户配置: {rp(f'{self.username}.yaml', folder='config')}")
+            LOGGER.info(f"已从OSS下载用户配置: {rp(f'{self.username}.yaml', folder='config')}")
             return True
         else:
-            logger.error(f"从OSS下载用户配置失败")
+            LOGGER.error(f"从OSS下载用户配置失败")
             return False
     
     def get_special_yaml(self) -> str:
@@ -349,10 +357,10 @@ class ConfigService:
             # 更新包装器
             self.special = ConfigWrapper(self._special)
             
-            logger.info("特殊配置已更新")
+            LOGGER.info("特殊配置已更新")
             return True
         except Exception as e:
-            logger.error(f"更新特殊配置失败: {e}")
+            LOGGER.error(f"更新特殊配置失败: {e}")
             return False
     
     def _sync_special_to_config(self):
@@ -371,9 +379,9 @@ try:
     username = os.environ.get("MoCo_USERNAME", "huizhou")
     CONF = ConfigService(username)
 except Exception as e:
-    logger.error(f"初始化配置服务失败: {e}")
+    LOGGER.error(f"初始化配置服务失败: {e}")
     # 使用空配置作为后备
     CONF = ConfigService("default")
 
 # 导出配置服务和配置实例
-__all__ = ["CONF"] 
+__all__ = ["CONF"]
