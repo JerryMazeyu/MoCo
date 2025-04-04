@@ -10,3 +10,5 @@ __pycache__/
 *.xls
 
 debug.py
+
+app/config/SYSCONF_default.yaml
