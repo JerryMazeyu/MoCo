@@ -4,11 +4,10 @@ import logging
 from typing import Optional, Dict, Any, List, Union
 import oss2  # 阿里云OSS SDK
 
-from app.utils import rp, oss_get_yaml_file
+from app.utils import rp, oss_get_yaml_file, setup_logger
 
 # 日志配置
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-LOGGER = logging.getLogger("moco.log")
+LOGGER = setup_logger("moco.log")
 
 class ConfigWrapper:
     """
