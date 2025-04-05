@@ -5,10 +5,14 @@ import pandas as pd
 from typing import Dict, Any, List, Optional, Union
 import threading
 import time
+import sys 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 from app.services.instances.restaurant import Restaurant, RestaurantsGroup
 from app.utils.logger import setup_logger
 from app.utils.file_io import rp
 from app.config.config import CONF
+from app.utils.query import robust_query
+import re
 
 # 设置日志
 LOGGER = setup_logger("moco.log")
@@ -26,6 +30,7 @@ class GetRestaurantsService:
         """
         self.conf = conf  # 配置服务
         self.info = []  # 存储获取到的餐厅信息
+        self.n = 30 ## 获取页数
         self.restaurants = []  # 最终处理后的餐厅列表
         self.backends = ['gaode', 'baidu', 'serp', 'tripadvisor']  # 支持的后端
         
@@ -91,85 +96,143 @@ class GetRestaurantsService:
         except Exception as e:
             LOGGER.error(f"从文件加载餐厅信息失败: {e}")
     
-    def _gaode_search(self) -> List[Dict]:
+     ## 利用高德地图自动获取地区以及下一级地区经纬度
+    def _gaode_get_lat_lng(self,token = None, address = None,subdistrict = 1) -> dict: # 默认查下一级
+        parama = 'keywords={}&subdistrict={}&key={}'.format(address, subdistrict, token)
+        get_area_url = 'https://restapi.amap.com/v3/config/district?'+parama
+        res = requests.request('GET', url=get_area_url)
+        jsonData = res.json()
+        lon_lat_list = {}
+        if jsonData['status'] == '1':
+            center_district = jsonData['districts'][0]['center']
+            area_name = jsonData['districts'][0]['name']
+            lon_lat_list[area_name] = center_district
+            if subdistrict == 1:
+                if jsonData['districts'][0]['districts'] is not None:
+                    for i in jsonData['districts'][0]['districts']:
+                        area_name = i['name']
+                        lon_lat_list[area_name] = i['center']
+            elif subdistrict == 2:
+                if jsonData['districts'][0]['districts'] is not None:
+                    for i in jsonData['districts'][0]['districts']:
+                        area_name = i['name']
+                        lon_lat_list[area_name] = i['center']
+                        if i['districts'] is not None:
+                            for j in i['districts']:
+                                area_name = j['name']
+                                lon_lat_list[area_name] = j['center']
+        else:
+            print("{}查询失败".format(self.address))
+        return lon_lat_list
+
+    def _gaode_search(self,n = None, token = None, keywords = None, address = None, maptype = 1,radius = 50000) -> list[dict]:
         """
         从高德地图API获取餐厅信息
         
-        :param keywords: 搜索关键词，默认为配置中的关键词
-        :param city: 城市名称
-        :param radius: 搜索半径（米）
-        :return: 是否获取成功
+        :param n: 页码
+        :param token: 高德地图token
+        :param keywords: 搜索关键词
+        :param address: 搜索地址
+        :param maptype: 地图类型
+        :param radius: 搜索半径
+        :return: 餐厅信息列表
         """
-        # CONF.runtime
-        # search rests
-        # 异常处理
-        pass
-        # try:
-        #     # 检查是否有API密钥
-        #     if not self.conf or not hasattr(self.conf, 'KEYS') or not hasattr(self.conf.KEYS, 'gaode_keys') or not self.conf.KEYS.gaode_keys:
-        #         LOGGER.error("未配置高德地图API密钥")
-        #         return False
-            
-        #     # 获取API密钥
-        #     api_key = self.conf.KEYS.gaode_keys[0]
-            
-        #     # 获取搜索关键词
-        #     if not keywords:
-        #         if hasattr(self.conf, 'OTHER') and hasattr(self.conf.OTHER, 'Tab5') and hasattr(self.conf.OTHER.Tab5, '关键词'):
-        #             keywords = self.conf.OTHER.Tab5.关键词
-        #         else:
-        #             keywords = ['餐厅', '餐馆', '饭店', '小吃', '美食']
-            
-        #     # 如果是字符串，转换为列表
-        #     if isinstance(keywords, str):
-        #         keywords = [keywords]
-            
-        #     # 存储结果
-        #     results = []
-            
-        #     # 遍历关键词进行搜索
-        #     for keyword in keywords:
-        #         # 构建API请求URL
-        #         url = f"https://restapi.amap.com/v3/place/text?key={api_key}&keywords={keyword}&types=餐饮&city={city}&extensions=all"
-                
-        #         # 发送请求
-        #         response = requests.get(url)
-        #         data = response.json()
-                
-        #         # 检查请求是否成功
-        #         if data.get('status') == '1' and 'pois' in data:
-        #             for poi in data['pois']:
-        #                 # 转换为餐厅信息格式
-        #                 restaurant_info = {
-        #                     'rest_chinese_name': poi.get('name', ''),
-        #                     'rest_city': city or poi.get('cityname', ''),
-        #                     'rest_province': poi.get('pname', ''),
-        #                     'rest_chinese_address': poi.get('address', ''),
-        #                     'rest_location': poi.get('location', ''),  # 格式为 "经度,纬度"
-        #                     'rest_type': poi.get('type', ''),
-        #                     'source': 'gaode'
-        #                 }
-                        
-        #                 # 如果有电话信息，添加
-        #                 if 'tel' in poi:
-        #                     restaurant_info['rest_contact_phone'] = poi['tel']
-                        
-        #                 results.append(restaurant_info)
-                    
-        #             LOGGER.info(f"高德地图API搜索 '{keyword}' 返回 {len(data['pois'])} 条结果")
-        #         else:
-        #             LOGGER.warning(f"高德地图API搜索 '{keyword}' 失败: {data.get('info', '')}")
-                
-        #         # 避免请求过快被限制
-        #         time.sleep(0.5)
-            
-        #     # 将结果添加到信息列表中
-        #     self.info.extend(results)
-        #     LOGGER.info(f"高德地图API共获取 {len(results)} 条餐厅信息")
-        #     return True
-        # except Exception as e:
-        #     LOGGER.error(f"从高德地图API获取餐厅信息失败: {e}")
-        #     return False
+        self.gaode_type = '餐饮'
+        self.gaode_keywords = keywords
+        self.gaode_address = address
+        self.gaode_maptype = maptype
+        self.gaode_n = n
+        self.gaode_token = token
+        self.gaode_radius = radius
+        loc = re.match("@?[-+]?\d+(\.\d+)?,\d+(\.\d+)?", self.gaode_address)
+        if loc:
+            gps = address.split(",")
+            p1 = float(gps[0])
+            p2 = float(gps[1])
+            if p1 > p2:
+                # 百度是小的（纬度）在前
+                if maptype != 1:
+                    self.address = gps[1] + ',' + gps[0]
+                else:
+                    self.address = gps[0] + ',' + gps[1]
+            else:
+                # 百度是小的（纬度）在前
+                if maptype != 1:
+                    self.address = gps[0] + ',' + gps[1]
+                else:
+                    self.address = gps[1] + ',' + gps[0]
+        # 通过默认的搜索获取餐厅信息
+        def create_gaode_url():
+            urls = []
+            for i in range(1, self.n + 1):  # page是当前页码，高德是从1开始， offset是每页多少条数据，默认20条
+
+                url = 'https://restapi.amap.com/v3/place/text?key={}&&keywords={}' \
+                    '&types={}&city={}&citylimit=true&output={}&offset=20&page={}' \
+                    '&extensions=base&show_fields=business'.format(self.gaode_token, self.gaode_keywords, self.gaode_type,
+                                                                    self.gaode_address,
+                                                                    'JSON', i)
+                urls.append(url)
+            return urls
+
+        # 通过坐标的搜索获附近取餐厅信息
+        def create_gaode_around_url():
+            urls = []
+            for i in range(1, self.n + 1):  
+                # page是当前页码，高德是从1开始， offset是每页多少条数据，默认20条，默认周边5万米
+
+                url = 'https://restapi.amap.com/v3/place/around?key={}' \
+                    '&radius={}&keywords={}&types={}&location={}&offset=20&page={' \
+                    '}&extensions=base&show_fields=business'.format(
+                    self.gaode_token, self.gaode_radius,self.gaode_keywords, self.gaode_type, self.gaode_address, i)
+                urls.append(url)
+            return urls
+        
+        ## 获取高德餐厅信息
+        def get_gaode_restaurant(urls):
+            j = 0
+            datalist = []
+            for url in urls:
+                # print(url)
+                res = requests.request('GET', url=url)
+                time.sleep(1)
+                res = json.loads(res.text)
+                l = res.get('pois')
+                if l is not None and len(l)>0:
+                    for i in l:
+                        # print(i)
+                        j += 1
+                        # print(j)
+                        dict1 = {
+                            'rest_chinese_name': i.get('name') if i.get('name') is not None else '',
+                            'rest_chinese_address': i.get('address') if i.get('address') is not None else '',
+                            'rest_contact_phone': i.get('tel') if i.get('tel') is not None else '',
+                            'rest_location': i.get('location') if i.get('location') is not None else '',
+                            'adname': i.get('adname') if i.get('adname') is not None else '',
+                            'rest_type': i.get('type') if i.get('type') is not None else '',
+                            'distance': i.get('distance') if i.get('distance') is not None else '',
+                            'rest_city': i.get('cityname') if i.get('cityname') is not None else ''
+                        }
+                        datalist.append(dict1)
+                    if len(l)<20: ## 当最后一次小于20的话说明最后一页，退出
+                        break
+                else:
+                    break
+            return datalist
+        # 如果是输入的坐标，直接匹配周边搜索
+        if loc:
+            urls = create_gaode_around_url()
+        else:
+            urls = create_gaode_url()
+        restaurantList = get_gaode_restaurant(urls)
+        ## 写入excel
+        # fileName = types + '-' + self.address + '-' + self.keywords + '.xls'
+        # if self.maptype == 3:
+        #     self.write_to_excel_google(restaurantList, self.filename)
+        # else:
+        #     self.write_to_excel(restaurantList, self.filename)
+        ## 返回datalist
+        return restaurantList          
+       
     
     def _baidu_search(self, keywords=None, city=None, radius=None) -> List[Dict]:
         """
@@ -206,7 +269,21 @@ class GetRestaurantsService:
         # 这里是示例实现，真实情况下需要根据实际API调整
         LOGGER.info("TripAdvisor API搜索功能尚未实现")
         return False
+
+    def load_keywords(self):
+        """从配置加载关键词列表"""
+        self.keywords_list=[]
+        keywords = self.conf.get("BUSINESS.RESTAURANT.关键词", default=[])
+        for keyword in keywords:
+            self.keywords_list.append(keyword)
     
+    def load_blocked_words(self):
+        """从配置加载屏蔽词列表"""
+        self.blocked_list=[]
+        blocked_words = self.conf.get("BUSINESS.RESTAURANT.屏蔽词", default=[])
+        for word in blocked_words:
+            self.blocked_list.append(word)
+        
     def _dedup(self) -> None:
         """
         对获取到的餐厅信息进行去重
@@ -232,6 +309,7 @@ class GetRestaurantsService:
         count_after = len(self.info)
         
         LOGGER.info(f"去重前餐厅信息: {count_before}条，去重后: {count_after}条，去除了 {count_before - count_after} 条重复信息")
+
     
     def _info_to_restaurant(self, model_class=None, cp_id=None) -> None:
         """
@@ -267,7 +345,7 @@ class GetRestaurantsService:
         """
         return RestaurantsGroup(self.restaurants, group_type=group_type)
     
-    def run(self, cities=None, keywords=None, cp_id=None, model_class=None, file_path=None, use_api=True) -> RestaurantsGroup:
+    def run(self, cities=None, cp_id=None, model_class=None, file_path=None, use_api=True) -> RestaurantsGroup:
         """
         执行获取餐厅信息的完整流程
         
@@ -283,26 +361,46 @@ class GetRestaurantsService:
         if file_path:
             self._load_from_file(file_path)
         
+        # 加载关键词和屏蔽词
+        self.load_keywords()
+        self.load_blocked_words()
+        
         # 如果使用API获取，并且提供了城市
         if use_api and cities:
             # 如果是字符串，转换为列表
             if isinstance(cities, str):
                 cities = [cities]
             
-            # 遍历城市进行搜索
+            
+            
+              # 遍历城市进行搜索
             for city in cities:
                 LOGGER.info(f"开始搜索城市: {city}")
-                
+                def _gaode_get_lat_lont_func(key):
+                    return self._gaode_get_lat_lng(token=key, address=city)
+                city_list = robust_query(_gaode_get_lat_lont_func, self.conf.KEYS.gaode_keys)
                 # 使用高德地图API
-                self._gaode_search(keywords=keywords, city=city)
-                
+                for key_words in self.keywords_list:
+                    LOGGER.info(f"开始搜索关键词: {key_words}")
+                    for city_name,city_lat_lng in city_list.items():
+                        def _gaode_search_func(key):
+                            return self._gaode_search(n = self.n, token = key, keywords = key_words, address = city_lat_lng, maptype = 1,radius = 50000)
+                        restaurant_list = robust_query(_gaode_search_func, self.conf.KEYS.gaode_keys)
+                        ## 将获得的餐厅信息添加到info中
+                        self.info.extend(restaurant_list)
+                        LOGGER.info(f"高德地图API搜索{city_name}结果: {len(restaurant_list)} 条")
+                        # LOGGER.info(f"高德地图API搜索{city_name}结果: {restaurant_list}")
                 # 使用百度地图API
-                self._baidu_search(keywords=keywords, city=city)
+                # self._baidu_search(keywords=keywords, city=city)
                 
                 # 这里可以添加其他API的搜索
                 # self._serp_search(keywords=keywords, city=city)
                 # self._tripadvisor_search(keywords=keywords, city=city)
-        
+
+        # 屏蔽词
+        LOGGER.info(f"开始过滤屏蔽词")
+        self.info = [restaurant for restaurant in self.info if not any(word in restaurant['rest_chinese_name'] for word in self.blocked_list)]
+        LOGGER.info(f"过滤屏蔽词后剩余 {len(self.info)} 条餐厅信息")
         # 去重
         self._dedup()
         
@@ -348,3 +446,11 @@ class GetRestaurantsService:
         except Exception as e:
             LOGGER.error(f"保存餐厅信息失败: {e}")
             return False 
+        
+
+if __name__ == "__main__":
+    from app.services.instances.restaurant import RestaurantModel
+    service = GetRestaurantsService()
+    service.run(cities="惠州市", cp_id="CP001", model_class=RestaurantModel, file_path=None, use_api=True)
+    # service.save_results(folder_path=None, filename_prefix='restaurants')
+
