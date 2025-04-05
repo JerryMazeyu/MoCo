@@ -91,7 +91,7 @@ class GetRestaurantsService:
         except Exception as e:
             LOGGER.error(f"从文件加载餐厅信息失败: {e}")
     
-    def _gaode_search(self, keywords=None, city=None, radius=None) -> bool:
+    def _gaode_search(self) -> List[Dict]:
         """
         从高德地图API获取餐厅信息
         
@@ -100,6 +100,9 @@ class GetRestaurantsService:
         :param radius: 搜索半径（米）
         :return: 是否获取成功
         """
+        # CONF.runtime
+        # search rests
+        # 异常处理
         pass
         # try:
         #     # 检查是否有API密钥
@@ -168,7 +171,7 @@ class GetRestaurantsService:
         #     LOGGER.error(f"从高德地图API获取餐厅信息失败: {e}")
         #     return False
     
-    def _baidu_search(self, keywords=None, city=None, radius=None) -> bool:
+    def _baidu_search(self, keywords=None, city=None, radius=None) -> List[Dict]:
         """
         从百度地图API获取餐厅信息
         
@@ -180,7 +183,7 @@ class GetRestaurantsService:
         LOGGER.info("Serp API搜索功能尚未实现")
         return False
     
-    def _serp_search(self, keywords=None, city=None) -> bool:
+    def _serp_search(self, keywords=None, city=None) -> List[Dict]:
         """
         从Serp API获取餐厅信息
         
@@ -192,7 +195,7 @@ class GetRestaurantsService:
         LOGGER.info("Serp API搜索功能尚未实现")
         return False
     
-    def _tripadvisor_search(self, keywords=None, city=None) -> bool:
+    def _tripadvisor_search(self, keywords=None, city=None) -> List[Dict]:
         """
         从TripAdvisor API获取餐厅信息
         
