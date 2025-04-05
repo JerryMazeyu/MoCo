@@ -4,7 +4,7 @@ import uuid
 from typing import Dict, Any, List, Optional, Union
 from app.services.instances.base import BaseInstance, BaseGroup
 from app.utils.hash import hash_text
-from app.utils.logger import setup_logger, logger
+from app.utils.logger import setup_logger
 from app.utils.file_io import rp
 
 # 设置日志

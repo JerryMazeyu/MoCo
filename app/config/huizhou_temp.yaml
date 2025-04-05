@@ -1,1 +1,27 @@
-{}
+BUSINESS:
+  CP:
+    cp_id:
+    - id1
+    - id2
+  REST2CP:
+    吨每桶: 0.18
+    每车收购量范围: 35,44
+    比率: 0.91
+  RESTAURANT:
+    收油关系映射:
+      小食/小吃/美食/饮食/私房菜: 1,2
+      酒楼/酒家/烤鱼: 3,4
+      酸菜鱼: 1
+      餐厅/餐馆/饭店/饭馆/川菜/湘菜/农庄/山庄/大排档/食府/公司/炸鸡: 2,3
+      餐饮/汉堡: 1,3
+KEYS:
+  kimi_keys:
+  - sk-BUDGJQ7FPLCKPD9dgTON2LYswQolHPX7XY7JOIQwvOBh1qlr
+MISC:
+  Tab1:
+    last_dir: xxxx
+  Tab2:
+    last_dir: xxxx
+SPECIAL:
+- BUSINESS.REST2CP
+USERNAME: username

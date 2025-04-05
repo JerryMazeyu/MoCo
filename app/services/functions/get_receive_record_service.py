@@ -5,8 +5,10 @@ import datetime
 from typing import Dict, List, Optional, Any, Union
 
 from app.services.instances.receive_record import ReceiveRecord, ReceiveRecordsGroup, ReceiveRecordsBalance
-from app.utils.logger import logger
+from app.utils.logger import setup_logger
 
+
+LOGGER = setup_logger("moco.log")
 
 class GetReceiveRecordService:
     """
@@ -68,7 +70,7 @@ class GetReceiveRecordService:
             end = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
             
             if start > end:
-                logger.warning(f"开始日期 {start_date} 晚于结束日期 {end_date}")
+                LOGGER.warning(f"开始日期 {start_date} 晚于结束日期 {end_date}")
                 return []
                 
             result = []
@@ -81,7 +83,7 @@ class GetReceiveRecordService:
                 
             return result
         except ValueError as e:
-            logger.error(f"日期格式错误: {e}")
+            LOGGER.error(f"日期格式错误: {e}")
             return []
     
     def add_record(
@@ -116,10 +118,10 @@ class GetReceiveRecordService:
             records_group = self.get_by_date(record_date)
             records_group.add_record(record)
             
-            logger.info(f"成功添加收油记录 {record.info['record_id']} 到 {record_date}")
+            LOGGER.info(f"成功添加收油记录 {record.info['record_id']} 到 {record_date}")
             return record
         except Exception as e:
-            logger.error(f"添加收油记录失败: {e}")
+            LOGGER.error(f"添加收油记录失败: {e}")
             return None
     
     def get_monthly_report(
