@@ -8,7 +8,7 @@ from app.utils.logger import setup_logger
 LOGGER = setup_logger("moco.log")
 
 def robust_query(query_func: Callable, keys: List[str], max_retries: int = 3, 
-                interval: float = 1.0, timeout: float = 10.0) -> Optional[Any]:
+                interval: float = 1.0, timeout: float = 10.0, **kwargs) -> Optional[Any]:
     """
     健壮的API查询封装，支持多个API密钥轮询和错误重试
     
@@ -28,7 +28,7 @@ def robust_query(query_func: Callable, keys: List[str], max_retries: int = 3,
             try:
                 # 设置超时
                 start_time = time.time()
-                ans = query_func(key)
+                ans = query_func(key, **kwargs)
                 
                 # 检查结果是否有效
                 if ans is not None:
