@@ -28,14 +28,30 @@ class Vehicle(BaseInstance):
             model: 模型实例
             conf: 配置信息
         """
-        super().__init__(info, model, conf)
+        super().__init__(model)
         
         # 必要字段检查
-        assert "plate_number" in info, "车牌号码必须存在"
+        assert "vehicle_license_plate" in info, "车牌号码必须存在"
         
+        self.info = info
+
         # 设置默认值
         if "vehicle_id" not in info:
             self.info["vehicle_id"] = self._generate_id()
+        
+        if "vehicle_belonged_cp" not in info:
+            self.info["vehicle_belonged_cp"] = None
+            
+        if "vehicle_driver_name" not in info:
+            self.info["vehicle_driver_name"] = ""
+            
+        if "vehicle_type" not in info:
+            self.info["vehicle_type"] = "to_rest"  # 默认为收油车
+            
+        if "vehicle_status" not in info:
+            self.info["vehicle_status"] = "available"  # 默认为可用状态
+            
+        print(f"Initialized vehicle with info: {self.info}")
         
         if "driver_name" not in info:
             self.info["driver_name"] = ""
@@ -76,7 +92,7 @@ class Vehicle(BaseInstance):
         """
         allowed_status = ["active", "inactive", "maintenance"]
         if status not in allowed_status:
-            logger.warning(f"无效的车辆状态: {status}，允许的状态为: {allowed_status}")
+            LOGGER.warning(f"无效的车辆状态: {status}，允许的状态为: {allowed_status}")
             return
             
         self.info["status"] = status
@@ -89,7 +105,7 @@ class Vehicle(BaseInstance):
             capacity: 容量（单位：吨）
         """
         if capacity < 0:
-            logger.warning(f"车辆容量不能为负数: {capacity}")
+            LOGGER.warning(f"车辆容量不能为负数: {capacity}")
             return
             
         self.info["capacity"] = capacity
@@ -241,24 +257,24 @@ class Vehicle(BaseInstance):
         :param date: 日期字符串，格式为 'YYYY-MM-DD'，默认为当前日期
         :return: 是否可用
         """
-        if not hasattr(self.inst, 'vehicle_status'):
+        # 使用字典的 get 方法或 in 操作符检查键是否存在
+        if 'vehicle_status' not in self.info:
             return False
         
-        if self.inst.vehicle_status != "available":
+        if self.info['vehicle_status'] != "available":
             return False
         
         # 如果没有指定日期，使用当前日期
         if not date:
             date = datetime.datetime.now().strftime("%Y-%m-%d")
         
-        # 如果有上次使用日期，检查是否已过冷却期
-        if hasattr(self.inst, 'vehicle_last_use') and self.inst.vehicle_last_use:
-            last_use = datetime.datetime.strptime(self.inst.vehicle_last_use, "%Y-%m-%d")
+        # 同样使用字典的方法检查 last_use
+        if 'vehicle_last_use' in self.info and self.info['vehicle_last_use']:
+            last_use = datetime.datetime.strptime(self.info['vehicle_last_use'], "%Y-%m-%d")
             current = datetime.datetime.strptime(date, "%Y-%m-%d")
             
             # 简单示例：3天冷却期
             cooldown_days = 3
-            
             if (current - last_use).days < cooldown_days:
                 return False
         
@@ -313,6 +329,15 @@ class Vehicle(BaseInstance):
             return f"Vehicle(id={self.inst.vehicle_id}, plate={self.info['plate_number']}, type={getattr(self.inst, 'vehicle_type', 'unknown')}, status={getattr(self.inst, 'vehicle_status', 'unknown')})"
         return f"Vehicle(未完成初始化, status={self.info['status']})"
 
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        将车辆实例转换为字典
+        
+        Returns:
+            包含车辆信息的字典
+        """
+        return self.info.copy()  # 返回info字典的副本
+
 
 class VehicleGroup(BaseGroup):
     """
@@ -322,7 +347,8 @@ class VehicleGroup(BaseGroup):
         self, 
         vehicles: Optional[List[Vehicle]] = None,
         model: Optional[Any] = None,
-        conf: Optional[Dict[str, Any]] = None
+        conf: Optional[Dict[str, Any]] = None,
+        group_type: Optional[str] = None
     ):
         """
         初始化车辆组
@@ -331,8 +357,13 @@ class VehicleGroup(BaseGroup):
             vehicles: 车辆实例列表
             model: 模型实例
             conf: 配置信息
+            group_type: 组合类型
         """
-        super().__init__(vehicles or [], model, conf)
+        vehicles = vehicles if vehicles is not None else []
+        super().__init__(vehicles, group_type)
+        self.model = model
+        self.conf = conf
+        print(f"Initialized VehicleGroup with {len(self.members)} vehicles.")
     
     def add_vehicle(self, vehicle: Vehicle) -> None:
         """
@@ -396,7 +427,33 @@ class VehicleGroup(BaseGroup):
         :param vehicle_type: 车辆类型
         :return: 筛选后的车辆组合
         """
-        return self.filter(lambda v: hasattr(v.inst, 'vehicle_type') and v.inst.vehicle_type == vehicle_type)
+        LOGGER.info(f"开始按类型筛选车辆: {vehicle_type}")
+        LOGGER.info(f"筛选前车辆总数: {len(self.members)}")
+        
+        filtered_vehicles = []
+        for v in self.members:
+            LOGGER.info(f"检查车辆 {v.info.get('vehicle_license_plate', 'Unknown')}")
+            LOGGER.info(f"车辆信息: {v.info}")
+            
+            if 'vehicle_type' not in v.info:
+                LOGGER.warning(f"车辆 {v.info.get('vehicle_license_plate', 'Unknown')} 缺少 vehicle_type 字段")
+                continue
+                
+            if v.info['vehicle_type'] == vehicle_type:
+                filtered_vehicles.append(v)
+                LOGGER.info(f"车辆 {v.info['vehicle_license_plate']} 匹配类型 {vehicle_type}")
+            else:
+                LOGGER.info(f"车辆 {v.info['vehicle_license_plate']} 类型不匹配 (当前类型: {v.info['vehicle_type']})")
+        
+        filtered_group = VehicleGroup(
+            vehicles=filtered_vehicles,
+            model=self.model,
+            conf=self.conf,
+            group_type=self.group_type
+        )
+        
+        LOGGER.info(f"筛选后车辆总数: {len(filtered_group.members)}")
+        return filtered_group
     
     def filter_by_cp(self, cp_id: str) -> 'VehicleGroup':
         """
@@ -405,7 +462,24 @@ class VehicleGroup(BaseGroup):
         :param cp_id: CP ID
         :return: 筛选后的车辆组合
         """
-        return self.filter(lambda v: hasattr(v.inst, 'vehicle_belonged_cp') and v.inst.vehicle_belonged_cp == cp_id)
+        print(f"Filtering vehicles for CP ID: {cp_id}")
+        print(f"Total vehicles before filtering: {len(self.members)}")
+        
+        filtered_vehicles = []
+        for v in self.members:
+            if 'vehicle_belonged_cp' in v.info and v.info['vehicle_belonged_cp'] == cp_id:
+                filtered_vehicles.append(v)
+                print(f"Vehicle {v.info['vehicle_license_plate']} matched CP {cp_id}")
+        
+        filtered_group = VehicleGroup(
+            vehicles=filtered_vehicles,
+            model=self.model,
+            conf=self.conf,
+            group_type=self.group_type
+        )
+        
+        print(f"Total vehicles after filtering: {len(filtered_group.members)}")
+        return filtered_group
     
     def filter_available(self, date=None) -> 'VehicleGroup':
         """
@@ -414,7 +488,27 @@ class VehicleGroup(BaseGroup):
         :param date: 日期字符串，格式为 'YYYY-MM-DD'，默认为当前日期
         :return: 筛选后的车辆组合
         """
-        return self.filter(lambda v: v.is_available(date))
+        LOGGER.info(f"开始筛选可用车辆，日期: {date or '当前日期'}")
+        LOGGER.info(f"筛选前车辆总数: {len(self.members)}")
+        
+        filtered_vehicles = []
+        for v in self.members:
+            LOGGER.info(f"检查车辆 {v.info.get('vehicle_license_plate', 'Unknown')} 是否可用")
+            if v.is_available(date):
+                filtered_vehicles.append(v)
+                LOGGER.info(f"车辆 {v.info['vehicle_license_plate']} 可用")
+            else:
+                LOGGER.info(f"车辆 {v.info['vehicle_license_plate']} 不可用")
+        
+        filtered_group = VehicleGroup(
+            vehicles=filtered_vehicles,
+            model=self.model,
+            conf=self.conf,
+            group_type=self.group_type
+        )
+        
+        LOGGER.info(f"筛选后可用车辆总数: {len(filtered_group.members)}")
+        return filtered_group
     
     def get_by_id(self, vehicle_id: str) -> Optional[Vehicle]:
         """
@@ -469,3 +563,19 @@ class VehicleGroup(BaseGroup):
         :return: 字符串表示
         """
         return f"VehicleGroup(数量={self.count()}, 类型={self.group_type})" 
+    
+    def update_vehicle_info(self, vehicle_id: str, update_fields: dict):
+        """
+        更新车辆信息
+        
+        :param vehicle_id: 车辆ID
+        :param update_fields: 更新字段
+        :return: 是否更新成功
+        """
+        for vehicle in self.members:
+            if vehicle.info['vehicle_id'] == vehicle_id:
+                vehicle.info.update(update_fields)
+                print(f"Updated vehicle {vehicle_id} with fields: {update_fields}")
+                return True
+        print(f"Vehicle {vehicle_id} not found")
+        return False

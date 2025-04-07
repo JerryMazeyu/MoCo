@@ -3,10 +3,20 @@
 """
 import datetime
 from typing import Dict, List, Optional, Any, Union
+import sys 
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from app.services.instances.receive_record import ReceiveRecord, ReceiveRecordsGroup, ReceiveRecordsBalance
 from app.utils.logger import setup_logger
-
+from app.services.instances.restaurant import Restaurant,RestaurantsGroup
+from app.services.instances.vehicle import Vehicle,VehicleGroup
+import numpy as np
+import pandas as pd
+from app.models.receive_record import ReceiveRecordModel
+from app.models.vehicle_model import VehicleModel
+import random
+import math
 
 LOGGER = setup_logger("moco.log")
 
@@ -22,8 +32,9 @@ class GetReceiveRecordService:
             model: 模型实例
             conf: 配置信息
         """
-        super().__init__(model, conf)
-        self.records_balance = ReceiveRecordsBalance(model=model, conf=conf)
+        self.model = model
+        self.conf = conf
+        self.records_balance = ReceiveRecordsBalance()
     
     def get_by_date(
         self, 
@@ -219,3 +230,337 @@ class GetReceiveRecordService:
             result.extend(cp_records)
             
         return result 
+
+    # 分配车辆号码
+    def _oil_assign_vehicle_numbers(self,df_restaurants: pd.DataFrame, df_vehicles: pd.DataFrame,total_barrels: int) -> pd.DataFrame:
+        """
+        根据收油数分配车辆号码，并将结果与原DataFrame合并
+        
+        :param df_restaurants: 包含'镇/街道', '区域', '餐厅类型', '收油数'的DataFrame
+        :param df_vehicles: 包含'车牌号'的DataFrame
+        :param total_barrels: 总桶数限制
+        :param vehicles_over_distance: 最近3天运输超过600KM的车辆
+        :return: 处理后的DataFrame
+        """
+        # 初始化变量
+        ## 乱序排列车牌号
+        vehicle_sorted_df = df_vehicles.sample(frac=1, replace=False)
+        result_rows = []
+        
+        total_accumulated = 0  # 所有车辆的累计收油数
+        should_break = False  # 控制外层循环的标志
+        
+
+        # 按区域分组
+        grouped = df_restaurants.groupby('rest_district')
+        
+        current_vehicle_index = 0
+        for area, group in grouped:
+            accumulated_sum = 0
+            temp_group = []
+            
+            for index, row in group.iterrows():
+                temp_group.append(row)
+                accumulated_sum += row['rr_amount']
+                
+                # 如果累计值达到在35-44之间，则分配车牌号并重置累计值
+                if accumulated_sum >= 35:
+                    # 检查添加这组数据是否会超过总桶数限制
+                    print(f"当前累计桶数: {total_accumulated}, 目标桶数: {total_barrels}")
+                    if total_accumulated > total_barrels:
+                        should_break = True  # 设置跳出标志
+                        break
+                        
+                    # 分配车牌号
+                    total_accumulated += accumulated_sum
+                    for temp_row in temp_group:
+                        temp_row = temp_row.copy()  # 防止修改原DataFrame
+                        if current_vehicle_index < len(vehicle_sorted_df):
+                            # 正确获取vehicle_id和license_plate
+                            current_vehicle = vehicle_sorted_df.iloc[current_vehicle_index]
+                            vehicle_id = current_vehicle['vehicle_id']
+                            license_plate = current_vehicle['vehicle_license_plate']
+                           
+                            temp_row['vehicle_license_plate'] = license_plate
+                            temp_row['rr_vehicle'] = vehicle_id
+                            temp_row['rr_sum_amount'] = accumulated_sum
+                            result_rows.append(temp_row)
+                            print(f"分配车辆: {vehicle_id} 车牌: {license_plate} 收油数: {accumulated_sum}")
+
+                            
+                        else: 
+                            print(f"Warning: No more vehicles available. Current accumulated: {total_accumulated}, Target: {total_barrels}")
+                            should_break = True
+                            break
+                    current_vehicle_index += 1    
+                    accumulated_sum = 0
+                    temp_group = []
+            
+            # 如果外层循环需要跳出，则不处理剩余数据
+            if should_break:
+                break
+        
+        # 创建结果DataFrame
+        result_df = pd.DataFrame(result_rows)
+        
+        # 打印统计信息
+        print(f"总分配桶数: {total_accumulated}")
+        print(f"总桶数限制: {total_barrels}")
+        print(f"已分配车辆数: {len(set(result_df['vehicle_license_plate']))}")
+        print(f"已处理餐厅数: {len(result_rows)}")
+        print(f"总餐厅数: {len(df_restaurants)}")
+        
+        return result_df
+    
+    def _allocate_barrels(self, result_df: pd.DataFrame, count_of_barrel_55: int) -> pd.DataFrame:
+        """
+        分配180KG和55KG桶
+        
+        Args:
+            result_df: 包含餐厅信息的DataFrame
+            count_of_barrel_55: 目标55KG桶数
+            
+        Returns:
+            处理后的DataFrame，包含rr_amount_180和rr_amount_55列
+        """
+        # 初始化 rr_amount_180 和 rr_amount_55 列
+        result_df['rr_amount_180'] = result_df['rr_amount']
+        result_df['rr_amount_55'] = 0
+
+        # 记录所有选择的行的索引
+        selected_indices = []
+
+        # 获取所有可用的索引
+        available_indices = list(result_df.index)
+
+        # 跟踪55KG桶的总数
+        total_55_barrels = 0
+
+        while total_55_barrels < count_of_barrel_55:
+            if not available_indices:
+                break  # 如果没有可用的索引，退出循环
+
+            # 随机选择一行
+            selected_index = random.choice(available_indices)
+            selected_row = result_df.loc[selected_index]
+            rr_amount = selected_row['rr_amount']
+
+            # 计算55KG桶的最大可能数量
+            max_55_barrels = math.ceil(rr_amount * 180 / 55) + 1
+
+            # 随机选择一个不超过最大值的55KG桶数
+            rr_amount_55 = random.randint(1, max_55_barrels)
+
+            # 计算剩余重量
+            remaining_weight = 180 * rr_amount - rr_amount_55 * 55
+
+            if remaining_weight < 150:
+                # 如果剩余重量小于150，将剩余重量全部转换为55KG桶
+                additional_55_barrels = math.ceil(remaining_weight / 55)
+                rr_amount_55 += additional_55_barrels
+                # 设置180KG桶数为0
+                result_df.at[selected_index, 'rr_amount_180'] = 0
+            else:
+                # 保持原有的180KG桶数，根据剩余重量计算
+                result_df.at[selected_index, 'rr_amount_180'] = math.ceil(remaining_weight/180)
+
+            # 更新55KG桶数
+            result_df.at[selected_index, 'rr_amount_55'] = rr_amount_55
+
+            # 验证重量是否满足要求
+            new_weight = (result_df.at[selected_index, 'rr_amount_180'] * 180 + 
+                         result_df.at[selected_index, 'rr_amount_55'] * 55)
+            original_weight = rr_amount * 180
+
+            if new_weight >= original_weight:
+                # 记录选择的行索引
+                selected_indices.append(selected_index)
+                # 更新总55KG桶数
+                total_55_barrels = result_df['rr_amount_55'].sum()
+                print(f"处理行 {selected_index}: 55KG桶数={rr_amount_55}, 总55KG桶数={total_55_barrels}")
+            else:
+                # 如果不满足要求，恢复原值
+                result_df.at[selected_index, 'rr_amount_180'] = rr_amount
+                result_df.at[selected_index, 'rr_amount_55'] = 0
+
+            # 从可用索引中移除已处理的索引
+            available_indices.remove(selected_index)
+
+        # 打印最终结果
+        print("\n最终分配结果:")
+        print(f"目标55KG桶数: {count_of_barrel_55}")
+        print(f"实际55KG桶数: {total_55_barrels}")
+        print(f"处理的行数: {len(selected_indices)}")
+        
+        # 验证每行的重量平衡
+        for idx in selected_indices:
+            original_weight = result_df.loc[idx, 'rr_amount'] * 180
+            allocated_weight = (result_df.loc[idx, 'rr_amount_180'] * 180 + 
+                              result_df.loc[idx, 'rr_amount_55'] * 55)
+            print(f"行 {idx}: 原始重量={original_weight}, 分配后重量={allocated_weight}")
+        
+        return result_df
+
+    # 从餐厅获取收油记录
+    def get_restaurant_oil_records(
+            self,res_info: list[dict],vehicle_info: list[dict],
+            cp_id: str,his_oil_info:list[dict]= None) -> List[ReceiveRecord]:
+        """
+        获取餐厅的收油记录
+        
+        Args:
+            res_info: 餐厅信息列表
+            vehicle_info: 车辆信息列表
+            cp_id: CP ID
+            
+        Returns:
+            餐厅的收油记录列表
+        """
+        # 调用RestaurantsGroup，通过cp_id获取餐厅列表
+        restaurants = [Restaurant(info) for info in res_info]  # 将字典列表转换为 Restaurant 实例列表
+        restaurants_group = RestaurantsGroup(restaurants=restaurants,group_type="cp")
+        cp_restaurants_group = restaurants_group.filter_by_cp(cp_id)
+        
+        # 调用VehicleGroup，通过cp_id获取车辆列表
+        # 确保每个车辆信息都包含 vehicle_belonged_cp
+        for info in vehicle_info:
+            if "vehicle_belonged_cp" not in info:
+                info["vehicle_belonged_cp"] = cp_id
+        
+        vehicles = [Vehicle(info,model =VehicleModel ) for info in vehicle_info]  # 将字典列表转换为 Vehicle 实例列表
+        vehicle_group = VehicleGroup(vehicles=vehicles,group_type="cp")
+        cp_vehicle_group = vehicle_group.filter_by_cp(cp_id)
+
+        # 调用收油ReceiveRecordsGroup，通过cp_id获取收油历史记录
+        # if his_oil_info is None:
+        #     cp_his_oil_df = None
+        # else:
+        #     his_oil_info = [ReceiveRecord(info) for info in his_oil_info]  # 将字典列表转换为 ReceiveRecord 实例列表
+        #     his_oil_info = ReceiveRecordsGroup(records=his_oil_info,group_type="cp")
+        #     cp_his_oil_group = his_oil_info.filter_by_cp(cp_id)
+        # # cp_his_oil_group关联cp_restaurants_group，取出rest_distance大于600的rr_vehicle
+        #     cp_his_oil_group = cp_his_oil_group.filter_by_restaurant(cp_restaurants_group.to_dataframe().query("rest_distance > 600")['rest_id'])
+        # # 将cp_his_oil_group转化为dataframe
+        #     cp_his_oil_df = cp_his_oil_group.to_dataframe()
+
+
+        ## 获取收油重量（成品）和180KG桶占比
+        oil_weight = self.conf.get("BUSINESS.REST2CP.收油重量（成品）")
+        oil_weight_180kg_ratio = self.conf.get("BUSINESS.REST2CP.180KG桶占比")
+        change_rate = self.conf.get("BUSINESS.REST2CP.比率")
+        total_barrels = np.ceil((oil_weight/change_rate)/0.18) # 先用180KG桶数计算总桶数
+        count_of_barrel_180 = np.ceil((oil_weight*oil_weight_180kg_ratio/change_rate)/0.18)
+        count_of_barrel_55 = np.ceil((oil_weight*(1-oil_weight_180kg_ratio)/change_rate)/0.055)
+
+
+        
+        # 创建一个空的列表来存储所有记录
+        all_records = []
+
+        # 每个餐厅获取收油日期和收油桶数
+        for restaurant in cp_restaurants_group.to_dicts():
+
+            # 获取收油日期
+            single_restaurant = ReceiveRecord(info=restaurant,conf=self.conf)
+            ## 生成收油表必须的字段
+            single_restaurant.generate()
+            ## 汇总每行
+            all_records.append(single_restaurant.to_dict())
+
+        # 将餐厅转化为dataframe
+        cp_restaurants_df = pd.DataFrame(all_records)
+        
+        ## 筛选车辆类型为运输车、车辆状态为非冻结
+        # 筛选车辆类型是否可用，并且是否过冷却期，只筛选过了冷却器的车辆
+        cp_vehicle_df = cp_vehicle_group.filter_available()
+        cp_vehicle_df = cp_vehicle_df.filter_by_type(vehicle_type="to_rest")
+        cp_vehicle_df = cp_vehicle_df.to_dataframe()
+
+        # 增加一列随机数作为桶数
+        cp_restaurants_df['rr_random_barrel_amount'] = np.random.rand(cp_restaurants_df.shape[0])
+        
+        # 根据区域，镇/街道、桶数进行排序
+        cp_restaurants_df_sorted = cp_restaurants_df.sort_values(by=['rest_district', 'rest_street', 'rr_random_barrel_amount'])
+
+
+        # 分配车辆号码
+        result_df = self._oil_assign_vehicle_numbers(cp_restaurants_df_sorted, cp_vehicle_df,total_barrels)
+
+
+        # 计算目标
+        print(f"目标180KG桶数: {count_of_barrel_180}")
+        print(f"目标55KG桶数: {count_of_barrel_55}")
+
+        # 调用桶分配函数
+        result_df = self._allocate_barrels(result_df, count_of_barrel_55)
+
+        # 更新餐厅信息中的 rest_verified_date 和 rest_allocated_barrel
+        for index, row in result_df.iterrows():
+            restaurant_id = row['rest_id']
+            rest_verified_date = row['rr_date']
+            rest_allocated_barrel = row['rr_amount']
+            cp_restaurants_group.update_restaurant_info(restaurant_id, {'rest_verified_date': rest_verified_date, 'rest_allocated_barrel': rest_allocated_barrel})
+
+        # 更新车辆信息中的 vehicle_last_use
+        for index, row in result_df[['rr_vehicle','rr_date']].drop_duplicates().iterrows():
+            vehicle_id = row['rr_vehicle']
+            vehicle_last_use = row['rr_date']
+            cp_vehicle_group.update_vehicle_info(vehicle_id, {'vehicle_last_use': vehicle_last_use})
+
+        # 返回所有记录
+        return result_df
+    
+        
+
+
+if __name__ == "__main__":
+    from app.config.config import CONF
+    from app.models.restaurant_model import RestaurantModel
+    from app.models.vehicle_model import VehicleModel
+    from app.models.receive_record import ReceiveRecordModel
+    service = GetReceiveRecordService(model=ReceiveRecordModel,conf=CONF)
+    restaurant_list = [
+        {
+        "rest_id": f"rest_{i}",
+        "rest_belonged_cp": "cp1",
+        "rest_chinese_name": f"餐厅{i}",
+        "rest_english_name": f"Restaurant {i}",
+        "rest_province": "省份A",
+        "rest_city": "城市A",
+        "rest_chinese_address": f"地址{i}",
+        "rest_english_address": f"Address {i}",
+        "rest_district": "区域A",
+        "rest_street": "街道A",
+        "rest_contact_person": "联系人A",
+        "rest_contact_phone": "12345678901",
+        "rest_location": "39.9042,116.4074",
+        "rest_distance": 10 + i,  # 示例距离
+        "rest_type": "类型A",
+        "rest_verified_date": "2023-01-01",
+        "rest_allocated_barrel": 100 + i,  # 示例分配桶数
+        "rest_other_info": {}
+    }
+    for i in range(1000)
+]
+    vehicle_list = [
+        {
+        "vehicle_id": f"vehicle_{i}",
+        "vehicle_belonged_cp": "cp1",
+        "vehicle_license_plate": f"车牌{i}",
+        "vehicle_driver_name": f"司机{i}",
+        "vehicle_type": "to_rest",
+        "vehicle_rough_weight": 2000 + i * 100,  # 示例毛重
+        "vehicle_tare_weight": 1500 + i * 100,   # 示例皮重
+        "vehicle_net_weight": 500 + i * 100,     # 示例净重
+        "vehicle_historys": [],
+        "vehicle_status": "available",
+        "vehicle_last_use": "2023-01-01",
+        "vehicle_other_info": {}
+    }
+    for i in range(10)
+]
+    
+    cp_id = "cp1"
+    his_oil_info = None
+    result = service.get_restaurant_oil_records(restaurant_list, vehicle_list, cp_id, his_oil_info)
+    result.to_excel("result.xlsx",index=False)

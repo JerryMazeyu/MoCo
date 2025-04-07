@@ -530,3 +530,21 @@ class RestaurantsGroup(BaseGroup):
         :return: 字符串表示
         """
         return f"RestaurantsGroup(数量={self.count()}, 类型={self.group_type})" 
+    
+    def update_restaurant_info(self, restaurant_id: str, update_dict: Dict[str, Any]) -> bool:
+        """
+        更新指定餐厅的信息
+        
+        :param restaurant_id: 餐厅ID
+        :param update_dict: 包含要更新的字段及其新值的字典
+        :return: 更新成功返回True，失败返回False
+        """
+        for restaurant in self.members:
+            if restaurant.inst.rest_id == restaurant_id:
+                for key, value in update_dict.items():
+                    setattr(restaurant.inst, key, value)  # 更新餐厅实例的属性
+                # LOGGER.info(f"成功更新餐厅 {restaurant_id} 的信息: {update_dict}")
+                return True
+        LOGGER.warning(f"未找到餐厅ID: {restaurant_id}，无法更新信息")
+        return False
+

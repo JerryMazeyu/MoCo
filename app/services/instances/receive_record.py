@@ -6,6 +6,7 @@ from app.services.instances.base import BaseInstance, BaseGroup
 from app.utils.hash import hash_text
 from app.utils.logger import setup_logger
 from app.utils.file_io import rp
+import numpy as np
 
 # 设置日志
 LOGGER = setup_logger("moco.log")
@@ -69,7 +70,7 @@ class ReceiveRecord(BaseInstance):
                 
                 # 生成唯一的合约编号
                 self.inst.rr_id = f"RR-{date_prefix}-{cp_code}-{uid[:8].upper()}"
-                LOGGER.info(f"已生成收油记录ID: {self.inst.rr_id}")
+                # LOGGER.info(f"已生成收油记录ID: {self.inst.rr_id}")
             
             return True
         except Exception as e:
@@ -82,41 +83,33 @@ class ReceiveRecord(BaseInstance):
         
         :return: 是否设置成功
         """
+        ## 读取配置文件收油关系映射
+        # 根据餐厅类型分配收油量
+        def oil_determine_collection_amount(restaurant_type: str, oil_mapping: dict) -> int:
+            for key, value in oil_mapping.items():
+                if ',' in str(value):
+                    allocate_value =  [int(item.strip()) for item in str(value).split(',')]
+                else:
+                    allocate_value = [int(value)]
+                if any(type_keyword in restaurant_type for type_keyword in key.split('/')):
+                    return np.random.choice(allocate_value)
+            return np.random.choice([1, 2])  # 默认值
         try:
-            # 设置默认日期
-            if not hasattr(self.inst, 'rr_date') or not self.inst.rr_date:
+            # 1、设置数据生成日期
+            if not hasattr(self.inst, 'rr_create_date') or not self.inst.rr_date:
                 self.inst.rr_date = datetime.datetime.now().strftime('%Y-%m-%d')
-                LOGGER.info(f"已设置默认收油日期: {self.inst.rr_date}")
+                # LOGGER.info(f"已设置默认收油数据生成日期: {self.inst.rr_date}")
             
             # 如果没有收油量，生成一个合理的默认值
+            # 获取收油关系表映射
+            self.oil_mapping = self.conf.get("BUSINESS.RESTAURANT.收油关系映射", default={})
+
+            # 2、设置默认收油桶数
             if not hasattr(self.inst, 'rr_amount') or not self.inst.rr_amount:
-                # 根据所属餐厅类型生成收油量
-                # 这里简单使用一个随机值，实际应根据餐厅类型确定
-                if hasattr(self.inst, 'rr_restaurant') and hasattr(self.inst.rr_restaurant, 'rest_type'):
-                    rest_type = self.inst.rr_restaurant.rest_type
-                    # 在实际应用中，这里应该根据配置或者餐厅类型确定收油桶数
-                    # 这里简单示例
-                    if "小食" in rest_type or "小吃" in rest_type:
-                        barrel_count = random.randint(1, 2)
-                    elif "酒楼" in rest_type or "酒家" in rest_type:
-                        barrel_count = random.randint(3, 4)
-                    else:
-                        barrel_count = random.randint(1, 3)
-                else:
-                    # 默认桶数
-                    barrel_count = random.randint(1, 3)
-                
-                # 计算吨数
-                # 在实际应用中，这里应该根据配置确定每桶的吨数
-                tons_per_barrel = 0.18
-                if self.conf and hasattr(self.conf, 'BUSINESS') and hasattr(self.conf.BUSINESS, 'REST2CP') and hasattr(self.conf.BUSINESS.REST2CP, '吨每桶'):
-                    tons_per_barrel = self.conf.BUSINESS.REST2CP.吨每桶
-                
-                # 计算总吨数
-                total_tons = barrel_count * tons_per_barrel
-                
-                self.inst.rr_amount = total_tons
-                LOGGER.info(f"已生成默认收油量: {total_tons}吨 ({barrel_count}桶)")
+                # 根据所属餐厅类型生成收油量，先按照180KG却ing桶数，最后生成完了再分配180KG和55KG的桶
+                self.inst.rr_amount = oil_determine_collection_amount(self.inst.rest_type, self.oil_mapping)
+                # LOGGER.info(f"已生成默认收油桶数: {self.inst.rr_amount}桶")
+            
             
             return True
         except Exception as e:
@@ -140,7 +133,7 @@ class ReceiveRecord(BaseInstance):
         # 如果全部成功，更新状态为就绪
         if success:
             self.status = 'ready'
-            LOGGER.info(f"收油记录 '{self.inst.rr_id}' 的所有字段已生成完成")
+            # LOGGER.info(f"收油记录 '{self.inst.rr_id}' 的所有字段已生成完成")
         
         return success
     

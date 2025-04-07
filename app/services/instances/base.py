@@ -38,9 +38,28 @@ class BaseInstance(abc.ABC):
         
         :return: 字典表示
         """
+        # 如果子类实现了自己的to_dict方法，使用子类的实现
+        if hasattr(self.__class__, 'to_dict') and self.__class__.to_dict != BaseInstance.to_dict:
+            return self.__class__.to_dict(self)
+        
+        # 如果实例有info属性，返回info
+        if hasattr(self, 'info'):
+            return self.info.copy() if isinstance(self.info, dict) else dict(self.info)
+        
+        # 如果inst是pydantic模型，使用其dict方法
         if hasattr(self.inst, 'dict'):
             return self.inst.dict()
-        return vars(self.inst)
+        
+        # 如果inst有__dict__属性，使用vars
+        if hasattr(self.inst, '__dict__'):
+            return vars(self.inst)
+        
+        # 如果以上都不满足，尝试将inst转换为字典
+        try:
+            return dict(self.inst)
+        except (TypeError, ValueError):
+            logger.warning(f"无法将{self.__class__.__name__}实例转换为字典")
+            return {}
     
     def to_json(self) -> str:
         """
@@ -277,11 +296,26 @@ class BaseGroup:
         :param condition_func: 条件函数，接收实体并返回布尔值
         :return: 筛选后的组合
         """
-        filtered = self.__class__()
-        for member in self.members:
-            if condition_func(member):
-                filtered.add(member)
-        return filtered
+        filtered_members = [member for member in self.members if condition_func(member)]
+        
+        # 根据类名决定参数名
+        if self.__class__.__name__ == 'VehicleGroup':
+            kwargs = {'vehicles': filtered_members}
+        elif self.__class__.__name__ == 'RestaurantsGroup':
+            kwargs = {'restaurants': filtered_members}
+        else:
+            kwargs = {'instances': filtered_members}
+        
+        kwargs['group_type'] = self.group_type
+        
+        # 如果类有model和conf属性，也传递它们
+        if hasattr(self, 'model'):
+            kwargs['model'] = self.model
+        if hasattr(self, 'conf'):
+            kwargs['conf'] = self.conf
+        
+        filtered_group = self.__class__(**kwargs)
+        return filtered_group
     
     def __str__(self) -> str:
         """
