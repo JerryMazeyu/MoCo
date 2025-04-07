@@ -11,7 +11,7 @@ class RestaurantModel(BaseModel):
     
     rest_chinese_name: Any = Field(description="餐厅中文名（必须有）")
     rest_english_name: Any = Field(None, description="餐厅英文名")
-    rest_province: Any = Field(None, description="所在省份（必须有）")
+    # rest_province: Any = Field(None, description="所在省份（必须有）")
     rest_city: Any = Field(None, description="所在区域/城市（必须有）")
     rest_chinese_address: Any = Field(None, description="餐厅中文地址（必须有）")
     rest_english_address: Any = Field(None, description="餐厅英文地址")

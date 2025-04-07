@@ -13,9 +13,43 @@ import uuid
 import json
 from openai import OpenAI
 from app.config.config import CONF
+import random
+import mingzi
+from datetime import datetime
 
 # 设置日志
 LOGGER = setup_logger("moco.log")
+
+# ===========有道Utils==========
+
+def calculateSign(appKey, appSecret, q, salt, curtime):
+    strSrc = appKey + getInput(q) + salt + curtime + appSecret
+    return encrypt(strSrc)
+
+def encrypt(strSrc):
+    hash_algorithm = hashlib.sha256()
+    hash_algorithm.update(strSrc.encode('utf-8'))
+    return hash_algorithm.hexdigest()
+
+def getInput(input):
+    if input is None:
+        return input
+    inputLen = len(input)
+    return input if inputLen <= 20 else input[0:10] + str(inputLen) + input[inputLen - 10:inputLen]
+
+def addAuthParams(appKey, appSecret, params):
+    q = params.get('q')
+    if q is None:
+        q = params.get('img')
+    q = "".join(q)
+    salt = str(uuid.uuid1())
+    curtime = str(int(time.time()))
+    sign = calculateSign(appKey, appSecret, q, salt, curtime)
+    params['appKey'] = appKey
+    params['salt'] = salt
+    params['curtime'] = curtime
+    params['signType'] = 'v3'
+    params['sign'] = sign
 
 def youdao_translate(text: str, from_lang: str = 'zh', to_lang: str = 'en', conf: str = None) -> Optional[str]:
     """
@@ -24,46 +58,24 @@ def youdao_translate(text: str, from_lang: str = 'zh', to_lang: str = 'en', conf
     :param text: 要翻译的文本
     :param from_lang: 源语言
     :param to_lang: 目标语言
-    :param app_key: API密钥
+    :param conf: API密钥，格式为'app_key:app_secret'
     :return: 翻译结果或None
     """
-    if not text or not app_key:
+    if not text or not conf:
         return None
     
     # 解析app_key和app_secret
     try:
-        app_key, app_secret = app_key.split(':')
+        app_key, app_secret = conf.split(':')
     except ValueError:
         LOGGER.error(f"无效的有道翻译API密钥格式，应为'app_key:app_secret'")
         return None
     
     try:
-        # 添加鉴权参数
-        salt = str(uuid.uuid1())
-        curtime = str(int(time.time()))
         
-        # 计算签名
-        def get_input(input_text):
-            if input_text is None:
-                return input_text
-            input_len = len(input_text)
-            return input_text if input_len <= 20 else input_text[0:10] + str(input_len) + input_text[input_len - 10:input_len]
-        
-        sign_str = app_key + get_input(text) + salt + curtime + app_secret
-        sign = hashlib.sha256(sign_str.encode('utf-8')).hexdigest()
-        
-        # 构建请求
-        data = {
-            'q': text, 
-            'from': from_lang, 
-            'to': to_lang,
-            'appKey': app_key,
-            'salt': salt,
-            'curtime': curtime,
-            'signType': 'v3',
-            'sign': sign
-        }
-        
+        data = {'q': text, 'from': from_lang, 'to': to_lang}
+        addAuthParams(app_key, app_secret, data)
+
         header = {'Content-Type': 'application/x-www-form-urlencoded'}
         response = requests.post('https://openapi.youdao.com/api', data=data, headers=header, timeout=5)
         
@@ -81,6 +93,35 @@ def youdao_translate(text: str, from_lang: str = 'zh', to_lang: str = 'en', conf
     except Exception as e:
         LOGGER.error(f"有道翻译API调用异常: {str(e)}")
         return None
+
+# ===========高德Utils==========
+
+def query_gaode(key, city):
+    api_url = f"https://restapi.amap.com/v3/config/district?keywords={city}&subdistrict=3&key={key}"
+    response = requests.get(api_url, timeout=5)
+    if response.status_code != 200:
+        LOGGER.error(f"高德地图API请求失败: {response.status_code}")
+        return None
+    result = response.json()
+    if result.get('status') != '1' or 'districts' not in result:
+        LOGGER.error(f"高德地图API返回结果无效: {result}")
+        return None
+    return result['districts'][0]
+
+
+# ===========KIMI Utils==========
+
+def search_impl(arguments: Dict[str, Any]) -> Any:
+    """
+    在使用 Moonshot AI 提供的 search 工具的场合，只需要原封不动返回 arguments 即可，
+    不需要额外的处理逻辑。
+ 
+    但如果你想使用其他模型，并保留联网搜索的功能，那你只需要修改这里的实现（例如调用搜索
+    和获取网页内容等），函数签名不变，依然是 work 的。
+ 
+    这最大程度保证了兼容性，允许你在不同的模型间切换，并且不需要对代码有破坏性的修改。
+    """
+    return arguments
 
 def kimi_restaurant_type_analysis(rest_info: Dict[str, str], api_key: str = None) -> Optional[str]:
     """
@@ -130,18 +171,41 @@ def kimi_restaurant_type_analysis(rest_info: Dict[str, str], api_key: str = None
             {"role": "user", "content": prompt}
         ]
         
-        # 进行API调用
-        completion = client.chat.completions.create(
-            model="moonshot-v1-8k",
-            messages=messages,
-            temperature=0.3,
-            tools=tools,
-        )
         
-        # 处理工具调用
-        message = completion.choices[0].message        
+        finish_reason = None
+        while finish_reason is None or finish_reason == "tool_calls":
+            # 进行API调用
+            completion = client.chat.completions.create(
+                model="moonshot-v1-8k",
+                messages=messages,
+                temperature=0.3,
+                tools=tools,
+                tool_choice="required",
+            )
+            choice = completion.choices[0]
+            finish_reason = choice.finish_reason
+            if finish_reason == "tool_calls":  # <-- 判断当前返回内容是否包含 tool_calls
+                messages.append(choice.message)  # <-- 我们将 Kimi 大模型返回给我们的 assistant 消息也添加到上下文中，以便于下次请求时 Kimi 大模型能理解我们的诉求
+                for tool_call in choice.message.tool_calls:  # <-- tool_calls 可能是多个，因此我们使用循环逐个执行
+                    tool_call_name = tool_call.function.name
+                    tool_call_arguments = json.loads(tool_call.function.arguments)  # <-- arguments 是序列化后的 JSON Object，我们需要使用 json.loads 反序列化一下
+                    if tool_call_name == "$web_search":
+                        tool_result = search_impl(tool_call_arguments)
+                    else:
+                        tool_result = f"Error: unable to find tool by name '{tool_call_name}'"
+    
+                    # 使用函数执行结果构造一个 role=tool 的 message，以此来向模型展示工具调用的结果；
+                    # 注意，我们需要在 message 中提供 tool_call_id 和 name 字段，以便 Kimi 大模型
+                    # 能正确匹配到对应的 tool_call。
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": tool_call_name,
+                        "content": json.dumps(tool_result),  # <-- 我们约定使用字符串格式向 Kimi 大模型提交工具调用结果，因此在这里使用 json.dumps 将执行结果序列化成字符串
+                    })
+    
+        return choice.message.content
         
-        return message.content.strip()
         
     except Exception as e:
         LOGGER.error(f"KIMI餐厅类型分析异常: {str(e)}")
@@ -271,15 +335,15 @@ class Restaurant(BaseInstance):
         
         :return: 是否提取成功
         """
+        
         try:
+            # city = convert_to_pinyin(self.inst.rest_city.split("市")[0])  # 城市变成中文了
+            city = self.inst.rest_city.split("市")[0]
+            address = self.inst.rest_chinese_address
             # 检查是否已有区域和街道信息
-            if (not hasattr(self.inst, 'rest_district') or not self.inst.rest_district or 
-                not hasattr(self.inst, 'rest_street') or not self.inst.rest_street) and hasattr(self.inst, 'rest_chinese_address'):
+            if not hasattr(self.inst, 'rest_district') or not self.inst.rest_district:
                 
-                city = convert_to_pinyin(self.inst.rest_city.split("市")[0])
-                address = self.inst.rest_chinese_address
-
-                candidate_districts = list(CONF.STREETMAPS._config_dict[city].keys())
+                candidate_districts = list(self.conf.STREETMAPS._config_dict[city].keys())
                 flag = False
                 for district in candidate_districts:
                     if district in self.inst.rest_chinese_address:
@@ -289,12 +353,47 @@ class Restaurant(BaseInstance):
                         break
                 
                 if not flag:
-                    LOGGER.warning(f"{str(self.inst)}未找到区域")
-                
+                    LOGGER.warning(f"{str(self.inst)}未找到区域, 尝试使用高德地图API获取区域信息")
+                    assert self.inst.rest_location is not None, f"{str(self.inst)}未找到经纬度，无法判断其所属区域"
+                    geoinfo = None
+                    if hasattr(self.conf, 'runtime') and hasattr(self.conf.runtime, 'geoinfo') and city in self.conf.runtime.geoinfo['name']:
+                        LOGGER.info(f"从self.conf.runtime.geoinfo中获取{city}的地理信息")
+                        geoinfo = self.conf.runtime.geoinfo[city]
+                    else:
+                        # 调用高德地图API获取地理信息
+                        LOGGER.info(f"调用高德地图API获取{city}的地理信息")
+                        geoinfo = robust_query(query_gaode, self.conf.KEYS.gaode_keys, city=city)
+                        setattr(self.conf.runtime, 'geoinfo', geoinfo)
+                        LOGGER.info(f"已将{city}的地理信息保存到self.conf.runtime.geoinfo中")
+                    try:
+                        
+                        # 分解餐厅位置经纬度
+                        rest_lng, rest_lat = self.inst.rest_location.split(',')
+                        rest_lng = float(rest_lng)
+                        rest_lat = float(rest_lat)
+                        min_distance = float('inf')
+                        for cand_district in geoinfo['districts']:
+                            cand_district_lng, cand_district_lat = cand_district['center'].split(',')
+                            cand_district_lng = float(cand_district_lng)
+                            cand_district_lat = float(cand_district_lat)
+                            distance = ((rest_lng - cand_district_lng) ** 2 + (rest_lat - cand_district_lat) ** 2) ** 0.5
+                            if distance < min_distance:
+                                min_distance = distance
+                                self.inst.rest_district = cand_district['name']
+                        LOGGER.info(f"已通过经纬度计算为餐厅找到最近区域: {self.inst.rest_district}")
+
+                    except Exception as e:
+                        LOGGER.error(f"解析地理信息出错: {str(e)}")
+                        self.conf.runtime.geoinfo[city] = None
+                        LOGGER.error(f"地理信息格式无效: {geoinfo}")
+
+            # ==================街道信息=================
+            if not hasattr(self.inst, 'rest_street') or not self.inst.rest_street:
                 if not hasattr(self.inst, 'rest_district') or not self.inst.rest_district:
-                    canditate_streets = ",".join(list(CONF.STREETMAPS._config_dict[city].values())).split(",")
+                    canditate_streets = ",".join(list(self.conf.STREETMAPS._config_dict[city].values())).split(",")
                 else:
-                    canditate_streets = CONF.STREETMAPS._config_dict[city][district].split(",")
+                    district = self.inst.rest_district
+                    canditate_streets = self.conf.STREETMAPS._config_dict[city][district].split(",")
 
                 flag = False
                 for street in canditate_streets:
@@ -305,10 +404,74 @@ class Restaurant(BaseInstance):
                         break
                 
                 if not flag:
-                    LOGGER.warning(f"{str(self.inst)}未找到街道, 尝试使用API寻找街道信息")
-                    # 首先判断是否CONF.runtime中包含
-                    url = f"https://restapi.amap.com/v3/config/district?keywords=北京&subdistrict=2&key=<用户的key>"
+                    LOGGER.warning(f"{str(self.inst.rest_chinese_name)}未找到街道, 尝试使用API寻找街道信息")
+                    assert self.inst.rest_location is not None, f"{str(self.inst)}未找到经纬度，无法判断其所属街道"
                     
+                    # 首先判断是否self.conf.runtime中包含geoinfo，如果没有则通过下面的url进行申请，并将返回的内容放到self.conf.runtime.geoinfo中
+                    geoinfo = None
+                    if hasattr(self.conf, 'runtime') and hasattr(self.conf.runtime, 'geoinfo') and city in self.conf.runtime.geoinfo['name']:
+                        LOGGER.info(f"从配置中获取{city}的地理信息")
+                        geoinfo = self.conf.runtime.geoinfo
+                    else:
+                        # 调用高德地图API获取地理信息
+                        LOGGER.info(f"调用高德地图API获取{city}的地理信息")
+                        
+                        # 使用robust_query进行健壮性调用
+                        geoinfo = robust_query(query_gaode, self.conf.KEYS.gaode_keys, city)
+                        setattr(self.conf.runtime, 'geoinfo', geoinfo)
+                        LOGGER.info(f"已将{city}的地理信息保存到self.conf.runtime.geoinfo中")
+                    
+                    # 如果成功获取地理信息，解析查找最近的街道
+                    if geoinfo:
+                        try:
+                            # 解析其中的geoinfo中的district中的内容
+                            if 'districts' in geoinfo and len(geoinfo['districts']) > 0:
+                                if hasattr(self.inst, 'rest_district') and self.inst.rest_district:
+                                    LOGGER.info(f"已知区域: {self.inst.rest_district}")
+                                    street_info = None
+                                    for candidate_district in geoinfo['districts']:
+                                        if candidate_district['name'] == self.inst.rest_district:
+                                            street_info = candidate_district['districts']
+                                            break
+                                else:
+                                    LOGGER.error(f"区域信息为空，将所有街道信息合并")
+                                    street_info = []
+                                    for candidate_district in geoinfo['districts']:
+                                        street_info.extend(candidate_district['districts'])
+                            
+                                # 分解餐厅位置经纬度
+                                rest_lng, rest_lat = self.inst.rest_location.split(',')
+                                rest_lng = float(rest_lng)
+                                rest_lat = float(rest_lat)
+
+                                min_distance = float('inf')
+                                nearest_street = None
+
+                                for street_obj in street_info:
+                                    street_lng, street_lat = street_obj['center'].split(',')
+                                    street_lng = float(street_lng)
+                                    street_lat = float(street_lat)
+                                    distance = ((rest_lng - street_lng) ** 2 + (rest_lat - street_lat) ** 2) ** 0.5
+                                    if distance < min_distance:
+                                        min_distance = distance
+                                        nearest_street = street_obj.get('name')
+                                
+                                self.inst.rest_street = nearest_street
+                                LOGGER.info(f"已通过经纬度计算为餐厅找到最近街道: {nearest_street}")
+
+                            else:
+                                LOGGER.error(f"地理信息格式无效: {geoinfo}")
+                                    
+                                
+                        except Exception as e:
+                            LOGGER.error(f"解析地理信息出错: {str(e)}")
+                    else:
+                        LOGGER.error("未能获取有效的地理信息，无法确定街道")
+                        # 使用默认值
+                        if not hasattr(self.inst, 'rest_district') or not self.inst.rest_district:
+                            self.inst.rest_district = "未知区域"
+                        if not hasattr(self.inst, 'rest_street') or not self.inst.rest_street:
+                            self.inst.rest_street = "未知街道"
 
             return True
         except Exception as e:
@@ -324,38 +487,46 @@ class Restaurant(BaseInstance):
         try:
             # 检查是否已有餐厅类型
             if not hasattr(self.inst, 'rest_type') or not self.inst.rest_type:
-                candidate_types = "/".join(list(CONF.BUSINESS.RESTAURANT.收油关系映射._config_dict.keys())).split("/")
-                if self.inst.rest_chinese_name in candidate_types:
-                    self.inst.rest_type = self.inst.rest_chinese_name
-                    LOGGER.info(f"已直接通过餐厅名为餐厅 '{self.inst.rest_chinese_name}' 推断类型: {rest_type}")
-                elif self.conf and hasattr(self.conf, 'KEYS') and hasattr(self.conf.KEYS, 'kimi_keys'):
-                    # 准备餐厅信息
-                    rest_info = {
-                        'name': self.inst.rest_chinese_name,
-                        'address': getattr(self.inst, 'rest_chinese_address', ''),
-                        'rest_type': "\n".join(list(CONF.BUSINESS.RESTAURANT.收油关系映射._config_dict.keys()))
-                    }
-                    
-                    # 调用KIMI API分析餐厅类型
-                    def analyze_func(key):
-                        return kimi_restaurant_type_analysis(rest_info, key)
-                    
-                    # 使用robust_query进行健壮性调用
-                    rest_type = robust_query(analyze_func, self.conf.KEYS.kimi_keys)
-                    
-                    if rest_type:
-                        self.inst.rest_type = rest_type
-                        LOGGER.info(f"已通过LLM为餐厅 '{self.inst.rest_chinese_name}' 分析类型: {rest_type}")
-                    else:
-                        # 分析失败，使用默认值
-                        self.inst.rest_type = "餐馆/饭店"
-                        LOGGER.warning(f"KIMI API调用失败，使用默认餐厅类型: {self.inst.rest_type}")
+                candidate_types = "/".join(list(self.conf.BUSINESS.RESTAURANT.收油关系映射._config_dict.keys())).split("/")
+                for candidate_type in candidate_types:
+                    if candidate_type in self.inst.rest_chinese_name:
+                        self.inst.rest_type = candidate_type
+                        LOGGER.info(f"已直接通过餐厅名为餐厅 '{self.inst.rest_chinese_name}' 推断类型: {self.inst.rest_type}")
+                        return True
                 else:
-                    # 没有配置KIMI API，使用默认值
-                    self.inst.rest_type = "餐馆/饭店"
-                    LOGGER.info(f"未配置KIMI API，使用默认餐厅类型: {self.inst.rest_type}")
-                
-            return True
+                    LOGGER.warning(f"未找到餐厅类型，尝试使用KIMI API分析")
+                    if self.conf and hasattr(self.conf, 'KEYS') and hasattr(self.conf.KEYS, 'kimi_keys'):
+                        # 准备餐厅信息
+                        rest_info = {
+                            'name': self.inst.rest_chinese_name,
+                            'address': getattr(self.inst, 'rest_chinese_address', ''),
+                            'rest_type': "\n".join(list(self.conf.BUSINESS.RESTAURANT.收油关系映射._config_dict.keys()))
+                        }
+                        # 调用KIMI API分析餐厅类型
+                        def analyze_func(key):
+                            return kimi_restaurant_type_analysis(rest_info, key)
+                        # 使用robust_query进行健壮性调用
+                        rest_type_ans = robust_query(analyze_func, self.conf.KEYS.kimi_keys)
+                        rest_type = None
+                        for candidate_type in candidate_types:
+                            if candidate_type in rest_type_ans:
+                                rest_type = candidate_type
+                                break
+                        if rest_type:
+                            self.inst.rest_type = rest_type
+                            LOGGER.info(f"已通过LLM为餐厅 '{self.inst.rest_chinese_name}' 分析类型: {rest_type}")
+                            return True
+                        else:
+                            # 分析失败，使用默认值
+                            self.inst.rest_type = "小食/小吃/美食/饮食/私房菜"
+                            LOGGER.warning(f"KIMI API调用失败，使用默认餐厅类型: {self.inst.rest_type}")
+                            return True
+
+                    else:
+                        # 没有配置KIMI API，使用默认值
+                        self.inst.rest_type = "小食/小吃/美食/饮食/私房菜"
+                        LOGGER.info(f"未配置KIMI API，使用默认餐厅类型: {self.inst.rest_type}")
+                        return True
         except Exception as e:
             LOGGER.error(f"分析餐厅类型失败: {e}")
             return False
@@ -369,15 +540,20 @@ class Restaurant(BaseInstance):
         try:
             # 检查是否已有联系人信息
             if not hasattr(self.inst, 'rest_contact_person') or not self.inst.rest_contact_person:
-                # 在实际项目中，这应该通过查询API获取
-                # 这里使用示例值
-                self.inst.rest_contact_person = f"{self.inst.rest_chinese_name}负责人"
-                LOGGER.info(f"已为餐厅生成联系人: {self.inst.rest_contact_person}")
+                name = mingzi.mingzi()[0]
+                self.inst.rest_contact_person = name
+                LOGGER.info(f"已为餐厅生成随机联系人: {self.inst.rest_contact_person}")
             
             if not hasattr(self.inst, 'rest_contact_phone') or not self.inst.rest_contact_phone:
-                # 生成示例电话号码
-                self.inst.rest_contact_phone = f"1388888{hash(self.inst.rest_chinese_name) % 10000:04d}"
-                LOGGER.info(f"已为餐厅生成联系电话: {self.inst.rest_contact_phone}")
+                # 生成随机手机号
+                prefix = ["130", "131", "132", "133", "134", "135", "136", "137", "138", "139", 
+                         "150", "151", "152", "153", "155", "156", "157", "158", "159", 
+                         "176", "177", "178", "180", "181", "182", "183", "184", "185", "186", "187", "188", "189"]
+                
+                phone_prefix = random.choice(prefix)
+                phone_suffix = ''.join(random.choices('0123456789', k=8))
+                self.inst.rest_contact_phone = phone_prefix + phone_suffix
+                LOGGER.info(f"已为餐厅生成随机联系电话: {self.inst.rest_contact_phone}")
             
             return True
         except Exception as e:
@@ -412,6 +588,16 @@ class Restaurant(BaseInstance):
             LOGGER.error(f"计算餐厅距离失败: {e}")
             return False
     
+    def _generate_verified_date(self) -> bool:
+        """
+        生成确认日期
+        
+        :return: 是否生成成功
+        """
+        self.inst.rest_verified_date = datetime.now().strftime("%Y-%m-%d")
+        LOGGER.info(f"已生成确认日期: {self.inst.rest_verified_date}")
+        return True
+    
     def generate(self) -> bool:
         """
         生成餐厅的所有缺失字段
@@ -438,14 +624,31 @@ class Restaurant(BaseInstance):
         
         # 计算距离
         success &= self._calculate_distance()
+
+        # 生成确认日期
+        success &= self._generate_verified_date()
         
         # 如果全部成功，更新状态为就绪
         if success:
             self.status = 'ready'
+            self.check()
             LOGGER.info(f"餐厅 '{self.inst.rest_chinese_name}' 的所有字段已生成完成")
-        
         return success
     
+
+    def check(self):
+        """
+        检查餐厅全部字段都完整
+        """
+        all_keys = [x for x in self.inst.__dict__.keys() if x.startswith('rest_')]
+        for key in all_keys:
+            if self.inst.__getattribute__(key) is None and key != 'rest_allocated_barrel' and key != 'rest_verified_date':
+                LOGGER.error(f"餐厅 '{self.inst.rest_chinese_name}' 缺少字段: {key}")
+                return False
+            else:
+                LOGGER.info(f"餐厅 '{self.inst.rest_chinese_name}' 字段: {key} 已生成")
+        return True
+
     def __str__(self) -> str:
         """
         返回餐厅的字符串表示

@@ -36,8 +36,11 @@ def test_config_save():
     CONF._config_dict["TEST"]["test_number"] = 123
     CONF._config_dict["TEST"]["test_list"] = [1, 2, 3]
     
+    setattr(CONF.runtime, "test_value", "test_value")
+    
     # 保存配置
     result = CONF.save()
+    CONF.refresh()
     print(f"保存配置结果: {'成功' if result else '失败'}")
     
     # 显示保存的文件路径
@@ -59,25 +62,7 @@ def test_config_save():
         print(f"配置文件不存在: {temp_file_path}")
 
 
-def test_streetmaps_format():
-    """测试街道地图格式"""
-    print("\n测试街道地图格式...")
-    
-    streets = CONF.get("STREETMAPS.huizhou.博罗县")
-    if streets:
-        if isinstance(streets, str):
-            print("博罗县街道 (字符串格式):")
-            streets_list = streets.split(",")
-            for street in streets_list:
-                print(f"  - {street}")
-        elif isinstance(streets, list):
-            print("博罗县街道 (列表格式):")
-            for street in streets:
-                print(f"  - {street}")
-        else:
-            print(f"未知格式的街道数据: {type(streets)}")
-    else:
-        print("未找到博罗县街道数据")
+
 
 
 def main():
@@ -91,8 +76,6 @@ def main():
     # 测试配置保存功能
     test_config_save()
     
-    # 测试街道地图格式
-    test_streetmaps_format()
 
 
 if __name__ == "__main__":
