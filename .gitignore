@@ -12,3 +12,4 @@ __pycache__/
 debug.py
 
 app/config/SYSCONF_default.yaml
+app/var/
