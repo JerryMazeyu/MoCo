@@ -507,6 +507,9 @@ class GetReceiveRecordService:
             vehicle_last_use = row['rr_date']
             cp_vehicle_group.update_vehicle_info(vehicle_id, {'vehicle_last_use': vehicle_last_use})
 
+        # 过滤掉以下划线开头的列名
+        result_df = result_df[[col for col in result_df.columns if not col.startswith('_')]]
+
         # 返回所有记录
         return result_df
     

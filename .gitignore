@@ -13,3 +13,6 @@ debug.py
 
 app/config/SYSCONF_default.yaml
 app/var/
+.vscode/
+.env
+

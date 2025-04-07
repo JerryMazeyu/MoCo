@@ -4,6 +4,11 @@
 
 import os
 import sys
+try:
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+except Exception as e:
+    pass
+
 import pandas as pd
 
 from app.services.functions import GetRestaurantsService
