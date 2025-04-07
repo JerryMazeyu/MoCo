@@ -4,10 +4,11 @@ import logging
 from typing import Optional, Dict, Any, List, Union
 import oss2  # 阿里云OSS SDK
 
-from app.utils import rp, oss_get_yaml_file, setup_logger
+from app.utils import rp, oss_get_yaml_file
+from app.utils.logger import get_logger
 
-# 日志配置
-LOGGER = setup_logger("moco.log")
+# 获取全局日志对象
+LOGGER = get_logger()
 
 class ConfigWrapper:
     """
@@ -248,8 +249,12 @@ class ConfigService:
         # 将用户配置保存为临时文件
         user_temp_conf_path = rp(f"{self.username}_temp.yaml", folder="config")
         
-        # 确保user_config包含最新的合并配置
+        # 确保user_config包含最新的合并配置，但不包含runtime临时配置
         self.user_config = self._config_dict.copy()
+        
+        # 确保不保存runtime配置
+        if 'runtime' in self.user_config:
+            del self.user_config['runtime']
         
         try:
             # 确保config目录存在
@@ -264,37 +269,37 @@ class ConfigService:
             LOGGER.error(f"保存用户配置失败: {e}")
             return False
     
-    def upload(self):
-        """将配置上传到OSS"""
-        # 首先检查是否已配置OSS
-        oss_config = self.sys_config.get("KEYS", {}).get("oss")
-        if not oss_config:
-            LOGGER.error("未配置OSS，无法上传配置")
-            return False
+    # def upload(self):
+    #     """将配置上传到OSS"""
+    #     # 首先检查是否已配置OSS
+    #     oss_config = self.sys_config.get("KEYS", {}).get("oss")
+    #     if not oss_config:
+    #         LOGGER.error("未配置OSS，无法上传配置")
+    #         return False
         
-        try:
-            # 创建OSS客户端
-            auth = oss2.Auth(oss_config["access_key_id"], oss_config["access_key_secret"])
-            bucket = oss2.Bucket(auth, oss_config["endpoint"], oss_config["bucket_name"])
+    #     try:
+    #         # 创建OSS客户端
+    #         auth = oss2.Auth(oss_config["access_key_id"], oss_config["access_key_secret"])
+    #         bucket = oss2.Bucket(auth, oss_config["endpoint"], oss_config["bucket_name"])
             
-            # 上传用户配置
-            user_temp_conf_path = rp(f"{self.username}_temp.yaml", folder="config")
-            if os.path.exists(user_temp_conf_path):
-                # 读取配置文件内容
-                with open(user_temp_conf_path, "rb") as f:
-                    content = f.read()
+    #         # 上传用户配置
+    #         user_temp_conf_path = rp(f"{self.username}_temp.yaml", folder="config")
+    #         if os.path.exists(user_temp_conf_path):
+    #             # 读取配置文件内容
+    #             with open(user_temp_conf_path, "rb") as f:
+    #                 content = f.read()
                 
-                # 上传到OSS
-                remote_path = f"configs/{self.username}.yaml"
-                bucket.put_object(remote_path, content)
-                LOGGER.info(f"用户配置已上传至OSS: {remote_path}")
-                return True
-            else:
-                LOGGER.error(f"用户临时配置文件不存在: {user_temp_conf_path}")
-                return False
-        except Exception as e:
-            LOGGER.error(f"上传配置到OSS失败: {e}")
-            return False
+    #             # 上传到OSS
+    #             remote_path = f"configs/{self.username}.yaml"
+    #             bucket.put_object(remote_path, content)
+    #             LOGGER.info(f"用户配置已上传至OSS: {remote_path}")
+    #             return True
+    #         else:
+    #             LOGGER.error(f"用户临时配置文件不存在: {user_temp_conf_path}")
+    #             return False
+    #     except Exception as e:
+    #         LOGGER.error(f"上传配置到OSS失败: {e}")
+    #         return False
     
     def refresh(self):
         """刷新配置，从OSS重新下载"""

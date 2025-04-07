@@ -7,7 +7,19 @@ import yaml
 from app.views.components.singleton import global_context
 import app
 import copy  # 导入深拷贝模块
+from app.utils.logger import get_logger
 
+# 获取全局日志对象
+LOGGER = get_logger()
+
+def _get_value_by_path(path: str, data: dict):
+    keys = path.split(".")
+    current = data
+    for k in keys:
+        if not isinstance(current, dict) or k not in current:
+            return None
+        current = current[k]
+    return current
 
 
 class ConfigTreeModel(QStandardItemModel):
@@ -36,80 +48,14 @@ class ConfigTreeModel(QStandardItemModel):
                 tmp_data = {}
                 special_keys = self.config_data.get("SPECIAL", {})
                 for key in special_keys:  # TODO
-                    tmp_data[key] = self.config_data.get(key, {})
+                    tmp_data[key] = _get_value_by_path(key, self.config_data)
+                self._add_items(self.invisibleRootItem(), tmp_data, "SPECIAL")
                 
-                if isinstance(special_data, dict):
-                    # 创建SPECIAL节点
-                    special_item = QStandardItem("SPECIAL")
-                    font = QFont()
-                    font.setBold(True)
-                    font.setPointSize(12)
-                    special_item.setFont(font)
-                    special_item.setForeground(QColor("#0078D7"))
-                    
-                    # 把SPECIAL节点添加到根节点
-                    self.invisibleRootItem().appendRow([special_item, QStandardItem("")])
-                    
-                    # 添加SPECIAL中的键值对
-                    for key, value in special_data.items():
-                        if isinstance(value, dict):
-                            # 添加子级节点
-                            self._add_items(special_item, value, "SPECIAL")
-                        elif isinstance(value, str) and '.' in value:
-                            try:
-                                # 处理引用，找到引用的实际内容
-                                referenced_path = value.split('.')
-                                
-                                # 根据路径获取引用的内容
-                                ref_content = self._get_reference_content(referenced_path)
-                                
-                                # 添加包含引用路径的键
-                                ref_key_item = QStandardItem(f"{key} (引用: {value})")
-                                ref_key_item.setForeground(QColor("#2E7D32"))
-                                font = QFont()
-                                font.setBold(True)
-                                font.setPointSize(10)
-                                ref_key_item.setFont(font)
-                                
-                                # 添加到SPECIAL节点
-                                special_item.appendRow([ref_key_item, QStandardItem("")])
-                                
-                                # 显示引用的内容
-                                if ref_content is not None:
-                                    if isinstance(ref_content, dict):
-                                        # 如果引用的是字典，递归添加所有子项
-                                        self._add_items(ref_key_item, ref_content, "REFERENCE")
-                                    else:
-                                        # 如果引用的是单值，直接添加
-                                        value_item = QStandardItem(str(ref_content))
-                                        ref_key_item.appendRow([QStandardItem("值"), value_item])
-                                else:
-                                    # 引用不存在或路径无效
-                                    error_item = QStandardItem("路径无效或引用不存在")
-                                    error_item.setForeground(QColor("#d9534f"))
-                                    ref_key_item.appendRow([error_item, QStandardItem("")])
-                            except Exception as e:
-                                # 如果引用处理失败，就作为普通值处理
-                                print(f"处理引用失败: {e}")
-                                key_item = QStandardItem(key)
-                                value_item = QStandardItem(str(value))
-                                font = QFont()
-                                font.setBold(True)
-                                key_item.setFont(font)
-                                special_item.appendRow([key_item, value_item])
-                        else:
-                            # 普通值
-                            key_item = QStandardItem(key)
-                            value_item = QStandardItem(str(value))
-                            font = QFont()
-                            font.setBold(True)
-                            key_item.setFont(font)
-                            special_item.appendRow([key_item, value_item])
             else:
                 # 显示全部内容
                 self._add_items(self.invisibleRootItem(), self.config_data)
         except Exception as e:
-            print(f"刷新模型数据时出错: {e}")
+            LOGGER.error(f"刷新模型数据时出错: {e}")
     
     def _get_reference_content(self, path):
         """从路径获取引用的内容"""
@@ -124,12 +70,12 @@ class ConfigTreeModel(QStandardItemModel):
                     # 支持列表索引
                     current = current[int(key)]
                 else:
-                    print(f"引用路径 {'.'.join(path)} 无效，在 {key} 处中断")
+                    LOGGER.error(f"引用路径 {'.'.join(path)} 无效，在 {key} 处中断")
                     return None
             
             return current
         except Exception as e:
-            print(f"获取引用内容时出错: {e}")
+            LOGGER.error(f"获取引用内容时出错: {e}")
             return None
     
     def _add_items(self, parent_item, config_dict, parent_key=""):
@@ -173,7 +119,7 @@ class Tab1(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.main_window = parent
+        self.main_window_ref = parent
         self.config_file = None
         self.default_config_file = None
         self.config_data = {}
@@ -328,19 +274,20 @@ class Tab1(QWidget):
         try:
             # 尝试从配置模块导入
             from app.config.config import CONF
+            
             self.config_data = CONF._config_dict
-            print("成功从CONF加载配置")
+            LOGGER.info("成功从CONF加载配置")
         except Exception as e:
-            print(f"加载配置模块失败: {e}，使用默认配置")
-            # 使用默认配置
-            self.config_data = self.get_default_config()
-            QMessageBox.warning(self, "加载配置失败", 
-                                f"加载配置数据失败，已加载默认配置。\n错误详情: {str(e)}")
+            LOGGER.error(f"加载配置模块失败: {e}，使用默认配置")
+            raise ValueError(f"加载配置数据失败。\n错误详情: {str(e)}")
+            # # 使用默认配置
+            # self.config_data = self.get_default_config()
+            # QMessageBox.warning(self, "加载配置失败", 
+            #                     f"加载配置数据失败，已加载默认配置。\n错误详情: {str(e)}")
         
         # 将配置深拷贝到global_context中
         global_context.data['CONF'] = copy.deepcopy(self.config_data)
-        # 同时更新app模块中的全局上下文
-        app.global_context['config'] = copy.deepcopy(self.config_data)
+        global_context.data['CONF_OBJ'] = CONF
         
         # 更新模型
         self.config_model.load_config(self.config_data)
@@ -408,32 +355,7 @@ class Tab1(QWidget):
     def save_config(self):
         """保存配置到文件"""
         try:
-            # 从模型中提取修改后的值到配置数据并同步到global_context
-            self.extract_values_from_model()
-            
-            # 将更新后的配置同步到global_context
-            global_context.data['CONF'] = copy.deepcopy(self.config_data)
-            # 同时更新app模块中的全局上下文
-            app.global_context['config'] = copy.deepcopy(self.config_data)
-            
-            # 尝试保存到配置服务
-            try:
-                from app.config.config import CONF
-                CONF._config_dict = self.config_data
-                success = CONF.save()
-                
-                if success:
-                    QMessageBox.information(self, "保存成功", "配置已成功保存")
-                else:
-                    QMessageBox.warning(self, "保存失败", "保存配置失败，请查看日志")
-            except Exception as e:
-                print(f"保存到配置服务失败: {e}")
-                # 如果保存到配置服务失败，仍然更新全局上下文
-                QMessageBox.information(self, "保存成功", "配置已保存到全局上下文。\n注意：未能保存到配置文件。")
-            
-            # 打印保存的配置内容
-            print("保存的配置:")
-            print(yaml.dump(self.config_data, allow_unicode=True))
+            global_context.data['CONF_OBJ'].save()
         except Exception as e:
             QMessageBox.critical(self, "保存失败", f"保存配置时出错：{str(e)}")
     
@@ -443,7 +365,7 @@ class Tab1(QWidget):
             # 实现配置提取的基本逻辑
             self._extract_from_item(self.config_model.invisibleRootItem(), self.config_data)
         except Exception as e:
-            print(f"提取配置值时出错: {e}")
+            LOGGER.error(f"提取配置值时出错: {e}")
     
     def _extract_from_item(self, item, config_dict):
         """递归从模型项提取数据到配置字典"""
@@ -489,7 +411,7 @@ class Tab1(QWidget):
                     
                     config_dict[key] = value
         except Exception as e:
-            print(f"从项提取数据时出错: {e}")
+            LOGGER.error(f"从项提取数据时出错: {e}")
     
     def reset_config(self):
         """恢复默认配置"""
@@ -502,15 +424,10 @@ class Tab1(QWidget):
         if reply == QMessageBox.Yes:
             try:
                 # 重新加载默认配置
-                print("正在重置配置...")
-                self.config_data = self.get_default_config()
-                # 更新全局上下文
-                global_context.data['CONF'] = copy.deepcopy(self.config_data)
-                # 同时更新app模块中的全局上下文
-                app.global_context['config'] = copy.deepcopy(self.config_data)
-                # 更新模型
-                self.config_model.load_config(self.config_data)
-                self.tree_view.expandAll()
+                LOGGER.info("正在重置配置...")
+                global_context.data['CONF_OBJ'].refresh()
+                self.load_my_config()
+                
                 QMessageBox.information(self, "重置成功", "配置已恢复为默认值并同步到全局上下文。")
             except Exception as e:
                 QMessageBox.critical(self, "重置失败", f"恢复默认配置时出错：{str(e)}") 

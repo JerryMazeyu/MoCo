@@ -5,7 +5,6 @@ from PyQt5.QtCore import Qt, QSize, QPoint, QRect
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QPainter
 import pandas as pd
 from app.views.components.xlsxviewer import XlsxViewerWidget
-from app.views.components.message_console import MessageConsoleWidget
 
 
 # 自定义流式布局类，用于自适应地排列API测试项
@@ -189,7 +188,10 @@ class ApiTestWidget(QWidget):
         if not api_name:
             return
         
-        print(f"正在测试 {api_name} 连通性...")
+        # 获取全局logger
+        from app.utils.logger import get_logger
+        logger = get_logger()
+        logger.info(f"正在测试 {api_name} 连通性...")
         
         # 模拟成功/失败结果 (实际应调用真实API测试)
         # 这里简单地将所有API测试设为成功
@@ -205,7 +207,7 @@ class ApiTestWidget(QWidget):
         
         # 输出结果
         result = "成功" if success else "失败"
-        print(f"{api_name} 测试{result}")
+        logger.info(f"{api_name} 测试{result}")
         
         return success
 
@@ -215,7 +217,8 @@ class Tab2(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.main_window = parent
+        # 先保存parent引用，但不直接使用主窗口的方法
+        self.main_window_ref = parent
         self.cp_cities = []  # 当前CP的城市列表
         self.initUI()
     
@@ -360,8 +363,10 @@ class Tab2(QWidget):
         
         self.layout.addWidget(control_frame)
         
-        # 替换标准输出
-        # sys.stdout = StdoutRedirector(self.message_console)
+        # 使用全局日志记录器记录信息，不需要重定向标准输出
+        # 获取全局logger
+        from app.utils.logger import get_logger
+        self.logger = get_logger()
         
         # 加载示例数据
         self.load_sample_data()
@@ -381,8 +386,8 @@ class Tab2(QWidget):
         self.xlsx_viewer.load_data(data=df)
         
         # 输出一些初始消息到控制台
-        print("餐厅获取模块已初始化")
-        print("请选择CP并选择城市，然后点击'餐厅获取'按钮")
+        self.logger.info("餐厅获取模块已初始化")
+        self.logger.info("请选择CP并选择城市，然后点击'餐厅获取'按钮")
     
     def select_cp(self):
         """选择/切换CP"""
@@ -397,8 +402,8 @@ class Tab2(QWidget):
         self.cp_button.setText(f"已选择CP为：{selected_cp}")
         
         # 通知主窗口更新CP
-        if self.main_window:
-            self.main_window.set_current_cp(selected_cp)
+        if self.main_window_ref:
+            self.main_window_ref.set_current_cp(selected_cp)
         
         # 更新城市下拉框
         self.update_cities(selected_cp)
@@ -439,7 +444,7 @@ class Tab2(QWidget):
             self.city_combo.setEnabled(True)
             self.get_restaurant_button.setEnabled(True)
         except Exception as e:
-            print(f"更新城市列表时出错: {str(e)}")
+            self.logger.error(f"更新城市列表时出错: {str(e)}")
             self.cp_cities = []
             self.city_combo.clear()
             self.city_combo.setEnabled(False)
@@ -467,7 +472,7 @@ class Tab2(QWidget):
                     return
             
             # 模拟获取餐厅信息
-            print(f"正在获取 {city} 的餐厅信息...")
+            self.logger.info(f"正在获取 {city} 的餐厅信息...")
             
             # 模拟数据获取延迟
             import time
@@ -488,9 +493,9 @@ class Tab2(QWidget):
             self.xlsx_viewer.load_data(data=df)
             
             # 打印完成消息
-            print(f"{city} 餐厅信息获取完成，共 {len(df)} 条记录")
+            self.logger.info(f"{city} 餐厅信息获取完成，共 {len(df)} 条记录")
         except Exception as e:
-            print(f"获取餐厅信息时出错: {str(e)}")
+            self.logger.error(f"获取餐厅信息时出错: {str(e)}")
             QMessageBox.critical(self, "获取失败", f"获取餐厅信息时出错: {str(e)}")
     
     def check_apis(self):
@@ -498,7 +503,7 @@ class Tab2(QWidget):
         all_ok = True
         for api_name, status in self.api_test_widget.api_status.items():
             if not status:
-                print(f"{api_name} 未通过测试")
+                self.logger.warning(f"{api_name} 未通过测试")
                 all_ok = False
         
         return all_ok
@@ -516,11 +521,11 @@ class Tab2(QWidget):
             try:
                 # 加载选择的文件
                 self.xlsx_viewer.load_data(file_path)
-                print(f"餐厅数据已从 {file_path} 导入")
+                self.logger.info(f"餐厅数据已从 {file_path} 导入")
             except Exception as e:
                 QMessageBox.critical(self, "导入错误", f"导入数据时出错：{str(e)}")
         except Exception as e:
-            print(f"导入餐厅数据时出错: {str(e)}")
+            self.logger.error(f"导入餐厅数据时出错: {str(e)}")
             QMessageBox.critical(self, "导入失败", f"导入餐厅数据时出错: {str(e)}")
     
     def update_cp(self, cp_id):
@@ -535,7 +540,7 @@ class Tab2(QWidget):
                 self.city_combo.setEnabled(False)
                 self.get_restaurant_button.setEnabled(False)
         except Exception as e:
-            print(f"更新CP时出错: {str(e)}")
+            self.logger.error(f"更新CP时出错: {str(e)}")
             self.cp_button.setText("未选择CP")
             self.city_combo.clear()
             self.city_combo.setEnabled(False)
