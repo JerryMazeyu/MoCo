@@ -1,10 +1,22 @@
+# ==================餐厅收集==================
+
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                             QLabel, QFrame, QComboBox, QGroupBox, QGridLayout,
-                            QFileDialog, QMessageBox, QLayout)
+                            QFileDialog, QMessageBox, QLayout, QListWidget, QDialog)
 from PyQt5.QtCore import Qt, QSize, QPoint, QRect
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QPainter
 import pandas as pd
 from app.views.components.xlsxviewer import XlsxViewerWidget
+from app.views.components.singleton import global_context
+from app.utils.logger import get_logger
+from app.services.instances.restaurant import youdao_translate, kimi_restaurant_type_analysis
+from app.services.instances.restaurant import query_gaode
+from app.services.instances.cp import CP
+from app.config.config import CONF
+import oss2
+
+# 获取全局日志对象
+LOGGER = get_logger()
 
 
 # 自定义流式布局类，用于自适应地排列API测试项
@@ -112,8 +124,8 @@ class ApiTestWidget(QWidget):
             "高德API": False,
             "有道API": False,
             "KIMI API": False,
-            "爱企查API": False,
-            "其他API": False
+            "阿里OSS": False,
+            "爱企查API": False
         }
         self.initUI()
     
@@ -188,14 +200,72 @@ class ApiTestWidget(QWidget):
         if not api_name:
             return
         
-        # 获取全局logger
-        from app.utils.logger import get_logger
-        logger = get_logger()
-        logger.info(f"正在测试 {api_name} 连通性...")
+        LOGGER.info(f"正在测试 {api_name} 连通性...")
         
-        # 模拟成功/失败结果 (实际应调用真实API测试)
-        # 这里简单地将所有API测试设为成功
-        success = True
+        success = False
+        try:
+            # 根据API类型进行相应的测试
+            if api_name == "高德API":
+                # 测试高德地图API
+                if hasattr(CONF, 'KEYS') and hasattr(CONF.KEYS, 'gaode_keys') and CONF.KEYS.gaode_keys:
+                    key = CONF.KEYS.gaode_keys[0]
+                    result = query_gaode(key, "北京")
+                    success = result is not None and 'name' in result
+                else:
+                    LOGGER.error("未找到高德地图API密钥")
+            
+            elif api_name == "有道API":
+                # 测试有道翻译API
+                if hasattr(CONF, 'KEYS') and hasattr(CONF.KEYS, 'youdao_keys') and CONF.KEYS.youdao_keys:
+                    key = CONF.KEYS.youdao_keys[0]
+                    result = youdao_translate("测试文本", 'zh', 'en', key)
+                    success = result is not None
+                else:
+                    LOGGER.error("未找到有道翻译API密钥")
+            
+            elif api_name == "KIMI API":
+                # 测试KIMI API
+                if hasattr(CONF, 'KEYS') and hasattr(CONF.KEYS, 'kimi_keys') and CONF.KEYS.kimi_keys:
+                    key = CONF.KEYS.kimi_keys[0]
+                    rest_info = {
+                        'name': '测试餐厅',
+                        'address': '北京市海淀区',
+                        'rest_type': '中餐/快餐'
+                    }
+                    result = kimi_restaurant_type_analysis(rest_info, key)
+                    success = result is not None
+                else:
+                    LOGGER.error("未找到KIMI API密钥")
+            
+            elif api_name == "阿里OSS":
+                # 测试阿里云OSS连接
+                if hasattr(CONF, 'KEYS') and hasattr(CONF.KEYS, 'oss'):
+                    oss_conf = CONF.KEYS.oss
+                    access_key_id = oss_conf.get('access_key_id')
+                    access_key_secret = oss_conf.get('access_key_secret')
+                    endpoint = oss_conf.get('endpoint')
+                    bucket_name = oss_conf.get('bucket_name')
+                    region = oss_conf.get('region')
+                    
+                    if all([access_key_id, access_key_secret, endpoint, bucket_name]):
+                        auth = oss2.Auth(access_key_id, access_key_secret)
+                        bucket = oss2.Bucket(auth, endpoint, bucket_name, region=region)
+                        # 尝试列出前缀为CPs的对象
+                        result = list(oss2.ObjectIterator(bucket, prefix='CPs/', max_keys=1))
+                        success = True  # 如果没有异常，则认为连接成功
+                    else:
+                        LOGGER.error("阿里云OSS配置不完整")
+                else:
+                    LOGGER.error("未找到阿里云OSS配置")
+            
+            elif api_name == "爱企查API":
+                # 爱企查API测试 - 暂未实现，可以根据实际情况添加
+                LOGGER.warning("爱企查API测试功能尚未实现")
+                success = False
+        
+        except Exception as e:
+            LOGGER.error(f"{api_name} 测试失败: {e}")
+            success = False
         
         # 更新状态
         self.api_status[api_name] = success
@@ -207,9 +277,52 @@ class ApiTestWidget(QWidget):
         
         # 输出结果
         result = "成功" if success else "失败"
-        logger.info(f"{api_name} 测试{result}")
+        LOGGER.info(f"{api_name} 测试{result}")
         
         return success
+
+
+# CP选择对话框
+class CPSelectDialog(QDialog):
+    def __init__(self, cp_list, parent=None):
+        super().__init__(parent)
+        self.cp_list = cp_list
+        self.selected_cp = None
+        self.initUI()
+    
+    def initUI(self):
+        self.setWindowTitle("选择CP")
+        self.setMinimumWidth(300)
+        
+        layout = QVBoxLayout(self)
+        
+        # 创建列表控件显示CP
+        self.list_widget = QListWidget()
+        for cp in self.cp_list:
+            self.list_widget.addItem(f"{cp.get('cp_name')} (ID: {cp.get('cp_id')})")
+        
+        # 添加按钮
+        button_layout = QHBoxLayout()
+        self.ok_button = QPushButton("确定")
+        self.cancel_button = QPushButton("取消")
+        
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+        
+        button_layout.addStretch()
+        button_layout.addWidget(self.ok_button)
+        button_layout.addWidget(self.cancel_button)
+        
+        layout.addWidget(QLabel("请选择CP:"))
+        layout.addWidget(self.list_widget)
+        layout.addLayout(button_layout)
+    
+    def get_selected_cp(self):
+        selected_items = self.list_widget.selectedItems()
+        if selected_items:
+            index = self.list_widget.row(selected_items[0])
+            return self.cp_list[index]
+        return None
 
 
 class Tab2(QWidget):
@@ -220,6 +333,7 @@ class Tab2(QWidget):
         # 先保存parent引用，但不直接使用主窗口的方法
         self.main_window_ref = parent
         self.cp_cities = []  # 当前CP的城市列表
+        self.current_cp = None  # 当前选择的CP
         self.initUI()
     
     def initUI(self):
@@ -386,55 +500,96 @@ class Tab2(QWidget):
         self.xlsx_viewer.load_data(data=df)
         
         # 输出一些初始消息到控制台
-        self.logger.info("餐厅获取模块已初始化")
-        self.logger.info("请选择CP并选择城市，然后点击'餐厅获取'按钮")
+        LOGGER.info("餐厅获取模块已初始化")
+        LOGGER.info("请选择CP并选择城市，然后点击'餐厅获取'按钮")
     
     def select_cp(self):
         """选择/切换CP"""
-        # 模拟CP选择
-        # 实际应从配置或主窗口获取CP列表
-        cp_list = ["CP001", "CP002", "CP003", "CP004"]
-        
-        # 简化为直接选择第一个CP
-        selected_cp = cp_list[0]
-        
-        # 更新CP按钮文本
-        self.cp_button.setText(f"已选择CP为：{selected_cp}")
-        
-        # 通知主窗口更新CP
-        if self.main_window_ref:
-            self.main_window_ref.set_current_cp(selected_cp)
-        
-        # 更新城市下拉框
-        self.update_cities(selected_cp)
+        try:
+            # 获取OSS上的CP列表
+            cp_list = CP.list()
+            
+            if not cp_list:
+                QMessageBox.warning(self, "CP列表为空", "未找到任何CP数据，请先添加CP。")
+                return
+            
+            # 显示CP选择对话框
+            dialog = CPSelectDialog(cp_list, self)
+            if dialog.exec_() == QDialog.Accepted:
+                selected_cp = dialog.get_selected_cp()
+                if selected_cp:
+                    # 检查是否在配置的CP列表中
+                    cp_id = selected_cp.get('cp_id')
+                    cp_name = selected_cp.get('cp_name')
+                    
+                    conf_cp_ids = []
+                    if hasattr(CONF, 'BUSINESS') and hasattr(CONF.BUSINESS, 'CP'):
+                        conf_cp_ids = CONF.BUSINESS.CP.get('cp_id', [])
+                    
+                    if cp_id in conf_cp_ids:
+                        LOGGER.info(f"选择的CP {cp_name} (ID: {cp_id}) 在配置中存在")
+                    else:
+                        LOGGER.warning(f"选择的CP {cp_name} (ID: {cp_id}) 不在配置中")
+                        reply = QMessageBox.question(
+                            self, 'CP不在配置中', 
+                            f'选择的CP "{cp_name}" 不在配置列表中。是否继续使用？',
+                            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                        )
+                        if reply == QMessageBox.No:
+                            return
+                    
+                    # 保存选择的CP到运行时配置
+                    if not hasattr(CONF, 'runtime'):
+                        setattr(CONF, 'runtime', type('RuntimeConfig', (), {}))
+                    
+                    CONF.runtime.CP = selected_cp
+                    self.current_cp = selected_cp
+                    
+                    # 更新CP按钮文本
+                    self.cp_button.setText(f"已选择CP为：{cp_name}")
+                    
+                    # 通知主窗口更新CP
+                    if self.main_window_ref:
+                        self.main_window_ref.set_current_cp(cp_id)
+                    
+                    # 更新城市下拉框
+                    self.update_cities(cp_id)
+        except Exception as e:
+            LOGGER.error(f"选择CP时出错: {e}")
+            QMessageBox.critical(self, "选择CP失败", f"选择CP时出错: {e}")
     
     def update_cities(self, cp_id):
         """根据CP ID更新城市列表"""
         try:
-            # 尝试从应用全局上下文获取CP信息
-            import app
-            cp_cities_map = {}
+            # 获取当前选择的CP中的城市信息
+            cities = []
             
-            if 'config' in app.global_context and app.global_context['config']:
-                config = app.global_context['config']
-                if 'BUSINESS' in config and 'CP' in config['BUSINESS']:
-                    cp_data = config['BUSINESS']['CP']
-                    for cp_key in cp_data:
-                        if cp_key != 'cp_id' and isinstance(cp_data[cp_key], dict) and 'cities' in cp_data[cp_key]:
-                            cp_cities_map[cp_key] = cp_data[cp_key]['cities']
+            # 首先尝试从CONF.runtime.CP获取城市列表
+            if hasattr(CONF, 'runtime') and hasattr(CONF.runtime, 'CP'):
+                # 这里假设CP数据中有cities字段，如果没有则需要修改
+                cities = CONF.runtime.CP.get('cities', [])
             
-            # 如果从全局上下文未获取到，使用默认值
-            if not cp_cities_map:
-                # 模拟城市列表
-                cp_cities_map = {
-                    "CP001": ["北京", "上海", "广州", "深圳"],
-                    "CP002": ["成都", "重庆", "武汉", "长沙"],
-                    "CP003": ["杭州", "南京", "苏州", "宁波"],
-                    "CP004": ["西安", "郑州", "济南", "青岛"]
-                }
+            # 如果未获取到，则尝试从CONF.BUSINESS.CP.{cp_id}获取
+            if not cities and hasattr(CONF, 'BUSINESS') and hasattr(CONF.BUSINESS, 'CP'):
+                cp_data = getattr(CONF.BUSINESS.CP, cp_id, None)
+                if cp_data and hasattr(cp_data, 'cities'):
+                    cities = cp_data.cities
+            
+            # 如果还是未获取到，使用默认值
+            if not cities:
+                # 从配置中获取默认城市列表
+                cp_cities_map = {}
+                
+                if hasattr(CONF, 'BUSINESS') and hasattr(CONF.BUSINESS, 'CP'):
+                    for cp_key in CONF.BUSINESS.CP._config_dict:
+                        if cp_key != 'cp_id' and 'cities' in CONF.BUSINESS.CP._config_dict[cp_key]:
+                            cp_cities_map[cp_key] = CONF.BUSINESS.CP._config_dict[cp_key]['cities']
+                
+                # 如果配置中有此CP的城市列表
+                cities = cp_cities_map.get(cp_id, [])
             
             # 更新城市列表
-            self.cp_cities = cp_cities_map.get(cp_id, [])
+            self.cp_cities = cities
             
             # 更新下拉框
             self.city_combo.clear()
@@ -444,7 +599,7 @@ class Tab2(QWidget):
             self.city_combo.setEnabled(True)
             self.get_restaurant_button.setEnabled(True)
         except Exception as e:
-            self.logger.error(f"更新城市列表时出错: {str(e)}")
+            LOGGER.error(f"更新城市列表时出错: {str(e)}")
             self.cp_cities = []
             self.city_combo.clear()
             self.city_combo.setEnabled(False)
@@ -472,7 +627,7 @@ class Tab2(QWidget):
                     return
             
             # 模拟获取餐厅信息
-            self.logger.info(f"正在获取 {city} 的餐厅信息...")
+            LOGGER.info(f"正在获取 {city} 的餐厅信息...")
             
             # 模拟数据获取延迟
             import time
@@ -493,9 +648,9 @@ class Tab2(QWidget):
             self.xlsx_viewer.load_data(data=df)
             
             # 打印完成消息
-            self.logger.info(f"{city} 餐厅信息获取完成，共 {len(df)} 条记录")
+            LOGGER.info(f"{city} 餐厅信息获取完成，共 {len(df)} 条记录")
         except Exception as e:
-            self.logger.error(f"获取餐厅信息时出错: {str(e)}")
+            LOGGER.error(f"获取餐厅信息时出错: {str(e)}")
             QMessageBox.critical(self, "获取失败", f"获取餐厅信息时出错: {str(e)}")
     
     def check_apis(self):
@@ -503,7 +658,7 @@ class Tab2(QWidget):
         all_ok = True
         for api_name, status in self.api_test_widget.api_status.items():
             if not status:
-                self.logger.warning(f"{api_name} 未通过测试")
+                LOGGER.warning(f"{api_name} 未通过测试")
                 all_ok = False
         
         return all_ok
@@ -521,26 +676,51 @@ class Tab2(QWidget):
             try:
                 # 加载选择的文件
                 self.xlsx_viewer.load_data(file_path)
-                self.logger.info(f"餐厅数据已从 {file_path} 导入")
+                LOGGER.info(f"餐厅数据已从 {file_path} 导入")
             except Exception as e:
                 QMessageBox.critical(self, "导入错误", f"导入数据时出错：{str(e)}")
         except Exception as e:
-            self.logger.error(f"导入餐厅数据时出错: {str(e)}")
+            LOGGER.error(f"导入餐厅数据时出错: {str(e)}")
             QMessageBox.critical(self, "导入失败", f"导入餐厅数据时出错: {str(e)}")
     
     def update_cp(self, cp_id):
         """更新CP选择按钮的文本并更新城市列表"""
         try:
             if cp_id:
-                self.cp_button.setText(f"已选择CP为：{cp_id}")
-                self.update_cities(cp_id)
+                # 尝试从OSS获取CP信息
+                cp = CP.get_by_id(cp_id)
+                if cp:
+                    cp_name = cp.inst.cp_name
+                    self.cp_button.setText(f"已选择CP为：{cp_name}")
+                    
+                    # 保存到运行时配置
+                    if not hasattr(CONF, 'runtime'):
+                        setattr(CONF, 'runtime', type('RuntimeConfig', (), {}))
+                    
+                    # 从CP实例创建字典
+                    cp_data = {}
+                    for key, value in cp.inst.__dict__.items():
+                        if not key.startswith('_'):
+                            cp_data[key] = value
+                    
+                    CONF.runtime.CP = cp_data
+                    self.current_cp = cp_data
+                    
+                    # 更新城市列表
+                    self.update_cities(cp_id)
+                else:
+                    LOGGER.error(f"未找到ID为{cp_id}的CP")
+                    self.cp_button.setText("未选择CP")
+                    self.city_combo.clear()
+                    self.city_combo.setEnabled(False)
+                    self.get_restaurant_button.setEnabled(False)
             else:
                 self.cp_button.setText("未选择CP")
                 self.city_combo.clear()
                 self.city_combo.setEnabled(False)
                 self.get_restaurant_button.setEnabled(False)
         except Exception as e:
-            self.logger.error(f"更新CP时出错: {str(e)}")
+            LOGGER.error(f"更新CP时出错: {str(e)}")
             self.cp_button.setText("未选择CP")
             self.city_combo.clear()
             self.city_combo.setEnabled(False)

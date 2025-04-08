@@ -1,7 +1,7 @@
 import sys
-import os 
+import os
 # 添加项目根目录到 Python 路径
-# sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, 
                             QVBoxLayout, QSplitter, QStackedWidget)
 from PyQt5.QtCore import Qt

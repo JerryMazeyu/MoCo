@@ -5,12 +5,11 @@ from app.utils import rp
 from app.utils.logger import setup_logger
 
 
-LOGGER = setup_logger("moco.log")
+LOGGER = setup_logger()
 
 with open(rp("SYSCONF_default.yaml", folder="config"), 'r', encoding='utf-8') as f:
     SYS_CONF = yaml.safe_load(f)
 OSS_CONF = SYS_CONF['KEYS']['oss']
-
 
 
 def oss_get_yaml_file(file_path):
@@ -50,4 +49,20 @@ def oss_get_json_file(file_path):
     except Exception as e:
         LOGGER.error(f"[OSS] 获取文件失败: {e}")
         return None
+
+def oss_put_json_file(file_path, data):
+    try:
+        access_key_id = OSS_CONF['access_key_id']
+        access_key_secret = OSS_CONF['access_key_secret']
+        endpoint = OSS_CONF['endpoint']
+        bucket_name = OSS_CONF['bucket_name']
+        region = OSS_CONF['region']
+        auth = oss2.Auth(access_key_id, access_key_secret)
+        bucket = oss2.Bucket(auth, endpoint, bucket_name, region=region)
+        bucket.put_object(file_path, json.dumps(data, ensure_ascii=False))
+        LOGGER.info(f"[OSS] 成功上传文件: {file_path}")
+    except Exception as e:
+        LOGGER.error(f"[OSS] 上传文件失败: {e}")
+        return False
+    return True
 
