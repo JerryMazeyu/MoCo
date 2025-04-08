@@ -427,23 +427,14 @@ class VehicleGroup(BaseGroup):
         :param vehicle_type: 车辆类型
         :return: 筛选后的车辆组合
         """
-        LOGGER.info(f"开始按类型筛选车辆: {vehicle_type}")
-        LOGGER.info(f"筛选前车辆总数: {len(self.members)}")
+        print(f"Filtering vehicles by type: {vehicle_type}")
+        print(f"Total vehicles before filtering: {len(self.members)}")
         
         filtered_vehicles = []
         for v in self.members:
-            LOGGER.info(f"检查车辆 {v.info.get('vehicle_license_plate', 'Unknown')}")
-            LOGGER.info(f"车辆信息: {v.info}")
-            
-            if 'vehicle_type' not in v.info:
-                LOGGER.warning(f"车辆 {v.info.get('vehicle_license_plate', 'Unknown')} 缺少 vehicle_type 字段")
-                continue
-                
-            if v.info['vehicle_type'] == vehicle_type:
+            if 'vehicle_type' in v.info and v.info['vehicle_type'] == vehicle_type:
                 filtered_vehicles.append(v)
-                LOGGER.info(f"车辆 {v.info['vehicle_license_plate']} 匹配类型 {vehicle_type}")
-            else:
-                LOGGER.info(f"车辆 {v.info['vehicle_license_plate']} 类型不匹配 (当前类型: {v.info['vehicle_type']})")
+                print(f"Vehicle {v.info['vehicle_license_plate']} matched type {vehicle_type}")
         
         filtered_group = VehicleGroup(
             vehicles=filtered_vehicles,
@@ -452,7 +443,7 @@ class VehicleGroup(BaseGroup):
             group_type=self.group_type
         )
         
-        LOGGER.info(f"筛选后车辆总数: {len(filtered_group.members)}")
+        print(f"Total vehicles after filtering: {len(filtered_group.members)}")
         return filtered_group
     
     def filter_by_cp(self, cp_id: str) -> 'VehicleGroup':
@@ -488,27 +479,8 @@ class VehicleGroup(BaseGroup):
         :param date: 日期字符串，格式为 'YYYY-MM-DD'，默认为当前日期
         :return: 筛选后的车辆组合
         """
-        LOGGER.info(f"开始筛选可用车辆，日期: {date or '当前日期'}")
-        LOGGER.info(f"筛选前车辆总数: {len(self.members)}")
-        
-        filtered_vehicles = []
-        for v in self.members:
-            LOGGER.info(f"检查车辆 {v.info.get('vehicle_license_plate', 'Unknown')} 是否可用")
-            if v.is_available(date):
-                filtered_vehicles.append(v)
-                LOGGER.info(f"车辆 {v.info['vehicle_license_plate']} 可用")
-            else:
-                LOGGER.info(f"车辆 {v.info['vehicle_license_plate']} 不可用")
-        
-        filtered_group = VehicleGroup(
-            vehicles=filtered_vehicles,
-            model=self.model,
-            conf=self.conf,
-            group_type=self.group_type
-        )
-        
-        LOGGER.info(f"筛选后可用车辆总数: {len(filtered_group.members)}")
-        return filtered_group
+        filtered_vehicles = self.filter(lambda v: v.is_available(date))
+        return filtered_vehicles
     
     def get_by_id(self, vehicle_id: str) -> Optional[Vehicle]:
         """
