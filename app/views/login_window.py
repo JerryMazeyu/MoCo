@@ -6,6 +6,65 @@ from PyQt5.QtGui import QPixmap, QIcon, QPalette, QBrush, QColor
 from app.utils.file_io import rp
 # from app.controllers.flow_login import validate_user_info
 from PyQt5.QtCore import QSize, Qt
+from app.utils.logger import setup_logger
+from app.utils.oss import oss_get_json_file
+from app.utils.hash import hash_text
+
+
+class LoginController:
+    def __init__(self):
+        self.logger = setup_logger()
+    
+    def validate_user_info(self, username, password):
+        """
+        验证用户信息
+        
+        Args:
+            username (str): 用户名
+            password (str): 用户输入的密码（未哈希）
+            
+        Returns:
+            tuple: (bool, str) - (是否验证成功, 用户类型/角色)
+        """
+        try:
+            # 获取用户信息文件
+            user_info = oss_get_json_file('login_info.json')
+            if not user_info:
+                self.logger.error("无法获取用户信息文件")
+                return False, None
+            
+            # 对输入的密码进行哈希
+            hashed_password = hash_text(password)
+            
+            # 验证用户身份
+            for user_key, user_data in user_info.items():
+                if user_data["username"] == username and user_data["password"] == hashed_password:
+                    self.logger.info(f"用户 {username} 验证成功")
+                    return True, user_key
+            
+            self.logger.info(f"用户 {username} 验证失败")
+            return False, None
+            
+        except Exception as e:
+            self.logger.error(f"验证用户信息时发生错误: {e}")
+            return False, None
+
+# 提供便捷的函数接口
+def validate_user_info(username, password):
+    """
+    验证用户信息的便捷函数
+    
+    Args:
+        username (str): 用户名
+        password (str): 用户输入的密码（未哈希）
+        
+    Returns:
+        tuple: (bool, str) - (是否验证成功, 用户类型/角色)
+    """
+    controller = LoginController()
+    return controller.validate_user_info(username, password) 
+
+
 
 class PasswordLineEdit(QLineEdit):
     """自定义密码输入框，集成显示/隐藏密码按钮"""
@@ -193,8 +252,6 @@ class LoginWindow(QWidget):
             return
         
         try:
-            def validate_user_info(username, password):
-                return True, "huizhou"
             # 使用控制器验证用户身份
             is_valid, user_role = validate_user_info(username, password)
             
