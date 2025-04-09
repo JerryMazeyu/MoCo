@@ -13,11 +13,11 @@ from app.utils.file_io import rp
 from app.config.config import CONF
 from app.utils.query import robust_query
 import re
-
+import math
 # 设置日志
 LOGGER = setup_logger("moco.log")
 
-class GetRestaurantsService:
+class GetRestaurantService:
     """
     餐厅信息获取服务，用于从各种API中获取餐厅信息
     """
@@ -208,9 +208,10 @@ class GetRestaurantsService:
                             'rest_contact_phone': i.get('tel') if i.get('tel') is not None else '',
                             'rest_location': i.get('location') if i.get('location') is not None else '',
                             'adname': i.get('adname') if i.get('adname') is not None else '',
-                            'rest_type': i.get('type') if i.get('type') is not None else '',
+                            'rest_type_gaode': i.get('type') if i.get('type') is not None else '',
                             'distance': i.get('distance') if i.get('distance') is not None else '',
-                            'rest_city': i.get('cityname') if i.get('cityname') is not None else ''
+                            'rest_city': i.get('cityname') if i.get('cityname') is not None else '',
+                            'rest_type': keywords
                         }
                         datalist.append(dict1)
                     if len(l)<20: ## 当最后一次小于20的话说明最后一页，退出
@@ -310,7 +311,56 @@ class GetRestaurantsService:
         
         LOGGER.info(f"去重前餐厅信息: {count_before}条，去重后: {count_after}条，去除了 {count_before - count_after} 条重复信息")
 
-    
+    def _haversine(self,coord1, coord2):
+        """计算两个经纬度之间的距离（单位：公里）"""
+        R = 6371  # 地球半径，单位为公里
+        
+        # 处理第一个坐标
+        try:
+            if isinstance(coord1, tuple) and len(coord1) == 2:
+                lat1, lon1 = coord1
+            elif isinstance(coord1, list) and len(coord1) == 2:
+                lat1, lon1 = coord1
+            elif isinstance(coord1, str):
+                lat1, lon1 = map(float, coord1.split(','))
+            else:
+                print(f"无效的坐标1格式: {coord1}")
+                return 0
+        except Exception as e:
+            print(f"处理坐标1出错: {e}, 坐标值: {coord1}")
+            return 0
+        
+        # 处理第二个坐标
+        try:
+            if isinstance(coord2, tuple) and len(coord2) == 2:
+                lat2, lon2 = coord2
+            elif isinstance(coord2, list) and len(coord2) == 2:
+                lat2, lon2 = coord2
+            elif isinstance(coord2, str):
+                # 确保是字符串且包含逗号
+                lat2, lon2 = map(float, coord2.split(','))
+            else:
+                print(f"无效的坐标2格式: {coord2}")
+                return 0
+        except Exception as e:
+            print(f"处理坐标2出错: {e}, 坐标值: {coord2}")
+            return 0
+
+        # 确保所有值都是数值类型
+        try:
+            lat1, lon1, lat2, lon2 = float(lat1), float(lon1), float(lat2), float(lon2)
+            
+            dlat = math.radians(lat2 - lat1)
+            dlon = math.radians(lon2 - lon1)
+
+            a = (math.sin(dlat / 2) ** 2 +
+                math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
+            c = 2 * math.asin(math.sqrt(a))
+            return R * c  # 返回距离，单位为公里
+        except Exception as e:
+            print(f"计算距离出错: {e}, 坐标值: {lat1},{lon1} 和 {lat2},{lon2}")
+            return 0
+        
     def _info_to_restaurant(self, model_class=None, cp_id=None) -> None:
         """
         将餐厅信息转换为餐厅实体
@@ -404,6 +454,30 @@ class GetRestaurantsService:
         # 去重
         self._dedup()
         
+
+        # 计算距离
+        # 首先检查工厂坐标是否有效
+        # if not factory_lat_lon:
+        #     LOGGER.warning("警告: 工厂坐标未设置，跳过距离计算")
+        #     # 给所有餐厅设置一个默认距离
+        #     for restaurant in self.info:
+        #         restaurant['rest_distance'] = 0
+        # else:
+        #     for restaurant in self.info:
+        #         try:
+        #             # 提取餐厅的坐标
+        #             location = restaurant.get('rest_location', '')
+        #             if not location:
+        #                 LOGGER.warning(f"警告: 餐厅 {restaurant.get('rest_chinese_name', '未知')} 没有坐标信息，跳过距离计算")
+        #                 restaurant['rest_distance'] = 0
+        #                 continue
+                        
+        #             res_lon, res_lat = map(float, location.split(','))  # 假设坐标格式为 "经度,纬度"
+        #             distance = self._haversine((res_lat, res_lon), factory_lat_lon)  # 计算距离(维度,经度),(维度,经度)
+        #             restaurant['rest_distance'] = distance  # 添加新的键
+        #         except Exception as e:
+        #             self.progress.emit(f"警告: 计算餐厅 {restaurant.get('name', '未知')} 的距离时出错: {str(e)}")
+        #             restaurant['rest_distance'] = 0  # 设置默认值
         # 转换为餐厅实体
         self._info_to_restaurant(model_class=model_class, cp_id=cp_id)
         
@@ -450,7 +524,7 @@ class GetRestaurantsService:
 
 if __name__ == "__main__":
     from app.services.instances.restaurant import RestaurantModel
-    service = GetRestaurantsService()
-    service.run(cities="惠州市", cp_id="CP001", model_class=RestaurantModel, file_path=None, use_api=True)
-    # service.save_results(folder_path=None, filename_prefix='restaurants')
+    service = GetRestaurantService()
+    service.run(cities="淳安县", cp_id="de441ba852", model_class=RestaurantModel, file_path=None, use_api=True)
+    service.save_results(folder_path=None, filename_prefix='restaurants')
 

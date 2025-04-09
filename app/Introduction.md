@@ -264,7 +264,7 @@ class Restaurant(BaseInstance):
 这里主要的功能是希望能从各种api渠道获取这些餐厅信息，然后进行整合。
 
 ```python
-class GetRestaurantsService():
+class GetRestaurantService():
     def __init__(self, conf, benchmark_path=None):
         self.benchmark = _load_benchmark_from_path(benchmark_path)  # 如果提供了benchmark的path，那么只需要在此基础上进行验证每家餐厅是否存在即可，而不是从头更新
         self.backends = ['gaode', 'baidu', 'serp', 'tripadvisor']

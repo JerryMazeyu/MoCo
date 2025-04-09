@@ -14,7 +14,8 @@ from app.services.instances.restaurant import query_gaode
 from app.services.instances.cp import CP
 from app.config.config import CONF
 import oss2
-
+from app.services.functions.get_restaurant_service import GetRestaurantService
+from app.services.instances.restaurant import RestaurantModel
 # 获取全局日志对象
 LOGGER = get_logger()
 
@@ -299,7 +300,10 @@ class CPSelectDialog(QDialog):
         # 创建列表控件显示CP
         self.list_widget = QListWidget()
         for cp in self.cp_list:
-            self.list_widget.addItem(f"{cp.get('cp_name')} (ID: {cp.get('cp_id')})")
+            # 使用字典访问方式而不是 get 方法
+            cp_name = cp['cp_name'] if isinstance(cp, dict) else cp.cp_name
+            cp_id = cp['cp_id'] if isinstance(cp, dict) else cp.cp_id
+            self.list_widget.addItem(f"{cp_name} (ID: {cp_id})")
         
         # 添加按钮
         button_layout = QHBoxLayout()
@@ -321,7 +325,8 @@ class CPSelectDialog(QDialog):
         selected_items = self.list_widget.selectedItems()
         if selected_items:
             index = self.list_widget.row(selected_items[0])
-            return self.cp_list[index]
+            if 0 <= index < len(self.cp_list):
+                return self.cp_list[index]
         return None
 
 
@@ -518,21 +523,26 @@ class Tab2(QWidget):
             if dialog.exec_() == QDialog.Accepted:
                 selected_cp = dialog.get_selected_cp()
                 if selected_cp:
-                    # 检查是否在配置的CP列表中
-                    cp_id = selected_cp.get('cp_id')
-                    cp_name = selected_cp.get('cp_name')
+                    # 将列表中的字典转换为对象
+                    cp_data = {
+                        'cp_id': selected_cp['cp_id'] if isinstance(selected_cp, dict) else selected_cp.cp_id,
+                        'cp_name': selected_cp['cp_name'] if isinstance(selected_cp, dict) else selected_cp.cp_name
+                    }
                     
+                    # 获取配置中的CP ID列表 - 直接使用CONF.BUSINESS.CP，因为它就是一个ID列表
                     conf_cp_ids = []
                     if hasattr(CONF, 'BUSINESS') and hasattr(CONF.BUSINESS, 'CP'):
-                        conf_cp_ids = CONF.BUSINESS.CP.get('cp_id', [])
+                        conf_cp_ids = CONF.BUSINESS.CP  # 直接使用列表
                     
-                    if cp_id in conf_cp_ids:
-                        LOGGER.info(f"选择的CP {cp_name} (ID: {cp_id}) 在配置中存在")
+                    LOGGER.info(f"配置中的CP ID列表: {conf_cp_ids}")
+                    
+                    if cp_data['cp_id'] in conf_cp_ids:
+                        LOGGER.info(f"选择的CP {cp_data['cp_name']} (ID: {cp_data['cp_id']}) 在配置中存在")
                     else:
-                        LOGGER.warning(f"选择的CP {cp_name} (ID: {cp_id}) 不在配置中")
+                        LOGGER.warning(f"选择的CP {cp_data['cp_name']} (ID: {cp_data['cp_id']}) 不在配置中")
                         reply = QMessageBox.question(
                             self, 'CP不在配置中', 
-                            f'选择的CP "{cp_name}" 不在配置列表中。是否继续使用？',
+                            f'选择的CP "{cp_data["cp_name"]}" 不在配置列表中。是否继续使用？',
                             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
                         )
                         if reply == QMessageBox.No:
@@ -542,21 +552,22 @@ class Tab2(QWidget):
                     if not hasattr(CONF, 'runtime'):
                         setattr(CONF, 'runtime', type('RuntimeConfig', (), {}))
                     
-                    CONF.runtime.CP = selected_cp
-                    self.current_cp = selected_cp
+                    CONF.runtime.CP = cp_data
+                    self.current_cp = cp_data
                     
                     # 更新CP按钮文本
-                    self.cp_button.setText(f"已选择CP为：{cp_name}")
+                    self.cp_button.setText(f"已选择CP为：{cp_data['cp_name']}")
                     
                     # 通知主窗口更新CP
                     if self.main_window_ref:
-                        self.main_window_ref.set_current_cp(cp_id)
+                        self.main_window_ref.set_current_cp(cp_data['cp_id'])
                     
                     # 更新城市下拉框
-                    self.update_cities(cp_id)
+                    self.update_cities(cp_data['cp_id'])
         except Exception as e:
-            LOGGER.error(f"选择CP时出错: {e}")
-            QMessageBox.critical(self, "选择CP失败", f"选择CP时出错: {e}")
+            LOGGER.error(f"选择CP时出错: {str(e)}")
+            LOGGER.error(f"CONF.BUSINESS.CP的内容: {getattr(CONF.BUSINESS, 'CP', None)}")
+            QMessageBox.critical(self, "选择CP失败", f"选择CP时出错: {str(e)}")
     
     def update_cities(self, cp_id):
         """根据CP ID更新城市列表"""
@@ -566,40 +577,60 @@ class Tab2(QWidget):
             
             # 首先尝试从CONF.runtime.CP获取城市列表
             if hasattr(CONF, 'runtime') and hasattr(CONF.runtime, 'CP'):
-                # 这里假设CP数据中有cities字段，如果没有则需要修改
-                cities = CONF.runtime.CP.get('cities', [])
+                # 使用字典访问方式而不是get方法
+                if isinstance(CONF.runtime.CP, dict):
+                    cities = CONF.runtime.CP.get('cities', [])
+                    
+                    # 如果cities为空，尝试从其他字段构建城市列表
+                    if not cities and 'cp_city' in CONF.runtime.CP:
+                        cities = [CONF.runtime.CP['cp_city']]
             
-            # 如果未获取到，则尝试从CONF.BUSINESS.CP.{cp_id}获取
+            # 如果未获取到，则尝试从CONF.BUSINESS.CP获取
             if not cities and hasattr(CONF, 'BUSINESS') and hasattr(CONF.BUSINESS, 'CP'):
-                cp_data = getattr(CONF.BUSINESS.CP, cp_id, None)
-                if cp_data and hasattr(cp_data, 'cities'):
-                    cities = cp_data.cities
+                cp_data = getattr(CONF.BUSINESS.CP, str(cp_id), None)
+                if cp_data:
+                    if hasattr(cp_data, 'cities'):
+                        cities = cp_data.cities
+                    elif hasattr(cp_data, 'cp_city'):
+                        cities = [cp_data.cp_city]
             
-            # 如果还是未获取到，使用默认值
-            if not cities:
-                # 从配置中获取默认城市列表
+            # 如果还是未获取到，尝试从配置字典中获取
+            if not cities and hasattr(CONF, 'BUSINESS') and hasattr(CONF.BUSINESS, 'CP'):
                 cp_cities_map = {}
+                config_dict = getattr(CONF.BUSINESS.CP, '_config_dict', {})
                 
-                if hasattr(CONF, 'BUSINESS') and hasattr(CONF.BUSINESS, 'CP'):
-                    for cp_key in CONF.BUSINESS.CP._config_dict:
-                        if cp_key != 'cp_id' and 'cities' in CONF.BUSINESS.CP._config_dict[cp_key]:
-                            cp_cities_map[cp_key] = CONF.BUSINESS.CP._config_dict[cp_key]['cities']
+                for cp_key, cp_value in config_dict.items():
+                    if cp_key != 'cp_id' and isinstance(cp_value, dict):
+                        if 'cities' in cp_value:
+                            cp_cities_map[cp_key] = cp_value['cities']
+                        elif 'cp_city' in cp_value:
+                            cp_cities_map[cp_key] = [cp_value['cp_city']]
                 
                 # 如果配置中有此CP的城市列表
-                cities = cp_cities_map.get(cp_id, [])
+                cities = cp_cities_map.get(str(cp_id), [])
+            
+            # 记录调试信息
+            LOGGER.info(f"更新城市列表: CP ID = {cp_id}")
+            LOGGER.info(f"获取到的城市列表: {cities}")
             
             # 更新城市列表
             self.cp_cities = cities
             
             # 更新下拉框
             self.city_combo.clear()
-            self.city_combo.addItems(self.cp_cities)
+            if cities:
+                self.city_combo.addItems(self.cp_cities)
+                # 启用相关控件
+                self.city_combo.setEnabled(True)
+                self.get_restaurant_button.setEnabled(True)
+            else:
+                LOGGER.warning(f"CP {cp_id} 没有关联的城市")
+                self.city_combo.setEnabled(False)
+                self.get_restaurant_button.setEnabled(False)
             
-            # 启用相关控件
-            self.city_combo.setEnabled(True)
-            self.get_restaurant_button.setEnabled(True)
         except Exception as e:
             LOGGER.error(f"更新城市列表时出错: {str(e)}")
+            LOGGER.error(f"CONF.runtime.CP的内容: {getattr(CONF.runtime, 'CP', None)}")
             self.cp_cities = []
             self.city_combo.clear()
             self.city_combo.setEnabled(False)
@@ -629,26 +660,31 @@ class Tab2(QWidget):
             # 模拟获取餐厅信息
             LOGGER.info(f"正在获取 {city} 的餐厅信息...")
             
-            # 模拟数据获取延迟
-            import time
-            time.sleep(1)
+            restaurant_service = GetRestaurantService()
+            restaurant_service.run(cities=city, cp_id=self.current_cp['cp_id'], model_class=RestaurantModel, file_path=None, use_api=True)
+
+            restaurant_group = restaurant_service.get_restaurants_group()
+            restaurant_data = restaurant_group.to_dataframe()
+            # # 模拟数据获取延迟
+            # import time
+            # time.sleep(1)
             
-            # 创建模拟数据
-            data = {
-                "餐厅名称": [f"{city}好味餐厅", f"{city}美食城", f"{city}老字号饭店", f"{city}快餐小吃"],
-                "地址": [f"{city}市xx区xx路xx号", f"{city}市xx区xx路xx号", f"{city}市xx区xx路xx号", f"{city}市xx区xx路xx号"],
-                "电话": ["123-45678900", "123-45678901", "123-45678902", "123-45678903"],
-                "营业时间": ["09:00-22:00", "10:00-21:00", "08:30-23:00", "07:00-22:30"],
-                "评分": [4.5, 4.2, 4.8, 4.0]
-            }
+            # # 创建模拟数据
+            # data = {
+            #     "餐厅名称": [f"{city}好味餐厅", f"{city}美食城", f"{city}老字号饭店", f"{city}快餐小吃"],
+            #     "地址": [f"{city}市xx区xx路xx号", f"{city}市xx区xx路xx号", f"{city}市xx区xx路xx号", f"{city}市xx区xx路xx号"],
+            #     "电话": ["123-45678900", "123-45678901", "123-45678902", "123-45678903"],
+            #     "营业时间": ["09:00-22:00", "10:00-21:00", "08:30-23:00", "07:00-22:30"],
+            #     "评分": [4.5, 4.2, 4.8, 4.0]
+            # }
             
-            df = pd.DataFrame(data)
+            # df = pd.DataFrame(data)
             
             # 更新Excel查看器
-            self.xlsx_viewer.load_data(data=df)
+            self.xlsx_viewer.load_data(data=restaurant_data)
             
             # 打印完成消息
-            LOGGER.info(f"{city} 餐厅信息获取完成，共 {len(df)} 条记录")
+            LOGGER.info(f"{city} 餐厅信息获取完成，共 {len(restaurant_data)} 条记录")
         except Exception as e:
             LOGGER.error(f"获取餐厅信息时出错: {str(e)}")
             QMessageBox.critical(self, "获取失败", f"获取餐厅信息时出错: {str(e)}")

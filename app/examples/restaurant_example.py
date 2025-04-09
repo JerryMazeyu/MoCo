@@ -11,7 +11,7 @@ except Exception as e:
 
 import pandas as pd
 
-from app.services.functions import GetRestaurantsService
+from app.services.functions import GetRestaurantService
 from app.services.instances import Restaurant, RestaurantsGroup
 from app.utils.logger import setup_logger
 from app.utils.file_io import rp

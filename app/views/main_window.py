@@ -56,18 +56,22 @@ class MainWindow(QMainWindow):
         try:
             self.user_info = user_info
             self.setWindowTitle(f"MoCo 数据助手 - 用户: {user_info['username']}")
+            # 先加载用户配置，要不然后面页面导入CONF会一直是默认值？
+            self.load_user_config()
+
+            # 使用日志记录欢迎信息
+            LOGGER.info(f"欢迎使用 MoCo 数据助手！用户: {self.user_info['username']}，角色: {self.user_info['role']}")
+            LOGGER.info("所有日志信息将显示在控制台中。")
+
             self.setup_tabs()
             self.stacked_widget.setCurrentIndex(1)  # 切换到主内容页面
             
             # 设置窗口为全屏
             self.showMaximized()
             
-            # 使用日志记录欢迎信息
-            LOGGER.info(f"欢迎使用 MoCo 数据助手！用户: {self.user_info['username']}，角色: {self.user_info['role']}")
-            LOGGER.info("所有日志信息将显示在控制台中。")
             
-            # 加载用户配置
-            self.load_user_config()
+            
+            
         except Exception as e:
             LOGGER.error(f"登录后初始化失败: {str(e)}")
             # 恢复到登录页面
@@ -82,26 +86,28 @@ class MainWindow(QMainWindow):
             # 导入Tab模块 - 将导入移到函数内，避免循环依赖
             from app.views.tabs.tab1 import Tab1  # 配置界面
             from app.views.tabs.tab2 import Tab2  # 餐厅获取
+            from app.views.tabs.tab3 import Tab3  # 车辆获取
 
             # 创建Tab组件
             self.tab1_widget = QWidget()
             self.tab2_widget = QWidget()
-            
+            self.tab3_widget = QWidget()
             # 设置Tab布局
             self.tab1_widget.setLayout(QVBoxLayout())
             self.tab2_widget.setLayout(QVBoxLayout())
-            
+            self.tab3_widget.setLayout(QVBoxLayout())
             # 创建Tab内容
             self.tab1_content = Tab1(self)  # 配置界面
             self.tab2_content = Tab2(self)  # 餐厅获取
-            
+            self.tab3_content = Tab3(self)  # 车辆获取
             # 添加内容到布局
             self.tab1_widget.layout().addWidget(self.tab1_content)
             self.tab2_widget.layout().addWidget(self.tab2_content)
-            
+            self.tab3_widget.layout().addWidget(self.tab3_content)
             # 添加Tab到标签页控件
             self.tab_widget.addTab(self.tab1_widget, "配置界面")
             self.tab_widget.addTab(self.tab2_widget, "餐厅获取")
+            self.tab_widget.addTab(self.tab3_widget, "收油表获取")
         except Exception as e:
             LOGGER.error(f"设置标签页失败: {str(e)}")
 

@@ -16,6 +16,7 @@ from app.config.config import CONF
 import random
 import mingzi
 from datetime import datetime
+import math
 
 # 设置日志
 LOGGER = setup_logger("moco.log")
@@ -493,40 +494,43 @@ class Restaurant(BaseInstance):
                         self.inst.rest_type = candidate_type
                         LOGGER.info(f"已直接通过餐厅名为餐厅 '{self.inst.rest_chinese_name}' 推断类型: {self.inst.rest_type}")
                         return True
-                else:
-                    LOGGER.warning(f"未找到餐厅类型，尝试使用KIMI API分析")
-                    if self.conf and hasattr(self.conf, 'KEYS') and hasattr(self.conf.KEYS, 'kimi_keys'):
-                        # 准备餐厅信息
-                        rest_info = {
-                            'name': self.inst.rest_chinese_name,
-                            'address': getattr(self.inst, 'rest_chinese_address', ''),
-                            'rest_type': "\n".join(list(self.conf.BUSINESS.RESTAURANT.收油关系映射._config_dict.keys()))
-                        }
-                        # 调用KIMI API分析餐厅类型
-                        def analyze_func(key):
-                            return kimi_restaurant_type_analysis(rest_info, key)
-                        # 使用robust_query进行健壮性调用
-                        rest_type_ans = robust_query(analyze_func, self.conf.KEYS.kimi_keys)
-                        rest_type = None
-                        for candidate_type in candidate_types:
-                            if candidate_type in rest_type_ans:
-                                rest_type = candidate_type
-                                break
-                        if rest_type:
-                            self.inst.rest_type = rest_type
-                            LOGGER.info(f"已通过LLM为餐厅 '{self.inst.rest_chinese_name}' 分析类型: {rest_type}")
-                            return True
-                        else:
-                            # 分析失败，使用默认值
-                            self.inst.rest_type = "小食/小吃/美食/饮食/私房菜"
-                            LOGGER.warning(f"KIMI API调用失败，使用默认餐厅类型: {self.inst.rest_type}")
-                            return True
-
                     else:
-                        # 没有配置KIMI API，使用默认值
-                        self.inst.rest_type = "小食/小吃/美食/饮食/私房菜"
-                        LOGGER.info(f"未配置KIMI API，使用默认餐厅类型: {self.inst.rest_type}")
-                        return True
+                        LOGGER.warning(f"未找到餐厅类型，尝试使用KIMI API分析")
+                        if self.conf and hasattr(self.conf, 'KEYS') and hasattr(self.conf.KEYS, 'kimi_keys'):
+                            # 准备餐厅信息
+                            rest_info = {
+                                'name': self.inst.rest_chinese_name,
+                                'address': getattr(self.inst, 'rest_chinese_address', ''),
+                                'rest_type': "\n".join(list(self.conf.BUSINESS.RESTAURANT.收油关系映射._config_dict.keys()))
+                            }
+                            # 调用KIMI API分析餐厅类型
+                            def analyze_func(key):
+                                return kimi_restaurant_type_analysis(rest_info, key)
+                            # 使用robust_query进行健壮性调用
+                            rest_type_ans = robust_query(analyze_func, self.conf.KEYS.kimi_keys)
+                            rest_type = None
+                            for candidate_type in candidate_types:
+                                if candidate_type in rest_type_ans:
+                                    rest_type = candidate_type
+                                    break
+                            if rest_type:
+                                self.inst.rest_type = rest_type
+                                LOGGER.info(f"已通过LLM为餐厅 '{self.inst.rest_chinese_name}' 分析类型: {rest_type}")
+                                return True
+                            else:
+                                # 分析失败，使用默认值
+                                self.inst.rest_type = "小食/小吃/美食/饮食/私房菜"
+                                LOGGER.warning(f"KIMI API调用失败，使用默认餐厅类型: {self.inst.rest_type}")
+                                return True
+
+                        else:
+                            # 没有配置KIMI API，使用默认值
+                            self.inst.rest_type = "小食/小吃/美食/饮食/私房菜"
+                            LOGGER.info(f"未配置KIMI API，使用默认餐厅类型: {self.inst.rest_type}")
+                            return True
+            else:
+                LOGGER.info(f"餐厅 '{self.inst.rest_chinese_name}' 已存在类型: {self.inst.rest_type}")
+                return True
         except Exception as e:
             LOGGER.error(f"分析餐厅类型失败: {e}")
             return False
@@ -576,18 +580,90 @@ class Restaurant(BaseInstance):
                 # 这里使用一个模拟值
                 cp_id = self.inst.rest_belonged_cp
                 
-                # 使用哈希值来生成一个稳定但随机的距离
-                distance_hash = hash(f"{restaurant_location}_{cp_id}")
-                distance_km = 1 + abs(distance_hash % 20)  # 1-20公里范围内
+                ## 获取conf中CP_LOCATION中的cp_id为cp_id的location
+                cp_location = None
+                for cp_location_item in self.conf.BUSINESS.CP_LOCATION:
+                    if cp_location_item['cp_id'] == cp_id:
+                        cp_location = cp_location_item['location']
+                        break
                 
-                self.inst.rest_distance = distance_km
-                LOGGER.info(f"已计算餐厅到CP的距离: {distance_km}公里")
+                if not cp_location:
+                    LOGGER.warning("警告: 工厂坐标未设置，跳过距离计算")
+                    # 给所有餐厅设置一个默认距离
+                    self.inst.rest_distance = 0
+                else:
+                            if not restaurant_location:
+                                LOGGER.warning(f"警告: 餐厅{self.inst.rest_chinese_name}没有坐标信息，跳过距离计算")
+                                self.inst.rest_distance = 0 
+                            else:
+                                res_lon, res_lat = map(float, restaurant_location.split(','))  # 假设坐标格式为 "经度,纬度"
+                                cp_lon, cp_lat = map(float, cp_location.split(','))  # 假设坐标格式为 "经度,纬度"
+                                factory_lat_lon = (cp_lat, cp_lon)
+                                distance = self._haversine((res_lat, res_lon), factory_lat_lon)  # 计算距离(维度,经度),(维度,经度)
+                                self.inst.rest_distance = distance  
+                                LOGGER.info(f"已计算餐厅到CP的距离: {distance}公里")
+                # # 使用哈希值来生成一个稳定但随机的距离
+                # distance_hash = hash(f"{restaurant_location}_{cp_location}")
+                # distance_km = 1 + abs(distance_hash % 20)  # 1-20公里范围内
+                
+                # self.inst.rest_distance = distance_km
+                # LOGGER.info(f"已计算餐厅到CP的距离: {distance_km}公里")
             
             return True
         except Exception as e:
             LOGGER.error(f"计算餐厅距离失败: {e}")
             return False
     
+    def _haversine(self,coord1, coord2):
+        """计算两个经纬度之间的距离（单位：公里）"""
+        R = 6371  # 地球半径，单位为公里
+        
+        # 处理第一个坐标
+        try:
+            if isinstance(coord1, tuple) and len(coord1) == 2:
+                lat1, lon1 = coord1
+            elif isinstance(coord1, list) and len(coord1) == 2:
+                lat1, lon1 = coord1
+            elif isinstance(coord1, str):
+                lat1, lon1 = map(float, coord1.split(','))
+            else:
+                print(f"无效的坐标1格式: {coord1}")
+                return 0
+        except Exception as e:
+            print(f"处理坐标1出错: {e}, 坐标值: {coord1}")
+            return 0
+        
+        # 处理第二个坐标
+        try:
+            if isinstance(coord2, tuple) and len(coord2) == 2:
+                lat2, lon2 = coord2
+            elif isinstance(coord2, list) and len(coord2) == 2:
+                lat2, lon2 = coord2
+            elif isinstance(coord2, str):
+                # 确保是字符串且包含逗号
+                lat2, lon2 = map(float, coord2.split(','))
+            else:
+                print(f"无效的坐标2格式: {coord2}")
+                return 0
+        except Exception as e:
+            print(f"处理坐标2出错: {e}, 坐标值: {coord2}")
+            return 0
+
+        # 确保所有值都是数值类型
+        try:
+            lat1, lon1, lat2, lon2 = float(lat1), float(lon1), float(lat2), float(lon2)
+            
+            dlat = math.radians(lat2 - lat1)
+            dlon = math.radians(lon2 - lon1)
+
+            a = (math.sin(dlat / 2) ** 2 +
+                math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
+            c = 2 * math.asin(math.sqrt(a))
+            return R * c  # 返回距离，单位为公里
+        except Exception as e:
+            print(f"计算距离出错: {e}, 坐标值: {lat1},{lon1} 和 {lat2},{lon2}")
+            return 0
+        
     def _generate_verified_date(self) -> bool:
         """
         生成确认日期

@@ -494,24 +494,28 @@ class GetReceiveRecordService:
         # 调用桶分配函数
         result_df = self._allocate_barrels(result_df, count_of_barrel_55)
 
-        # 更新餐厅信息中的 rest_verified_date 和 rest_allocated_barrel
+        # 根据收油表更新餐厅信息中的 rest_verified_date 和 rest_allocated_barrel
         for index, row in result_df.iterrows():
             restaurant_id = row['rest_id']
             rest_verified_date = row['rr_date']
             rest_allocated_barrel = row['rr_amount']
             cp_restaurants_group.update_restaurant_info(restaurant_id, {'rest_verified_date': rest_verified_date, 'rest_allocated_barrel': rest_allocated_barrel})
 
-        # 更新车辆信息中的 vehicle_last_use
+        # 根据收油表更新车辆信息中的 vehicle_last_use
         for index, row in result_df[['rr_vehicle','rr_date']].drop_duplicates().iterrows():
             vehicle_id = row['rr_vehicle']
             vehicle_last_use = row['rr_date']
-            cp_vehicle_group.update_vehicle_info(vehicle_id, {'vehicle_last_use': vehicle_last_use})
+            cp_vehicle_df.update_vehicle_info(vehicle_id, {'vehicle_last_use': vehicle_last_use})
+        
+        ## 将最后的餐厅信息和车辆信息转化为dataframe
+        cp_restaurants_df = cp_restaurants_group.to_dataframe()
+        cp_vehicle_df = cp_vehicle_df.to_dataframe()
 
-        # 过滤掉以下划线开头的列名
+        # 过滤掉以下划线开头的列名，获得最后的收油表
         result_df = result_df[[col for col in result_df.columns if not col.startswith('_')]]
 
         # 返回所有记录
-        return result_df
+        return result_df,cp_restaurants_df,cp_vehicle_df
     
         
 
