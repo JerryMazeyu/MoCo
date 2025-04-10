@@ -2,7 +2,7 @@
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                             QLabel, QFrame, QComboBox, QGroupBox, QGridLayout,
-                            QFileDialog, QMessageBox, QLayout, QListWidget, QDialog)
+                            QFileDialog, QMessageBox, QLayout, QListWidget, QDialog, QLineEdit)
 from PyQt5.QtCore import Qt, QSize, QPoint, QRect
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QPainter
 import pandas as pd
@@ -447,10 +447,13 @@ class Tab2(QWidget):
         control_layout = QHBoxLayout(control_frame)
         control_layout.setContentsMargins(0, 0, 0, 0)
         
-        # 城市选择
+        # 城市输入框
         city_label = QLabel("餐厅城市:")
-        self.city_combo = QComboBox()
-        self.city_combo.setEnabled(False)
+        self.city_input = QLineEdit()  # 创建输入框
+        self.city_input.setPlaceholderText("请输入城市名称")  # 设置占位符
+        self.city_input.setEnabled(False)  # 启用输入框
+        self.city_input.setMinimumWidth(200)  # 设置最小宽度
+        self.city_input.setMaximumWidth(250)  # 设置最大宽度
         
         # 获取餐厅按钮
         self.get_restaurant_button = QPushButton("餐厅获取")
@@ -474,7 +477,7 @@ class Tab2(QWidget):
         self.import_button.clicked.connect(self.import_restaurants)
         
         control_layout.addWidget(city_label)
-        control_layout.addWidget(self.city_combo)
+        control_layout.addWidget(self.city_input)  # 使用输入框
         control_layout.addSpacing(20)
         control_layout.addWidget(self.get_restaurant_button)
         control_layout.addWidget(self.import_button)
@@ -558,12 +561,13 @@ class Tab2(QWidget):
                     # 更新CP按钮文本
                     self.cp_button.setText(f"已选择CP为：{cp_data['cp_name']}")
                     
+                    # 启用城市输入框和获取餐厅按钮
+                    self.city_input.setEnabled(True)  # 启用城市输入框
+                    self.get_restaurant_button.setEnabled(True)  # 启用获取餐厅按钮
+                    
                     # 通知主窗口更新CP
                     if self.main_window_ref:
                         self.main_window_ref.set_current_cp(cp_data['cp_id'])
-                    
-                    # 更新城市下拉框
-                    self.update_cities(cp_data['cp_id'])
         except Exception as e:
             LOGGER.error(f"选择CP时出错: {str(e)}")
             LOGGER.error(f"CONF.BUSINESS.CP的内容: {getattr(CONF.BUSINESS, 'CP', None)}")
@@ -639,12 +643,11 @@ class Tab2(QWidget):
     def get_restaurants(self):
         """获取餐厅信息"""
         try:
-            # 获取当前选择的城市
-            if self.city_combo.currentIndex() < 0:
-                QMessageBox.warning(self, "请选择城市", "请先选择餐厅城市")
+            # 获取当前输入的城市
+            city = self.city_input.text().strip()  # 获取输入框中的城市名称
+            if not city:
+                QMessageBox.warning(self, "请输入城市", "请先输入餐厅城市")
                 return
-            
-            city = self.city_combo.currentText()
             
             # 检查API连通性
             api_ok = self.check_apis()
@@ -743,21 +746,23 @@ class Tab2(QWidget):
                     self.current_cp = cp_data
                     
                     # 更新城市列表
-                    self.update_cities(cp_id)
+                    self.city_input.clear()
+                    self.city_input.setEnabled(True)
+                    # self.update_cities(cp_id)
                 else:
                     LOGGER.error(f"未找到ID为{cp_id}的CP")
                     self.cp_button.setText("未选择CP")
-                    self.city_combo.clear()
-                    self.city_combo.setEnabled(False)
+                    self.city_input.clear()
+                    self.city_input.setEnabled(False)
                     self.get_restaurant_button.setEnabled(False)
             else:
                 self.cp_button.setText("未选择CP")
-                self.city_combo.clear()
-                self.city_combo.setEnabled(False)
+                self.city_input.clear()
+                self.city_input.setEnabled(False)
                 self.get_restaurant_button.setEnabled(False)
         except Exception as e:
             LOGGER.error(f"更新CP时出错: {str(e)}")
             self.cp_button.setText("未选择CP")
-            self.city_combo.clear()
-            self.city_combo.setEnabled(False)
+            self.city_input.clear()
+            self.city_input.setEnabled(False)
             self.get_restaurant_button.setEnabled(False) 

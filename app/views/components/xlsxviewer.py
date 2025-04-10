@@ -7,6 +7,8 @@ import sys
 import os
 import platform
 import subprocess
+from app.utils import oss_put_excel_file,oss_rename_excel_file, oss_get_excel_file
+from datetime import datetime
 
 class PandasModel(QAbstractTableModel):
     """Pandas数据模型，用于在QTableView中显示pandas DataFrame数据"""
@@ -127,9 +129,11 @@ class PandasModel(QAbstractTableModel):
 class XlsxViewerWidget(QWidget):
     """Excel表格查看器组件，用于展示和编辑Excel数据"""
     
-    def __init__(self, parent=None):
+    def __init__(self, parent=None,use_oss=False,oss_path=None):
         super().__init__(parent)
         self.current_file = None
+        self.use_oss = use_oss
+        self.oss_path = oss_path
         self.initUI()
     
     def initUI(self):
@@ -246,24 +250,55 @@ class XlsxViewerWidget(QWidget):
     
     def save_file(self):
         """保存文件"""
-        if not self.current_file:
-            return self.save_file_as()
-        
-        try:
-            data = self.model.getDataFrame()
+        if self.use_oss:
+            current_time = datetime.now().strftime("%Y%m%d%H%M%S")
+            # 分离文件名和扩展名
+            path_parts = self.oss_path.split('/')
+    
+            # 获取最后的文件名
+            file_name_with_ext = path_parts[-1]  # 获取最后的文件名（包括扩展名）
             
-            # 根据文件类型保存
-            if self.current_file.endswith(('.xlsx', '.xls')):
-                data.to_excel(self.current_file, index=False)
-            elif self.current_file.endswith('.csv'):
-                data.to_csv(self.current_file, index=False)
+            # 分离文件名和扩展名
+            name, ext = os.path.splitext(file_name_with_ext)  # 分离文件名和扩展名
             
+            
+            # 创建新的文件名
+            new_file_name = f"{name}_{current_time}{ext}"  # 添加当前时间到文件名
+            
+            # 组合新的文件路径
+            oss_rename_file = '/'.join(path_parts[:-1]) + '/' + new_file_name  # 组合路径和新文件名
+            
+            # 获取最新的数据
+            data_to_save = self.model.getDataFrame()
+            print("Saving data to OSS:", data_to_save)  # 调试输出
+            
+            # 保存到 OSS
+            oss_rename_excel_file(self.oss_path, oss_rename_file)
+            oss_put_excel_file(self.oss_path, data_to_save)
+
             self.model.resetModified()
-            QMessageBox.information(self, "保存成功", f"文件已保存: {self.current_file}")
+            QMessageBox.information(self, "保存成功", f"文件已保存: {self.oss_path}")
             return True
-        except Exception as e:
-            QMessageBox.critical(self, "保存错误", f"无法保存文件: {str(e)}")
-            return False
+        
+        else:
+            if not self.current_file:
+                return self.save_file_as()
+            
+            try:
+                data = self.model.getDataFrame()
+                
+                # 根据文件类型保存
+                if self.current_file.endswith(('.xlsx', '.xls')):
+                    data.to_excel(self.current_file, index=False)
+                elif self.current_file.endswith('.csv'):
+                    data.to_csv(self.current_file, index=False)
+                
+                self.model.resetModified()
+                QMessageBox.information(self, "保存成功", f"文件已保存: {self.current_file}")
+                return True
+            except Exception as e:
+                QMessageBox.critical(self, "保存错误", f"无法保存文件: {str(e)}")
+                return False
     
     def save_file_as(self):
         """另存为文件"""
@@ -283,17 +318,46 @@ class XlsxViewerWidget(QWidget):
     
     def refresh(self):
         """刷新当前文件数据"""
-        if self.current_file and os.path.exists(self.current_file):
-            if self.model.isModified():
-                reply = QMessageBox.question(
-                    self, '确认', '当前数据已修改，刷新将丢失所有更改。确定要继续吗？',
-                    QMessageBox.Yes | QMessageBox.No
-                )
+        if self.use_oss:
+            # 从 OSS 读取数据
+            try:
+                if self.model.isModified():
+                    reply = QMessageBox.question(
+                        self, '确认', '当前数据已修改，是否保存？',
+                        QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel
+                    )
+                    
+                    if reply == QMessageBox.Save:
+                        self.save_file()  # 保存数据
+                    elif reply == QMessageBox.Cancel:
+                        return  # 取消刷新
                 
-                if reply == QMessageBox.No:
-                    return
-            
-            self.load_data(self.current_file)
+                if self.oss_path:
+                    # 读取 OSS 中的数据
+                    data = oss_get_excel_file(self.oss_path)
+                    if data is not None:
+                        self.model.setDataFrame(data)  # 更新数据模型
+                        self.table_view.resizeColumnsToContents()  # 自动调整列宽
+                        QMessageBox.information(self, "刷新成功", "OSS 数据已刷新。")
+                    else:
+                        QMessageBox.warning(self, "刷新失败", "无法从 OSS 读取数据。")
+                else:
+                    QMessageBox.warning(self, "路径错误", "OSS 路径未设置。")
+            except Exception as e:
+                QMessageBox.critical(self, "刷新错误", f"无法刷新数据: {str(e)}")
+        else:
+            # 本地文件刷新逻辑
+            if self.current_file and os.path.exists(self.current_file):
+                if self.model.isModified():
+                    reply = QMessageBox.question(
+                        self, '确认', '当前数据已修改，刷新将丢失所有更改。确定要继续吗？',
+                        QMessageBox.Yes | QMessageBox.No
+                    )
+                    
+                    if reply == QMessageBox.No:
+                        return
+                
+                self.load_data(self.current_file)
     
     def get_data(self):
         """获取当前数据"""

@@ -7,9 +7,11 @@ from app.services.instances.vehicle import Vehicle, VehicleGroup
 from app.services.functions.get_receive_record_service import GetReceiveRecordService
 from app.services.instances.cp import CP
 from app.config.config import CONF
+from app.models.receive_record import ReceiveRecordModel
 import oss2
 from app.views.tabs.tab2 import CPSelectDialog
 from app.views.components.xlsxviewer import XlsxViewerWidget  # 导入 XlsxViewerWidget
+from app.utils import rp, oss_get_excel_file,oss_put_excel_file,oss_rename_excel_file
 
 # 获取全局日志对象
 LOGGER = get_logger()
@@ -23,7 +25,7 @@ class Tab3(QWidget):
         self.current_cp = None
         self.restaurants = []
         self.vehicles = []
-        self.xlsx_viewer = XlsxViewerWidget()  # 创建 XlsxViewerWidget 实例
+        self.xlsx_viewer = None  # 初始化为 None
         self.initUI()
     
     def initUI(self):
@@ -70,15 +72,10 @@ class Tab3(QWidget):
         # 创建带有页签的数据展示区
         self.tab_widget = QTabWidget()
         
-        # 创建三个XlsxViewerWidget实例
-        self.restaurant_viewer = XlsxViewerWidget()
-        self.vehicle_viewer = XlsxViewerWidget()
-        self.report_viewer = XlsxViewerWidget()
-        
-        # 直接添加XlsxViewerWidget到页签
-        self.tab_widget.addTab(self.restaurant_viewer, "餐厅信息")
-        self.tab_widget.addTab(self.vehicle_viewer, "车辆信息")
-        self.tab_widget.addTab(self.report_viewer, "收油表")
+        # 初始化XlsxViewerWidget实例为None
+        self.restaurant_viewer = None
+        self.vehicle_viewer = None
+        self.report_viewer = None
         
         self.layout.addWidget(self.tab_widget)
         
@@ -124,7 +121,7 @@ class Tab3(QWidget):
                         )
                         if reply == QMessageBox.No:
                             return
-                    
+                
                     # 保存选择的CP到运行时配置
                     if not hasattr(CONF, 'runtime'):
                         setattr(CONF, 'runtime', type('RuntimeConfig', (), {}))
@@ -133,8 +130,19 @@ class Tab3(QWidget):
                     self.current_cp = cp_data
                     
                     # 生成文件路径
-                    self.restaurant_file = f"CPs/{cp_data['cp_id']}/restaurants.xlsx"
-                    self.vehicle_file = f"CPs/{cp_data['cp_id']}/vehicles.xlsx"
+                    self.restaurant_file = f"CPs/{cp_data['cp_id']}/restaurant/restaurants.xlsx"
+                    self.vehicle_file = f"CPs/{cp_data['cp_id']}/vehicle/vehicles.xlsx"
+                    self.receive_record_file = f"CPs/{cp_data['cp_id']}/receive_record/receive_records.xlsx"
+                    
+                    # 在选择CP后创建XlsxViewerWidget实例
+                    self.restaurant_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.restaurant_file)
+                    self.vehicle_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.vehicle_file)
+                    self.report_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.receive_record_file)
+                    
+                    # 将XlsxViewerWidget实例添加到tab_widget
+                    self.tab_widget.addTab(self.restaurant_viewer, "餐厅信息")
+                    self.tab_widget.addTab(self.vehicle_viewer, "车辆信息")
+                    self.tab_widget.addTab(self.report_viewer, "收油表")
                     
                     # 更新CP按钮文本
                     self.cp_button.setText(f"已选择CP为：{cp_data['cp_name']}")
@@ -162,7 +170,7 @@ class Tab3(QWidget):
             
             # 从OSS读取数据
             try:
-                restaurant_data = self.read_from_oss(self.restaurant_file)
+                restaurant_data = oss_get_excel_file(self.restaurant_file)
                 if restaurant_data is None:
                     QMessageBox.warning(self, "文件不存在", f"未找到文件: {self.restaurant_file}")
                     return
@@ -175,10 +183,10 @@ class Tab3(QWidget):
             
             # 使用RestaurantsGroup进行过滤
             restaurants_group = RestaurantsGroup(self.restaurants)
-            self.restaurants = restaurants_group.filter_by_cp(self.current_cp['cp_id']).to_list()
-            
+            self.restaurants = restaurants_group.filter_by_cp(self.current_cp['cp_id']).to_dicts()
+            filter_restaurants = restaurants_group.filter_by_cp(self.current_cp['cp_id']).to_dataframe()
             # 将数据加载到餐厅信息页签
-            self.restaurant_viewer.load_data(data=restaurant_data)
+            self.restaurant_viewer.load_data(data=filter_restaurants)
             
             # 切换到餐厅信息页签
             self.tab_widget.setCurrentIndex(0)
@@ -197,7 +205,7 @@ class Tab3(QWidget):
             
             # 从OSS读取数据
             try:
-                vehicle_data = self.read_from_oss(self.vehicle_file)
+                vehicle_data = oss_get_excel_file(self.vehicle_file)
                 if vehicle_data is None:
                     QMessageBox.warning(self, "文件不存在", f"未找到文件: {self.vehicle_file}")
                     return
@@ -210,10 +218,10 @@ class Tab3(QWidget):
             
             # 使用VehicleGroup进行过滤
             vehicles_group = VehicleGroup(self.vehicles)
-            self.vehicles = vehicles_group.filter_by_cp(self.current_cp['cp_id']).to_list()
-            
+            self.vehicles = vehicles_group.filter_by_cp(self.current_cp['cp_id']).to_dicts()
+            filter_vehicles = vehicles_group.filter_by_cp(self.current_cp['cp_id']).to_dataframe()
             # 将数据加载到车辆信息页签
-            self.vehicle_viewer.load_data(data=vehicle_data)
+            self.vehicle_viewer.load_data(data=filter_vehicles)
             
             # 切换到车辆信息页签
             self.tab_widget.setCurrentIndex(1)
@@ -226,8 +234,8 @@ class Tab3(QWidget):
     def generate_report(self):
         """生成收油表"""
         try:
-            service = GetReceiveRecordService()
-            result,cp_restaurants_df,cp_vehicle_df = service.get_restaurant_oil_records(self.restaurants, self.vehicles, self.current_cp['cp_id'])
+            service = GetReceiveRecordService(model=ReceiveRecordModel, conf=CONF)
+            result, cp_restaurants_df, cp_vehicle_df = service.get_restaurant_oil_records(self.restaurants, self.vehicles, self.current_cp['cp_id'])
             
             # 将结果加载到收油表页签
             self.report_viewer.load_data(data=result)
@@ -240,49 +248,3 @@ class Tab3(QWidget):
             self.logger.error(f"生成收油表时出错: {str(e)}")
             QMessageBox.critical(self, "生成失败", f"生成收油表时出错: {str(e)}")
     
-    def read_from_oss(self, file_path):
-        """从OSS读取数据"""
-        try:
-            # 获取OSS配置
-            if not hasattr(CONF, 'KEYS') or not hasattr(CONF.KEYS, 'oss'):
-                raise Exception("未找到OSS配置")
-            
-            oss_conf = CONF.KEYS.oss
-            access_key_id = oss_conf.get('access_key_id')
-            access_key_secret = oss_conf.get('access_key_secret')
-            endpoint = oss_conf.get('endpoint')
-            bucket_name = oss_conf.get('bucket_name')
-            region = oss_conf.get('region')
-            
-            if not all([access_key_id, access_key_secret, endpoint, bucket_name]):
-                raise Exception("OSS配置不完整")
-            
-            # 创建OSS客户端
-            auth = oss2.Auth(access_key_id, access_key_secret)
-            bucket = oss2.Bucket(auth, endpoint, bucket_name, region=region)
-            
-            # 检查文件是否存在
-            if not bucket.object_exists(file_path):
-                return None
-            
-            # 下载文件到临时目录
-            import tempfile
-            import os
-            
-            temp_dir = tempfile.gettempdir()
-            temp_file = os.path.join(temp_dir, os.path.basename(file_path))
-            
-            # 下载文件
-            bucket.get_object_to_file(file_path, temp_file)
-            
-            # 读取Excel文件
-            import pandas as pd
-            data = pd.read_excel(temp_file)
-            
-            # 删除临时文件
-            os.remove(temp_file)
-            
-            return data
-        except Exception as e:
-            self.logger.error(f"从OSS读取文件失败: {str(e)}")
-            raise
