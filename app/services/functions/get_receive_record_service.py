@@ -285,13 +285,14 @@ class GetReceiveRecordService:
                             temp_row['rr_vehicle'] = vehicle_id
                             temp_row['rr_sum_amount'] = accumulated_sum
                             result_rows.append(temp_row)
-                            print(f"分配车辆: {vehicle_id} 车牌: {license_plate} 收油数: {accumulated_sum}")
+                            
 
                             
                         else: 
                             print(f"Warning: No more vehicles available. Current accumulated: {total_accumulated}, Target: {total_barrels}")
                             should_break = True
                             break
+                    print(f"分配车辆: {vehicle_id} 车牌: {license_plate} 收油数: {accumulated_sum}")
                     current_vehicle_index += 1    
                     accumulated_sum = 0
                     temp_group = []
@@ -505,11 +506,11 @@ class GetReceiveRecordService:
         for index, row in result_df[['rr_vehicle','rr_date']].drop_duplicates().iterrows():
             vehicle_id = row['rr_vehicle']
             vehicle_last_use = row['rr_date']
-            cp_vehicle_df.update_vehicle_info(vehicle_id, {'vehicle_last_use': vehicle_last_use})
+            cp_vehicle_group.update_vehicle_info(vehicle_id, {'vehicle_last_use': vehicle_last_use})
         
         ## 将最后的餐厅信息和车辆信息转化为dataframe
         cp_restaurants_df = cp_restaurants_group.to_dataframe()
-        cp_vehicle_df = cp_vehicle_df.to_dataframe()
+        cp_vehicle_df = cp_vehicle_group.to_dataframe()
 
         # 过滤掉以下划线开头的列名，获得最后的收油表
         result_df = result_df[[col for col in result_df.columns if not col.startswith('_')]]
@@ -569,5 +570,7 @@ if __name__ == "__main__":
     
     cp_id = "cp1"
     his_oil_info = None
-    result = service.get_restaurant_oil_records(restaurant_list, vehicle_list, cp_id, his_oil_info)
+    result,cp_restaurants_df,cp_vehicle_df = service.get_restaurant_oil_records(restaurant_list, vehicle_list, cp_id, his_oil_info)
     result.to_excel("result.xlsx",index=False)
+    cp_restaurants_df.to_excel("cp_restaurants_df.xlsx",index=False)
+    cp_vehicle_df.to_excel("cp_vehicle_df.xlsx",index=False)
