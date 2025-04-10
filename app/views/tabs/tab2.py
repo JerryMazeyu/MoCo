@@ -1,9 +1,9 @@
-# ==================餐厅收集==================
+# ================================ 餐厅收集 ================================
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                             QLabel, QFrame, QComboBox, QGroupBox, QGridLayout,
                             QFileDialog, QMessageBox, QLayout, QListWidget, QDialog, QLineEdit)
-from PyQt5.QtCore import Qt, QSize, QPoint, QRect
+from PyQt5.QtCore import Qt, QSize, QPoint, QRect, QThread, pyqtSignal
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QPainter
 import pandas as pd
 from app.views.components.xlsxviewer import XlsxViewerWidget
@@ -212,6 +212,7 @@ class ApiTestWidget(QWidget):
                     key = CONF.KEYS.gaode_keys[0]
                     result = query_gaode(key, "北京")
                     success = result is not None and 'name' in result
+                    LOGGER.info(f"高德API测试结果: {result}")
                 else:
                     LOGGER.error("未找到高德地图API密钥")
             
@@ -221,6 +222,7 @@ class ApiTestWidget(QWidget):
                     key = CONF.KEYS.youdao_keys[0]
                     result = youdao_translate("测试文本", 'zh', 'en', key)
                     success = result is not None
+                    LOGGER.info(f"有道API测试结果: {result}")
                 else:
                     LOGGER.error("未找到有道翻译API密钥")
             
@@ -235,6 +237,7 @@ class ApiTestWidget(QWidget):
                     }
                     result = kimi_restaurant_type_analysis(rest_info, key)
                     success = result is not None
+                    LOGGER.info(f"KIMI API测试结果: {result}")
                 else:
                     LOGGER.error("未找到KIMI API密钥")
             
@@ -254,6 +257,7 @@ class ApiTestWidget(QWidget):
                         # 尝试列出前缀为CPs的对象
                         result = list(oss2.ObjectIterator(bucket, prefix='CPs/', max_keys=1))
                         success = True  # 如果没有异常，则认为连接成功
+                        LOGGER.info(f"阿里OSS测试结果: 成功")
                     else:
                         LOGGER.error("阿里云OSS配置不完整")
                 else:
@@ -328,6 +332,34 @@ class CPSelectDialog(QDialog):
             if 0 <= index < len(self.cp_list):
                 return self.cp_list[index]
         return None
+
+
+# 餐厅获取工作线程类
+class RestaurantWorker(QThread):
+    # 定义信号
+    finished = pyqtSignal(pd.DataFrame)  # 完成信号，携带查询结果
+    error = pyqtSignal(str)  # 错误信号，携带错误信息
+    
+    def __init__(self, city, cp_id):
+        super().__init__()
+        self.city = city
+        self.cp_id = cp_id
+    
+    def run(self):
+        try:
+            LOGGER.info(f"线程开始: 正在获取 {self.city} 的餐厅信息...")
+            
+            restaurant_service = GetRestaurantService()
+            restaurant_service.run(cities=self.city, cp_id=self.cp_id, model_class=RestaurantModel, file_path=None, use_api=True)
+
+            restaurant_group = restaurant_service.get_restaurants_group()
+            restaurant_data = restaurant_group.to_dataframe()
+            
+            LOGGER.info(f"{self.city} 餐厅信息获取完成，共 {len(restaurant_data)} 条记录")
+            self.finished.emit(restaurant_data)
+        except Exception as e:
+            LOGGER.error(f"获取餐厅信息时出错: {str(e)}")
+            self.error.emit(str(e))
 
 
 class Tab2(QWidget):
@@ -473,14 +505,14 @@ class Tab2(QWidget):
         """)
         
         # 导入按钮
-        self.import_button = QPushButton("导入已有餐厅")
-        self.import_button.clicked.connect(self.import_restaurants)
+        # self.import_button = QPushButton("导入已有餐厅")
+        # self.import_button.clicked.connect(self.import_restaurants)
         
         control_layout.addWidget(city_label)
         control_layout.addWidget(self.city_input)  # 使用输入框
         control_layout.addSpacing(20)
         control_layout.addWidget(self.get_restaurant_button)
-        control_layout.addWidget(self.import_button)
+        # control_layout.addWidget(self.import_button)
         control_layout.addStretch()
         
         self.layout.addWidget(control_frame)
@@ -491,7 +523,7 @@ class Tab2(QWidget):
         self.logger = get_logger()
         
         # 加载示例数据
-        self.load_sample_data()
+        # self.load_sample_data()
     
     def load_sample_data(self):
         """加载示例数据"""
@@ -521,8 +553,15 @@ class Tab2(QWidget):
                 QMessageBox.warning(self, "CP列表为空", "未找到任何CP数据，请先添加CP。")
                 return
             
+            # 获取配置中的CP ID列表 - 直接使用CONF.BUSINESS.CP，因为它就是一个ID列表
+            conf_cp_ids = []
+            if hasattr(CONF, 'BUSINESS') and hasattr(CONF.BUSINESS, 'CP'):
+                conf_cp_ids = CONF.BUSINESS.CP.cp_id  # 直接使用列表
+
+            available_cp_list = [cp for cp in cp_list if cp['cp_id'] in conf_cp_ids]
+            
             # 显示CP选择对话框
-            dialog = CPSelectDialog(cp_list, self)
+            dialog = CPSelectDialog(available_cp_list, self)
             if dialog.exec_() == QDialog.Accepted:
                 selected_cp = dialog.get_selected_cp()
                 if selected_cp:
@@ -532,24 +571,6 @@ class Tab2(QWidget):
                         'cp_name': selected_cp['cp_name'] if isinstance(selected_cp, dict) else selected_cp.cp_name
                     }
                     
-                    # 获取配置中的CP ID列表 - 直接使用CONF.BUSINESS.CP，因为它就是一个ID列表
-                    conf_cp_ids = []
-                    if hasattr(CONF, 'BUSINESS') and hasattr(CONF.BUSINESS, 'CP'):
-                        conf_cp_ids = CONF.BUSINESS.CP  # 直接使用列表
-                    
-                    LOGGER.info(f"配置中的CP ID列表: {conf_cp_ids}")
-                    
-                    if cp_data['cp_id'] in conf_cp_ids:
-                        LOGGER.info(f"选择的CP {cp_data['cp_name']} (ID: {cp_data['cp_id']}) 在配置中存在")
-                    else:
-                        LOGGER.warning(f"选择的CP {cp_data['cp_name']} (ID: {cp_data['cp_id']}) 不在配置中")
-                        reply = QMessageBox.question(
-                            self, 'CP不在配置中', 
-                            f'选择的CP "{cp_data["cp_name"]}" 不在配置列表中。是否继续使用？',
-                            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-                        )
-                        if reply == QMessageBox.No:
-                            return
                     
                     # 保存选择的CP到运行时配置
                     if not hasattr(CONF, 'runtime'):
@@ -660,37 +681,51 @@ class Tab2(QWidget):
                 if reply == QMessageBox.No:
                     return
             
-            # 模拟获取餐厅信息
-            LOGGER.info(f"正在获取 {city} 的餐厅信息...")
+            # 禁用获取按钮，防止重复点击
+            self.get_restaurant_button.setEnabled(False)
+            self.get_restaurant_button.setText("正在获取...")
             
-            restaurant_service = GetRestaurantService()
-            restaurant_service.run(cities=city, cp_id=self.current_cp['cp_id'], model_class=RestaurantModel, file_path=None, use_api=True)
-
-            restaurant_group = restaurant_service.get_restaurants_group()
-            restaurant_data = restaurant_group.to_dataframe()
-            # # 模拟数据获取延迟
-            # import time
-            # time.sleep(1)
+            # 创建工作线程
+            self.worker = RestaurantWorker(city=city, cp_id=self.current_cp['cp_id'])
             
-            # # 创建模拟数据
-            # data = {
-            #     "餐厅名称": [f"{city}好味餐厅", f"{city}美食城", f"{city}老字号饭店", f"{city}快餐小吃"],
-            #     "地址": [f"{city}市xx区xx路xx号", f"{city}市xx区xx路xx号", f"{city}市xx区xx路xx号", f"{city}市xx区xx路xx号"],
-            #     "电话": ["123-45678900", "123-45678901", "123-45678902", "123-45678903"],
-            #     "营业时间": ["09:00-22:00", "10:00-21:00", "08:30-23:00", "07:00-22:30"],
-            #     "评分": [4.5, 4.2, 4.8, 4.0]
-            # }
+            # 连接信号
+            self.worker.finished.connect(self.on_restaurant_search_finished)
+            self.worker.error.connect(self.on_restaurant_search_error)
             
-            # df = pd.DataFrame(data)
+            # 启动线程
+            LOGGER.info(f"启动餐厅获取线程，搜索城市: {city}")
+            self.worker.start()
             
+        except Exception as e:
+            LOGGER.error(f"启动餐厅获取线程时出错: {str(e)}")
+            QMessageBox.critical(self, "获取失败", f"启动餐厅获取线程时出错: {str(e)}")
+            self.get_restaurant_button.setEnabled(True)
+            self.get_restaurant_button.setText("餐厅获取")
+    
+    def on_restaurant_search_finished(self, restaurant_data):
+        """餐厅搜索完成的回调函数"""
+        try:
             # 更新Excel查看器
             self.xlsx_viewer.load_data(data=restaurant_data)
             
-            # 打印完成消息
-            LOGGER.info(f"{city} 餐厅信息获取完成，共 {len(restaurant_data)} 条记录")
+            # 显示成功消息
+            QMessageBox.information(self, "获取成功", f"餐厅信息获取完成，共 {len(restaurant_data)} 条记录")
+            
+            # 恢复按钮状态
+            self.get_restaurant_button.setEnabled(True)
+            self.get_restaurant_button.setText("餐厅获取")
+            
         except Exception as e:
-            LOGGER.error(f"获取餐厅信息时出错: {str(e)}")
-            QMessageBox.critical(self, "获取失败", f"获取餐厅信息时出错: {str(e)}")
+            LOGGER.error(f"处理餐厅搜索结果时出错: {str(e)}")
+            QMessageBox.critical(self, "处理失败", f"处理餐厅搜索结果时出错: {str(e)}")
+            self.get_restaurant_button.setEnabled(True)
+            self.get_restaurant_button.setText("餐厅获取")
+    
+    def on_restaurant_search_error(self, error_msg):
+        """餐厅搜索出错的回调函数"""
+        QMessageBox.critical(self, "获取失败", f"获取餐厅信息时出错: {error_msg}")
+        self.get_restaurant_button.setEnabled(True)
+        self.get_restaurant_button.setText("餐厅获取")
     
     def check_apis(self):
         """检查所有API连通性"""

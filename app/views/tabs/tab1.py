@@ -1,3 +1,6 @@
+# ================================ 配置界面 ================================
+
+
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                             QTreeView, QMessageBox, QLabel, QFrame, QHeaderView,
                             QSplitter)
@@ -355,7 +358,13 @@ class Tab1(QWidget):
     def save_config(self):
         """保存配置到文件"""
         try:
+            # 先从页面模型中提取最新的配置数据
+            self.extract_values_from_model()
+            # 然后保存配置到文件
             global_context.data['CONF_OBJ'].save()
+            # 更新全局上下文中的配置
+            global_context.data['CONF'] = copy.deepcopy(global_context.data['CONF_OBJ']._config_dict)
+            QMessageBox.information(self, "保存成功", "配置已成功保存")
         except Exception as e:
             QMessageBox.critical(self, "保存失败", f"保存配置时出错：{str(e)}")
     
@@ -396,12 +405,28 @@ class Tab1(QWidget):
                     
                     # 尝试转换为适当的类型
                     try:
+                        # 尝试解析列表
+                        if value.startswith('[') and value.endswith(']'):
+                            try:
+                                # 移除字符串表示的列表格式
+                                if value.startswith("['") and value.endswith("']"):
+                                    # 尝试将字符串形式的列表转为真实列表
+                                    import ast
+                                    value = ast.literal_eval(value)
+                                else:
+                                    # 其他列表格式，如 [1, 2, 3]
+                                    value = yaml.safe_load(value)
+                            except:
+                                pass
                         # 尝试转换为整数
-                        if value.isdigit():
+                        elif value.isdigit():
                             value = int(value)
                         # 尝试转换为浮点数
                         elif value.replace('.', '', 1).isdigit() and value.count('.') == 1:
                             value = float(value)
+                        # 尝试解析逗号分隔的数字为列表
+                        elif ',' in value and all(v.strip().isdigit() for v in value.split(',')):
+                            value = [int(v.strip()) for v in value.split(',')]
                         # 尝试转换为布尔值
                         elif value.lower() in ('true', 'false'):
                             value = value.lower() == 'true'

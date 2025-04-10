@@ -25,12 +25,12 @@ def test_create_cp():
     """测试创建CP实例"""
     # 创建CP信息
     cp_info = {
-        "cp_name": "测试CP",
-        "cp_province": "广东省",
-        "cp_city": "广州市",
-        "cp_location": "23.129163,113.264435",  # 广州坐标
-        "cp_barrels_per_day": 100,
-        "cp_capacity": 1000
+        "cp_name": "锦州工厂",
+        "cp_province": "辽宁省",
+        "cp_city": "锦州市",
+        "cp_location": "41.114647,121.135742",  # 锦州坐标
+        "cp_barrels_per_day": 200,
+        "cp_capacity": 90000
     }
     
     # 创建CP实例

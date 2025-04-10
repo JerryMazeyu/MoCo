@@ -6,7 +6,7 @@ from app.utils.hash import hash_text
 from app.utils.logger import setup_logger
 from app.utils.file_io import rp
 from app.utils.query import robust_query
-from app.utils.conversion import convert_to_pinyin
+from app.utils.conversion import convert_to_pinyin, translate_text
 import hashlib
 import time
 import uuid
@@ -211,6 +211,123 @@ def kimi_restaurant_type_analysis(rest_info: Dict[str, str], api_key: str = None
     except Exception as e:
         LOGGER.error(f"KIMI餐厅类型分析异常: {str(e)}")
         return None
+    
+
+# ===========  解析地理信息 ==========
+
+def parse_geo_data(data: Union[str, Dict], level: str, filter_condition: Optional[Dict] = None) -> List[Dict[str, Any]]:
+    """
+    解析地理信息数据，返回指定级别的所有区域名称和中心位置。
+    
+    参数:
+        data: 字典对象或JSON文件路径
+        level: 要提取的级别，可以是 'province', 'city', 'district', 'street'
+        filter_condition: 筛选条件，格式为{'level': 'city', 'name': '广州市'}或{'level': 'district', 'adcode': '440105'}
+    
+    返回:
+        包含指定级别地理实体的列表，每个实体包含name和center信息
+    """
+    # 如果输入是文件路径，则先读取文件
+    if isinstance(data, str):
+        with open(data, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    
+    # 用于存储所有符合要求的地理实体
+    result = []
+    
+    # 解析筛选条件
+    filter_level = None
+    filter_criteria = {}
+    if filter_condition:
+        filter_level = filter_condition.get('level')
+        filter_criteria = {k: v for k, v in filter_condition.items() if k != 'level'}
+    
+    # 递归查找指定级别的地理实体
+    def search_level(item: Dict, parent_info: List[Dict] = None, in_filtered_branch: bool = False):
+        if parent_info is None:
+            parent_info = []
+        
+        # 获取当前项信息
+        current_level = item.get('level', '')
+        current_name = item.get('name', '')
+        item_info = {'level': current_level, 'name': current_name, 'item': item}
+        
+        # 检查当前项是否符合筛选条件
+        matches_filter = False
+        if filter_criteria:
+            if filter_level and current_level == filter_level:
+                matches_filter = all(item.get(key) == value for key, value in filter_criteria.items() if key in item)
+            elif not filter_level:
+                matches_filter = all(item.get(key) == value for key, value in filter_criteria.items() if key in item)
+        
+        # 更新筛选分支状态
+        in_filtered_branch = in_filtered_branch or matches_filter
+        
+        # 如果当前项级别与目标级别匹配，并且在筛选分支内或无筛选条件
+        if current_level == level and (not filter_criteria or in_filtered_branch):
+            path = ' > '.join([p['name'] for p in parent_info] + [current_name])
+            result.append({
+                'name': current_name,
+                'center': item.get('center', ''),
+                'adcode': item.get('adcode', ''),
+                'path': path
+            })
+        
+        # 递归处理子区域
+        districts = item.get('districts', [])
+        for district in districts:
+            search_level(district, parent_info + [item_info], in_filtered_branch)
+    
+    # 开始递归搜索
+    search_level(data)
+    
+    return result
+
+def get_geo_data_by_level(data: Union[str, Dict], level: str, filter_by: Optional[Dict] = None) -> List[Dict[str, Any]]:
+    """
+    获取指定级别的地理实体信息，只返回名称和中心位置。
+    
+    参数:
+        data: 字典对象或JSON文件路径
+        level: 要提取的级别，可以是 'province', 'city', 'district', 'street'
+        filter_by: 筛选条件，如{'name': '广州市'}或{'adcode': '440100'}，
+                  也可以指定级别{'level': 'city', 'name': '广州市'}
+    
+    返回:
+        包含指定级别地理实体的列表，每个实体只包含name和center信息
+    """
+    entities = parse_geo_data(data, level, filter_by)
+    return [{'name': entity['name'], 'center': entity['center']} for entity in entities]
+
+# 简化的函数，直接通过名称进行筛选
+def get_geo_data_by_name_and_level(data: Union[str, Dict], level: str, name: str, 
+                                  parent_level: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    通过名称筛选，获取指定区域下特定级别的地理实体信息。
+    
+    参数:
+        data: 字典对象或JSON文件路径
+        level: 要提取的级别，可以是 'province', 'city', 'district', 'street'
+        name: 要筛选的区域名称
+        parent_level: 父级区域的级别，可选。如果指定，则筛选特定级别下的区域
+    
+    返回:
+        包含指定级别地理实体的列表，每个实体只包含name和center信息
+    """
+    filter_by = {'name': name}
+    if parent_level:
+        filter_by['level'] = parent_level
+    return get_geo_data_by_level(data, level, filter_by)
+
+
+
+
+
+
+
+
+
+
 
 class Restaurant(BaseInstance):
     """
@@ -238,6 +355,16 @@ class Restaurant(BaseInstance):
             self.inst = type('DynamicModel', (), info)
         
         self.status = 'pending'  # 初始状态为待处理
+
+        try:
+            if not hasattr(self.conf.runtime, 'geoinfo'):
+                LOGGER.info(f"初始化地理位置信息...")
+                geoinfo = robust_query(query_gaode, self.conf.KEYS.gaode_keys, city=self.inst.rest_city)
+                setattr(self.conf.runtime, 'geoinfo', {})
+                self.conf.runtime.geoinfo[self.inst.rest_city] = geoinfo
+        except:
+            LOGGER.error(f"初始化地理位置信息失败: {e}")
+            self.conf.runtime.geoinfo = None
     
     def _generate_id_by_name(self) -> bool:
         """
@@ -282,7 +409,8 @@ class Restaurant(BaseInstance):
                         LOGGER.info(f"已为餐厅 '{chinese_name}' 使用有道翻译生成英文名: {english_name}")
                     else:
                         # 翻译失败，使用默认值
-                        self.inst.rest_english_name = convert_to_pinyin(chinese_name)
+                        # self.inst.rest_english_name = convert_to_pinyin(chinese_name)
+                        self.inst.rest_english_name = translate_text(chinese_name)
                         LOGGER.warning(f"翻译API调用失败，使用默认英文名: {self.inst.rest_english_name}")
                 else:
                     # 没有配置翻译API，使用默认值
@@ -319,7 +447,8 @@ class Restaurant(BaseInstance):
                         LOGGER.info(f"已为餐厅使用有道翻译生成英文地址: {english_address}")
                     else:
                         # 翻译失败，使用默认值
-                        self.inst.rest_english_address = convert_to_pinyin(chinese_address)
+                        # self.inst.rest_english_address = convert_to_pinyin(chinese_address)
+                        self.inst.rest_english_address = translate_text(chinese_address)
                         LOGGER.warning(f"翻译API调用失败，使用默认英文地址: {self.inst.rest_english_address}")
                 else:
                     # 没有配置翻译API，使用默认值
@@ -336,148 +465,110 @@ class Restaurant(BaseInstance):
         
         :return: 是否提取成功
         """
-        
+        result = True
+        # ================== 提取区域 ==================
         try:
+            target_district = None
             # city = convert_to_pinyin(self.inst.rest_city.split("市")[0])  # 城市变成中文了
             city = self.inst.rest_city.split("市")[0]
             address = self.inst.rest_chinese_address
             # 检查是否已有区域和街道信息
-            if not hasattr(self.inst, 'rest_district') or not self.inst.rest_district:
+            if not hasattr(self.inst, 'rest_district') or not self.inst.rest_district:  # 没有街道信息，生成
                 
-                candidate_districts = list(self.conf.STREETMAPS._config_dict[city].keys())
-                flag = False
-                for district in candidate_districts:
-                    if district in self.inst.rest_chinese_address:
-                        self.inst.rest_district = district
-                        LOGGER.info(f"已为餐厅提取区域: {district}")
-                        flag = True
-                        break
-                
-                if not flag:
-                    LOGGER.warning(f"{str(self.inst)}未找到区域, 尝试使用高德地图API获取区域信息")
-                    assert self.inst.rest_location is not None, f"{str(self.inst)}未找到经纬度，无法判断其所属区域"
-                    geoinfo = None
-                    if hasattr(self.conf, 'runtime') and hasattr(self.conf.runtime, 'geoinfo') and city in self.conf.runtime.geoinfo['name']:
-                        LOGGER.info(f"从self.conf.runtime.geoinfo中获取{city}的地理信息")
-                        geoinfo = self.conf.runtime.geoinfo[city]
-                    else:
-                        # 调用高德地图API获取地理信息
-                        LOGGER.info(f"调用高德地图API获取{city}的地理信息")
-                        geoinfo = robust_query(query_gaode, self.conf.KEYS.gaode_keys, city=city)
-                        setattr(self.conf.runtime, 'geoinfo', geoinfo)
-                        LOGGER.info(f"已将{city}的地理信息保存到self.conf.runtime.geoinfo中")
-                    try:
-                        
-                        # 分解餐厅位置经纬度
-                        rest_lng, rest_lat = self.inst.rest_location.split(',')
-                        rest_lng = float(rest_lng)
-                        rest_lat = float(rest_lat)
-                        min_distance = float('inf')
-                        for cand_district in geoinfo['districts']:
-                            cand_district_lng, cand_district_lat = cand_district['center'].split(',')
-                            cand_district_lng = float(cand_district_lng)
-                            cand_district_lat = float(cand_district_lat)
-                            distance = ((rest_lng - cand_district_lng) ** 2 + (rest_lat - cand_district_lat) ** 2) ** 0.5
-                            if distance < min_distance:
-                                min_distance = distance
-                                self.inst.rest_district = cand_district['name']
-                        LOGGER.info(f"已通过经纬度计算为餐厅找到最近区域: {self.inst.rest_district}")
-
-                    except Exception as e:
-                        LOGGER.error(f"解析地理信息出错: {str(e)}")
-                        self.conf.runtime.geoinfo[city] = None
-                        LOGGER.error(f"地理信息格式无效: {geoinfo}")
-
-            # ==================街道信息=================
-            if not hasattr(self.inst, 'rest_street') or not self.inst.rest_street:
-                if not hasattr(self.inst, 'rest_district') or not self.inst.rest_district:
-                    canditate_streets = ",".join(list(self.conf.STREETMAPS._config_dict[city].values())).split(",")
+                geoinfo = None
+                if hasattr(self.conf, 'runtime') and hasattr(self.conf.runtime, 'geoinfo') and city in self.conf.runtime.geoinfo.keys():
+                    LOGGER.info(f"从self.conf.runtime.geoinfo中获取{city}的地理信息")
+                    geoinfo = self.conf.runtime.geoinfo[city]
                 else:
-                    district = self.inst.rest_district
-                    canditate_streets = self.conf.STREETMAPS._config_dict[city][district].split(",")
+                    # 调用高德地图API获取地理信息
+                    LOGGER.info(f"调用高德地图API获取{city}的地理信息")
+                    geoinfo = robust_query(query_gaode, self.conf.KEYS.gaode_keys, city=city)
+                    setattr(self.conf.runtime, 'geoinfo', {})
+                    self.conf.runtime.geoinfo[city] = geoinfo  # 将获取到的地理信息保存到self.conf.runtime.geoinfo中, geoinfo是一个字典, key为city, value为地理信息
+                    LOGGER.info(f"已将{city}的地理信息保存到self.conf.runtime.geoinfo中")
+                
+                flag = False
+                cand_district = get_geo_data_by_level(geoinfo, 'district')
+                for district in cand_district:
+                    if district['name'] in address:
+                        self.inst.rest_district = district['name']
+                        flag = True 
+                        LOGGER.info(f"已为餐厅提取区域: {district['name']}")
+                        break
+                if not flag:  # 没有能从地址中提取的区域，尝试基于地理信息距离获取区域信息
+                    LOGGER.warning(f"{str(self.inst)}未找到区域, 尝试基于地理信息距离获取区域信息")
+                    assert self.inst.rest_location is not None, f"{str(self.inst)}未找到经纬度，无法判断其所属区域"
+                    rest_lng, rest_lat = self.inst.rest_location.split(',')
+                    rest_lng = float(rest_lng)
+                    rest_lat = float(rest_lat)
+                    min_distance = float('inf')
+                    
+                    for district in cand_district:
+                        district_lng, district_lat = district['center'].split(',')
+                        district_lng = float(district_lng)
+                        district_lat = float(district_lat)
+                        distance = ((rest_lng - district_lng) ** 2 + (rest_lat - district_lat) ** 2) ** 0.5
+                        if distance < min_distance:
+                            min_distance = distance
+                            target_district = district['name']
+                    LOGGER.info(f"已通过经纬度计算为餐厅找到最近区域: {target_district}")
+                    self.inst.rest_district = target_district
+                    result &= True
+        except Exception as e:
+            result &= False
+            LOGGER.error(f"提取区域失败: {e}")
+        
+        # ================== 提取街道 ==================
+        try:
+            if not hasattr(self.inst, 'rest_street') or not self.inst.rest_street:  # 如果没有，则生成
+               
+                try:
+                    geoinfo = self.conf.runtime.geoinfo[city]
+                except: # 如果没有geoinfo则生成
+                    # 调用高德地图API获取地理信息
+                    LOGGER.info(f"调用高德地图API获取{city}的地理信息")
+                    geoinfo = robust_query(query_gaode, self.conf.KEYS.gaode_keys, city=city)
+                    setattr(self.conf.runtime, 'geoinfo', {})
+                    self.conf.runtime.geoinfo[city] = geoinfo  # 将获取到的地理信息保存到self.conf.runtime.geoinfo中, geoinfo是一个字典, key为city, value为地理信息
+                    LOGGER.info(f"已将{city}的地理信息保存到self.conf.runtime.geoinfo中")
+                
+                if target_district:
+                    cand_street = get_geo_data_by_level(geoinfo, 'street', {'name': target_district, 'level': 'district'})
+                else:
+                    cand_street = get_geo_data_by_level(geoinfo, 'street')
 
                 flag = False
-                for street in canditate_streets:
-                    if street in address:
-                        self.inst.rest_street = street
-                        LOGGER.info(f"已从餐厅地址中为餐厅提取街道: {street}")
+                # 从cand_street中提取街道信息
+                for street in cand_street:
+                    if street['name'] in address:
+                        self.inst.rest_street = street['name']
+                        LOGGER.info(f"已为餐厅提取街道: {street['name']}")
                         flag = True
                         break
-                
                 if not flag:
-                    LOGGER.warning(f"{str(self.inst.rest_chinese_name)}未找到街道, 尝试使用API寻找街道信息")
+                    LOGGER.warning(f"{str(self.inst)}未找到街道, 尝试基于地理信息距离获取街道信息")
                     assert self.inst.rest_location is not None, f"{str(self.inst)}未找到经纬度，无法判断其所属街道"
-                    
-                    # 首先判断是否self.conf.runtime中包含geoinfo，如果没有则通过下面的url进行申请，并将返回的内容放到self.conf.runtime.geoinfo中
-                    geoinfo = None
-                    if hasattr(self.conf, 'runtime') and hasattr(self.conf.runtime, 'geoinfo') and city in self.conf.runtime.geoinfo['name']:
-                        LOGGER.info(f"从配置中获取{city}的地理信息")
-                        geoinfo = self.conf.runtime.geoinfo
-                    else:
-                        # 调用高德地图API获取地理信息
-                        LOGGER.info(f"调用高德地图API获取{city}的地理信息")
-                        
-                        # 使用robust_query进行健壮性调用
-                        geoinfo = robust_query(query_gaode, self.conf.KEYS.gaode_keys, city)
-                        setattr(self.conf.runtime, 'geoinfo', geoinfo)
-                        LOGGER.info(f"已将{city}的地理信息保存到self.conf.runtime.geoinfo中")
-                    
-                    # 如果成功获取地理信息，解析查找最近的街道
-                    if geoinfo:
-                        try:
-                            # 解析其中的geoinfo中的district中的内容
-                            if 'districts' in geoinfo and len(geoinfo['districts']) > 0:
-                                if hasattr(self.inst, 'rest_district') and self.inst.rest_district:
-                                    LOGGER.info(f"已知区域: {self.inst.rest_district}")
-                                    street_info = None
-                                    for candidate_district in geoinfo['districts']:
-                                        if candidate_district['name'] == self.inst.rest_district:
-                                            street_info = candidate_district['districts']
-                                            break
-                                else:
-                                    LOGGER.error(f"区域信息为空，将所有街道信息合并")
-                                    street_info = []
-                                    for candidate_district in geoinfo['districts']:
-                                        street_info.extend(candidate_district['districts'])
-                            
-                                # 分解餐厅位置经纬度
-                                rest_lng, rest_lat = self.inst.rest_location.split(',')
-                                rest_lng = float(rest_lng)
-                                rest_lat = float(rest_lat)
-
-                                min_distance = float('inf')
-                                nearest_street = None
-
-                                for street_obj in street_info:
-                                    street_lng, street_lat = street_obj['center'].split(',')
-                                    street_lng = float(street_lng)
-                                    street_lat = float(street_lat)
-                                    distance = ((rest_lng - street_lng) ** 2 + (rest_lat - street_lat) ** 2) ** 0.5
-                                    if distance < min_distance:
-                                        min_distance = distance
-                                        nearest_street = street_obj.get('name')
-                                
-                                self.inst.rest_street = nearest_street
-                                LOGGER.info(f"已通过经纬度计算为餐厅找到最近街道: {nearest_street}")
-
-                            else:
-                                LOGGER.error(f"地理信息格式无效: {geoinfo}")
-                                    
-                                
-                        except Exception as e:
-                            LOGGER.error(f"解析地理信息出错: {str(e)}")
-                    else:
-                        LOGGER.error("未能获取有效的地理信息，无法确定街道")
-                        # 使用默认值
-                        if not hasattr(self.inst, 'rest_district') or not self.inst.rest_district:
-                            self.inst.rest_district = "未知区域"
-                        if not hasattr(self.inst, 'rest_street') or not self.inst.rest_street:
-                            self.inst.rest_street = "未知街道"
-
-            return True
+                    rest_lng, rest_lat = self.inst.rest_location.split(',')
+                    rest_lng = float(rest_lng)
+                    rest_lat = float(rest_lat)
+                    min_distance = float('inf')
+                    target_street = None
+                    for street in cand_street:
+                        street_lng, street_lat = street['center'].split(',')
+                        street_lng = float(street_lng)
+                        street_lat = float(street_lat)
+                        distance = ((rest_lng - street_lng) ** 2 + (rest_lat - street_lat) ** 2) ** 0.5
+                        if distance < min_distance:
+                            min_distance = distance
+                            target_street = street['name']  
+                    LOGGER.info(f"已通过经纬度计算为餐厅找到最近街道: {target_street}")
+                    self.inst.rest_street = target_street
+                    result &= True
         except Exception as e:
-            LOGGER.error(f"提取区域和街道失败: {e}")
-            return False
+            result &= False
+            LOGGER.error(f"提取街道失败: {e}")
+        
+        return result
     
     def _generate_type(self) -> bool:
         """
@@ -722,7 +813,7 @@ class Restaurant(BaseInstance):
                 LOGGER.error(f"餐厅 '{self.inst.rest_chinese_name}' 缺少字段: {key}")
                 return False
             else:
-                LOGGER.info(f"餐厅 '{self.inst.rest_chinese_name}' 字段: {key} 已生成")
+                LOGGER.info(f"餐厅 '{self.inst.rest_chinese_name}' 字段: {key} 已检验")
         return True
 
     def __str__(self) -> str:

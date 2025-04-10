@@ -40,6 +40,9 @@ class LoginController:
             for user_key, user_data in user_info.items():
                 if user_data["username"] == username and user_data["password"] == hashed_password:
                     self.logger.info(f"用户 {username} 验证成功")
+                    # 设置环境变量
+                    os.environ["MoCo_USERNAME"] = username
+                    self.logger.info(f"已将环境变量MoCo_USERNAME设置为 {username}")
                     return True, user_key
             
             self.logger.info(f"用户 {username} 验证失败")

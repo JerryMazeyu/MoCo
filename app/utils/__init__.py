@@ -22,5 +22,8 @@ __all__ = [
     'oss_get_yaml_file',
     'oss_get_excel_file',
     'oss_put_excel_file',
-    'oss_rename_excel_file'
+    'oss_rename_excel_file',
+    'convert_to_pinyin',
+    'convert_miles_to_km',
+    'translate_text'
 ]

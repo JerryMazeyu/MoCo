@@ -26,7 +26,7 @@ def test_example():
     # 创建一个餐厅信息字典
     restaurant_info = {
         'rest_chinese_name': '鱼拿酸菜鱼(江北店)',
-        'rest_city': '惠州',
+        'rest_city': '广州',
         'rest_chinese_address': '惠州大道中路38号地下层1-BF12',
         'rest_belonged_cp': 'CP001',
         'rest_contact_phone': '18948223006', 
@@ -35,7 +35,7 @@ def test_example():
 
     restaurant_info2 = {
         'rest_chinese_name': '柠檬鱼御厨房',
-        'rest_city': '惠州',
+        'rest_city': '淳安县',
         'rest_chinese_address': '东平大道50号122',
         'rest_belonged_cp': 'CP001',
         'rest_contact_phone': '0752-2476929', 
