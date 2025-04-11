@@ -126,9 +126,15 @@ class Tab3(QWidget):
             if not cp_list:
                 QMessageBox.warning(self, "CP列表为空", "未找到任何CP数据，请先添加CP。")
                 return
+            # 获取配置中的CP ID列表 - 直接使用CONF.BUSINESS.CP，因为它就是一个ID列表
+            conf_cp_ids = []
+            if hasattr(CONF, 'BUSINESS') and hasattr(CONF.BUSINESS, 'CP'):
+                conf_cp_ids = CONF.BUSINESS.CP.cp_id  # 直接使用列表
+
+            available_cp_list = [cp for cp in cp_list if cp['cp_id'] in conf_cp_ids]
             
             # 显示CP选择对话框
-            dialog = CPSelectDialog(cp_list, self)
+            dialog = CPSelectDialog(available_cp_list, self)
             if dialog.exec_() == QDialog.Accepted:
                 selected_cp = dialog.get_selected_cp()
                 if selected_cp:
@@ -336,34 +342,34 @@ class Tab3(QWidget):
         options = QFileDialog.Options()
         file_name, _ = QFileDialog.getOpenFileName(self, "选择餐厅信息文件", "", "Excel Files (*.xlsx);;All Files (*)", options=options)
         if file_name:
-            # try:
+            try:
             # 直接使用pandas读取本地Excel文件
-            restaurant_data = pd.read_excel(file_name)
-            if restaurant_data.empty:
-                QMessageBox.warning(self, "文件为空", "所选文件没有数据")
-                self.update_step_status(1, 'error')
-                return
-            
-            # 转换为Restaurant对象列表
-            self.restaurants = [Restaurant(info) for info in restaurant_data.to_dict('records')]
-            
-            # 使用RestaurantsGroup进行过滤
-            restaurants_group = RestaurantsGroup(self.restaurants)
-            self.restaurants = restaurants_group.filter_by_cp(self.current_cp['cp_id']).to_dicts()
-            filter_restaurants = restaurants_group.filter_by_cp(self.current_cp['cp_id']).to_dataframe()
-            
-            # 将数据加载到餐厅信息页签
-            self.restaurant_viewer.load_data(data=filter_restaurants)
-            
-            # 切换到餐厅信息页签
-            self.tab_widget.setCurrentIndex(0)
-            
+                restaurant_data = pd.read_excel(file_name)
+                if restaurant_data.empty:
+                    QMessageBox.warning(self, "文件为空", "所选文件没有数据")
+                    self.update_step_status(1, 'error')
+                    return
+                
+                # 转换为Restaurant对象列表
+                self.restaurants = [Restaurant(info) for info in restaurant_data.to_dict('records')]
+                
+                # 使用RestaurantsGroup进行过滤
+                restaurants_group = RestaurantsGroup(self.restaurants)
+                self.restaurants = restaurants_group.filter_by_cp(self.current_cp['cp_id']).to_dicts()
+                filter_restaurants = restaurants_group.filter_by_cp(self.current_cp['cp_id']).to_dataframe()
+                
+                # 将数据加载到餐厅信息页签
+                self.restaurant_viewer.load_data(data=filter_restaurants)
+                
+                # 切换到餐厅信息页签
+                self.tab_widget.setCurrentIndex(0)
+                
 
-            
-            self.logger.info(f"成功载入餐厅信息，共 {len(self.restaurants)} 条记录")
-            self.update_step_status(1, 'finish')
-            # except Exception as e:
-            #     self.logger.error(f"上传餐厅信息时出错: {str(e)}")
-            #     QMessageBox.critical(self, "上传失败", f"上传餐厅信息时出错: {str(e)}")
-            #     self.update_step_status(1, 'error')
+                
+                self.logger.info(f"成功载入餐厅信息，共 {len(self.restaurants)} 条记录")
+                self.update_step_status(1, 'finish')
+            except Exception as e:
+                self.logger.error(f"上传餐厅信息时出错: {str(e)}")
+                QMessageBox.critical(self, "上传失败", f"上传餐厅信息时出错: {str(e)}")
+                self.update_step_status(1, 'error')
 
