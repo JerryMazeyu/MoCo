@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QFrame, QComboBox, QGroupBox, QFileDialog, 
                              QMessageBox, QDialog, QTabWidget)
+from PyQt5.QtGui import QPixmap
 from app.utils.logger import get_logger
 from app.services.instances.restaurant import Restaurant, RestaurantsGroup
 from app.services.instances.vehicle import Vehicle, VehicleGroup
@@ -12,6 +13,8 @@ import oss2
 from app.views.tabs.tab2 import CPSelectDialog
 from app.views.components.xlsxviewer import XlsxViewerWidget  # 导入 XlsxViewerWidget
 from app.utils import rp, oss_get_excel_file,oss_put_excel_file,oss_rename_excel_file
+import pandas as pd
+from PyQt5.QtCore import Qt
 
 # 获取全局日志对象
 LOGGER = get_logger()
@@ -48,26 +51,58 @@ class Tab3(QWidget):
         
         self.layout.addLayout(top_layout)
         
-        # 按钮区
-        button_layout = QHBoxLayout()
+        # 创建步骤状态布局和按钮布局的容器
+        steps_and_buttons_layout = QHBoxLayout()
         
-        self.load_restaurants_button = QPushButton("载入餐厅信息")
-        self.load_restaurants_button.clicked.connect(self.load_restaurants)
+        # 创建左侧的垂直布局，用于放置第一步的状态和按钮
+        step1_layout = QVBoxLayout()
+        self.step1_status = QLabel()
+        self.set_step_image(self.step1_status, "unfinish.png")
+        step1_layout.addWidget(self.step1_status, alignment=Qt.AlignCenter)
+        self.load_restaurants_button = QPushButton("上传餐厅信息")
+        self.load_restaurants_button.clicked.connect(self.upload_restaurant_file)
         self.load_restaurants_button.setEnabled(False)
+        self.load_restaurants_button.setFixedWidth(100)
+        step1_layout.addWidget(self.load_restaurants_button, alignment=Qt.AlignCenter)
+        steps_and_buttons_layout.addLayout(step1_layout)
         
+        # 添加箭头1
+        arrow1 = QLabel("→")
+        steps_and_buttons_layout.addWidget(arrow1, alignment=Qt.AlignCenter)
+        
+        # 创建中间的垂直布局，用于放置第二步的状态和按钮
+        step2_layout = QVBoxLayout()
+        self.step2_status = QLabel()
+        self.set_step_image(self.step2_status, "unfinish.png")
+        step2_layout.addWidget(self.step2_status, alignment=Qt.AlignCenter)
         self.load_vehicles_button = QPushButton("载入车辆信息")
         self.load_vehicles_button.clicked.connect(self.load_vehicles)
         self.load_vehicles_button.setEnabled(False)
+        self.load_vehicles_button.setFixedWidth(100)
+        step2_layout.addWidget(self.load_vehicles_button, alignment=Qt.AlignCenter)
+        steps_and_buttons_layout.addLayout(step2_layout)
         
+        # 添加箭头2
+        arrow2 = QLabel("→")
+        steps_and_buttons_layout.addWidget(arrow2, alignment=Qt.AlignCenter)
+        
+        # 创建右侧的垂直布局，用于放置第三步的状态和按钮
+        step3_layout = QVBoxLayout()
+        self.step3_status = QLabel()
+        self.set_step_image(self.step3_status, "unfinish.png")
+        step3_layout.addWidget(self.step3_status, alignment=Qt.AlignCenter)
         self.generate_report_button = QPushButton("生成收油表")
         self.generate_report_button.clicked.connect(self.generate_report)
         self.generate_report_button.setEnabled(False)
+        self.generate_report_button.setFixedWidth(100)
+        step3_layout.addWidget(self.generate_report_button, alignment=Qt.AlignCenter)
+        steps_and_buttons_layout.addLayout(step3_layout)
         
-        button_layout.addWidget(self.load_restaurants_button)
-        button_layout.addWidget(self.load_vehicles_button)
-        button_layout.addWidget(self.generate_report_button)
+        # 添加弹性空间
+        steps_and_buttons_layout.addStretch()
         
-        self.layout.addLayout(button_layout)
+        # 将步骤和按钮的布局添加到主布局
+        self.layout.addLayout(steps_and_buttons_layout)
         
         # 创建带有页签的数据展示区
         self.tab_widget = QTabWidget()
@@ -106,7 +141,7 @@ class Tab3(QWidget):
                     # 获取配置中的CP ID列表 - 直接使用CONF.BUSINESS.CP，因为它就是一个ID列表
                     conf_cp_ids = []
                     if hasattr(CONF, 'BUSINESS') and hasattr(CONF.BUSINESS, 'CP'):
-                        conf_cp_ids = CONF.BUSINESS.CP  # 直接使用列表
+                        conf_cp_ids = CONF.BUSINESS.CP.cp_id  # 直接使用列表
                     
                     LOGGER.info(f"配置中的CP ID列表: {conf_cp_ids}")
                     
@@ -151,18 +186,53 @@ class Tab3(QWidget):
                     if self.main_window_ref:
                         self.main_window_ref.set_current_cp(cp_data['cp_id'])
                     
-                    # 启用相关按钮
+                    # 启用第一步按钮，禁用后续按钮
                     self.load_restaurants_button.setEnabled(True)
-                    self.load_vehicles_button.setEnabled(True)
-                    self.generate_report_button.setEnabled(True)
+                    self.load_vehicles_button.setEnabled(False)
+                    self.generate_report_button.setEnabled(False)
+                    
+                    # 重置所有步骤状态
+                    self.update_step_status(1, 'unfinish')
+                    self.update_step_status(2, 'unfinish')
+                    self.update_step_status(3, 'unfinish')
                 
         except Exception as e:
             LOGGER.error(f"选择CP时出错: {str(e)}")
             LOGGER.error(f"CONF.BUSINESS.CP的内容: {getattr(CONF.BUSINESS, 'CP', None)}")
             QMessageBox.critical(self, "选择CP失败", f"选择CP时出错: {str(e)}")
     
+    def set_step_image(self, label, image_name):
+        """设置步骤状态图片"""
+        pixmap = QPixmap(f"app/resources/icons/{image_name}")  # 修改图片路径
+        scaled_pixmap = pixmap.scaled(24, 24)  # 设置图片大小
+        label.setPixmap(scaled_pixmap)
+
+    def update_step_status(self, step, status):
+        """更新步骤状态
+        step: 1, 2, 3 表示哪一步
+        status: 'dealing', 'finish', 'error', 'unfinish'
+        """
+        status_label = getattr(self, f"step{step}_status")
+        self.set_step_image(status_label, f"{status}.png")
+        
+        # 更新按钮状态
+        if status == 'finish':
+            if step == 1:
+                self.load_vehicles_button.setEnabled(True)
+            elif step == 2:
+                self.generate_report_button.setEnabled(True)
+        elif status == 'error':
+            # 如果当前步骤失败，禁用后续步骤
+            if step == 1:
+                self.load_vehicles_button.setEnabled(False)
+                self.generate_report_button.setEnabled(False)
+            elif step == 2:
+                self.generate_report_button.setEnabled(False)
+
+    ## 从oss载入餐厅
     def load_restaurants(self):
         """载入餐厅信息"""
+        self.update_step_status(1, 'dealing')
         try:
             if not hasattr(self, 'restaurant_file'):
                 QMessageBox.warning(self, "未选择CP", "请先选择CP")
@@ -192,12 +262,15 @@ class Tab3(QWidget):
             self.tab_widget.setCurrentIndex(0)
             
             self.logger.info(f"成功载入餐厅信息，共 {len(self.restaurants)} 条记录")
+            self.update_step_status(1, 'finish')
         except Exception as e:
             self.logger.error(f"载入餐厅信息时出错: {str(e)}")
             QMessageBox.critical(self, "载入失败", f"载入餐厅信息时出错: {str(e)}")
+            self.update_step_status(1, 'error')
     
     def load_vehicles(self):
         """载入车辆信息"""
+        self.update_step_status(2, 'dealing')
         try:
             if not hasattr(self, 'vehicle_file'):
                 QMessageBox.warning(self, "未选择CP", "请先选择CP")
@@ -227,12 +300,15 @@ class Tab3(QWidget):
             self.tab_widget.setCurrentIndex(1)
             
             self.logger.info(f"成功载入车辆信息，共 {len(self.vehicles)} 条记录")
+            self.update_step_status(2, 'finish')
         except Exception as e:
             self.logger.error(f"载入车辆信息时出错: {str(e)}")
             QMessageBox.critical(self, "载入失败", f"载入车辆信息时出错: {str(e)}")
+            self.update_step_status(2, 'error')
     
     def generate_report(self):
         """生成收油表"""
+        self.update_step_status(3, 'dealing')
         try:
             service = GetReceiveRecordService(model=ReceiveRecordModel, conf=CONF)
             result, cp_restaurants_df, cp_vehicle_df = service.get_restaurant_oil_records(self.restaurants, self.vehicles, self.current_cp['cp_id'])
@@ -244,7 +320,50 @@ class Tab3(QWidget):
             self.tab_widget.setCurrentIndex(2)
             
             self.logger.info("收油表生成成功")
+            self.update_step_status(3, 'finish')
         except Exception as e:
             self.logger.error(f"生成收油表时出错: {str(e)}")
             QMessageBox.critical(self, "生成失败", f"生成收油表时出错: {str(e)}")
+            self.update_step_status(3, 'error')
     
+    def upload_restaurant_file(self):
+        """上传餐厅信息文件"""
+        if not hasattr(self, 'vehicle_file'):
+            QMessageBox.warning(self, "未选择CP", "请先选择CP")
+            return
+        
+        self.update_step_status(1, 'dealing')
+        options = QFileDialog.Options()
+        file_name, _ = QFileDialog.getOpenFileName(self, "选择餐厅信息文件", "", "Excel Files (*.xlsx);;All Files (*)", options=options)
+        if file_name:
+            # try:
+            # 直接使用pandas读取本地Excel文件
+            restaurant_data = pd.read_excel(file_name)
+            if restaurant_data.empty:
+                QMessageBox.warning(self, "文件为空", "所选文件没有数据")
+                self.update_step_status(1, 'error')
+                return
+            
+            # 转换为Restaurant对象列表
+            self.restaurants = [Restaurant(info) for info in restaurant_data.to_dict('records')]
+            
+            # 使用RestaurantsGroup进行过滤
+            restaurants_group = RestaurantsGroup(self.restaurants)
+            self.restaurants = restaurants_group.filter_by_cp(self.current_cp['cp_id']).to_dicts()
+            filter_restaurants = restaurants_group.filter_by_cp(self.current_cp['cp_id']).to_dataframe()
+            
+            # 将数据加载到餐厅信息页签
+            self.restaurant_viewer.load_data(data=filter_restaurants)
+            
+            # 切换到餐厅信息页签
+            self.tab_widget.setCurrentIndex(0)
+            
+
+            
+            self.logger.info(f"成功载入餐厅信息，共 {len(self.restaurants)} 条记录")
+            self.update_step_status(1, 'finish')
+            # except Exception as e:
+            #     self.logger.error(f"上传餐厅信息时出错: {str(e)}")
+            #     QMessageBox.critical(self, "上传失败", f"上传餐厅信息时出错: {str(e)}")
+            #     self.update_step_status(1, 'error')
+
