@@ -17,6 +17,7 @@ import random
 import mingzi
 from datetime import datetime
 import math
+from app.utils.oss import oss_get_json_file
 
 # 设置日志
 LOGGER = setup_logger("moco.log")
@@ -333,7 +334,7 @@ class Restaurant(BaseInstance):
     """
     餐厅实体类，处理餐厅模型的业务逻辑
     """
-    def __init__(self, info: Dict[str, Any], model=RestaurantModel, conf=CONF):
+    def __init__(self, info: Dict[str, Any], model=RestaurantModel, conf=CONF,cp_location = None):
         """
         初始化餐厅实体
         
@@ -343,6 +344,7 @@ class Restaurant(BaseInstance):
         """
         super().__init__(model)
         self.conf = conf
+        self.cp_location = cp_location
         
         # 确保必须的字段存在
         assert info.get('rest_chinese_name') is not None, "必须提供餐厅中文名称"
@@ -655,7 +657,7 @@ class Restaurant(BaseInstance):
             LOGGER.error(f"生成联系人信息失败: {e}")
             return False
     
-    def _calculate_distance(self) -> bool:
+    def _calculate_distance(self,cp_location) -> bool:
         """
         计算餐厅与所属CP的距离
         
@@ -667,32 +669,22 @@ class Restaurant(BaseInstance):
                 # 获取餐厅位置
                 restaurant_location = self.inst.rest_location
                 
-                # 在实际项目中，应该查询CP的位置然后计算距离
-                # 这里使用一个模拟值
-                cp_id = self.inst.rest_belonged_cp
-                
-                ## 获取conf中CP_LOCATION中的cp_id为cp_id的location
-                cp_location = None
-                for cp_location_item in self.conf.BUSINESS.CP_LOCATION:
-                    if cp_location_item['cp_id'] == cp_id:
-                        cp_location = cp_location_item['location']
-                        break
                 
                 if not cp_location:
                     LOGGER.warning("警告: 工厂坐标未设置，跳过距离计算")
                     # 给所有餐厅设置一个默认距离
                     self.inst.rest_distance = 0
                 else:
-                            if not restaurant_location:
-                                LOGGER.warning(f"警告: 餐厅{self.inst.rest_chinese_name}没有坐标信息，跳过距离计算")
-                                self.inst.rest_distance = 0 
-                            else:
-                                res_lon, res_lat = map(float, restaurant_location.split(','))  # 假设坐标格式为 "经度,纬度"
-                                cp_lon, cp_lat = map(float, cp_location.split(','))  # 假设坐标格式为 "经度,纬度"
-                                factory_lat_lon = (cp_lat, cp_lon)
-                                distance = self._haversine((res_lat, res_lon), factory_lat_lon)  # 计算距离(维度,经度),(维度,经度)
-                                self.inst.rest_distance = distance  
-                                LOGGER.info(f"已计算餐厅到CP的距离: {distance}公里")
+                        if not restaurant_location:
+                            LOGGER.warning(f"警告: 餐厅{self.inst.rest_chinese_name}没有坐标信息，跳过距离计算")
+                            self.inst.rest_distance = 0 
+                        else:
+                            res_lon, res_lat = map(float, restaurant_location.split(','))  # 假设坐标格式为 "经度,纬度"
+                            cp_lon, cp_lat = map(float, cp_location.split(','))  # 假设坐标格式为 "经度,纬度"
+                            factory_lat_lon = (cp_lat, cp_lon)
+                            distance = self._haversine((res_lat, res_lon), factory_lat_lon)  # 计算距离(维度,经度),(维度,经度)
+                            self.inst.rest_distance = distance  
+                            LOGGER.info(f"已计算餐厅到CP的距离: {distance}公里")
                 # # 使用哈希值来生成一个稳定但随机的距离
                 # distance_hash = hash(f"{restaurant_location}_{cp_location}")
                 # distance_km = 1 + abs(distance_hash % 20)  # 1-20公里范围内
@@ -790,7 +782,7 @@ class Restaurant(BaseInstance):
         success &= self._generate_contact_info()
         
         # 计算距离
-        success &= self._calculate_distance()
+        success &= self._calculate_distance(self.cp_location)
 
         # 生成确认日期
         success &= self._generate_verified_date()

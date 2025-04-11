@@ -14,6 +14,7 @@ from app.config.config import CONF
 from app.utils.query import robust_query
 import re
 import math
+from app.utils.oss import oss_get_json_file
 # 设置日志
 LOGGER = setup_logger("moco.log")
 
@@ -369,6 +370,14 @@ class GetRestaurantService:
         :param cp_id: 餐厅所属CP ID，可选
         """
         self.restaurants = []
+        ## 加入工厂的地理位置，方便计算距离
+        if cp_id:   
+            cp_location_file = f"CPs/{cp_id}/{cp_id}.json"  # 直接使用OSS路径格式
+            cp_location_info = oss_get_json_file(cp_location_file)
+            cp_location = cp_location_info['cp_location']
+            LOGGER.info(f"已获取CP {cp_id} 经纬度: {cp_location}")
+        else:
+            cp_location = None  
         
         for data in self.info:
             # 如果提供了CP ID，添加到数据中
@@ -376,7 +385,7 @@ class GetRestaurantService:
                 data['rest_belonged_cp'] = cp_id
             
             # 创建餐厅实体
-            restaurant = Restaurant(data, model=model_class, conf=self.conf)
+            restaurant = Restaurant(data, model=model_class, conf=self.conf,cp_location = cp_location)
             
             # 生成缺失字段
             restaurant.generate()
