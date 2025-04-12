@@ -252,6 +252,8 @@ class ReceiveRecordsGroup(BaseGroup):
         return f"ReceiveRecordsGroup(数量={self.count()}, 类型={self.group_type}{date_info}, 总量={self.get_total_amount()}吨)"
 
 
+
+
 class ReceiveRecordsBalance(BaseGroup):
     """
     收油记录平衡表，用于管理多个日期的收油记录组合
@@ -451,4 +453,96 @@ class ReceiveRecordsBalance(BaseGroup):
         :return: 字符串表示
         """
         period_info = f", 周期={self.period}" if self.period else ""
-        return f"ReceiveRecordsBalance(日期数={len(self.daily_groups)}, 总量={self.get_total_amount()}吨{period_info})" 
+        return f"ReceiveRecordsBalance(日期数={len(self.daily_groups)}, 总量={self.get_total_amount()}吨{period_info})"
+
+
+class BalanceRecords(BaseInstance):
+    """
+    平衡记录实体类，处理餐厅的平衡记录
+    """
+    def __init__(self, info: Dict[str, Any], model=None, conf=None):
+        """
+        初始化平衡记录实体
+        
+        :param info: 平衡记录信息字典
+        :param model: 平衡记录模型类，可选
+        :param conf: 配置服务，可选
+        """
+        super().__init__(model)
+        self.conf = conf
+        
+        # 基本校验，确保必要字段存在
+        if model:
+            # 创建模型实例
+            self.inst = model(**info)
+        else:
+            # 如果没有提供模型类，直接存储info
+            self.inst = type('DynamicModel', (), info)
+        
+        self.status = 'pending'  # 初始状态为待处理
+
+    def generate(self) -> bool:
+        """
+        生成平衡记录的所有缺失字段
+        
+        :return: 是否全部生成成功
+        """
+        # 这里可以添加生成逻辑
+        self.status = 'ready'
+        return True
+
+    def __str__(self) -> str:
+        """
+        返回平衡记录的字符串表示
+        
+        :return: 字符串表示
+        """
+        return f"BalanceRecords(id={getattr(self.inst, 'balance_id', 'unknown')}, 日期={getattr(self.inst, 'balance_date', 'unknown')})"
+
+
+class BalanceRecordsGroup(BaseGroup):
+    """
+    平衡记录组合类，用于管理多个平衡记录实体
+    """
+    def __init__(self, records: List[BalanceRecords] = None, group_type: str = None, group_date: str = None):
+        """
+        初始化平衡记录组合
+        
+        :param records: 平衡记录列表
+        :param group_type: 组合类型，如'daily'、'monthly'等
+        :param group_date: 组合日期，格式为'YYYY-MM-DD'
+        """
+        super().__init__(records, group_type)
+        self.group_date = group_date
+
+    def filter_by_date(self, date: str) -> 'BalanceRecordsGroup':
+        """
+        按日期筛选平衡记录
+        
+        :param date: 日期字符串，格式为'YYYY-MM-DD'
+        :return: 筛选后的平衡记录组合
+        """
+        filtered = self.filter(lambda r: hasattr(r.inst, 'balance_date') and r.inst.balance_date == date)
+        filtered.group_date = date
+        return filtered
+
+    def get_total_amount(self) -> float:
+        """
+        获取总平衡量
+        
+        :return: 总平衡量
+        """
+        total = 0.0
+        for record in self.members:
+            if hasattr(record.inst, 'balance_amount'):
+                total += float(record.inst.balance_amount)
+        return total
+
+    def __str__(self) -> str:
+        """
+        返回平衡记录组合的字符串表示
+        
+        :return: 字符串表示
+        """
+        date_info = f", 日期={self.group_date}" if self.group_date else ""
+        return f"BalanceRecordsGroup(数量={self.count()}, 类型={self.group_type}{date_info}, 总量={self.get_total_amount()})" 

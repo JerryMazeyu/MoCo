@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QFrame, QComboBox, QGroupBox, QFileDialog, 
-                             QMessageBox, QDialog, QTabWidget)
+                             QMessageBox, QDialog, QTabWidget,QLineEdit)
 from PyQt5.QtGui import QPixmap
 from app.utils.logger import get_logger
 from app.services.instances.restaurant import Restaurant, RestaurantsGroup
@@ -18,6 +18,52 @@ from PyQt5.QtCore import Qt
 
 # 获取全局日志对象
 LOGGER = get_logger()
+
+class TransportDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("运输信息")
+        
+        # 布局
+        layout = QVBoxLayout()
+        
+        # 天数输入框
+        self.days_input = QLineEdit(self)
+        self.days_input.setPlaceholderText("请输入运输天数（1-31）")
+        layout.addWidget(QLabel("运输天数:"))
+        layout.addWidget(self.days_input)
+        
+        # 年月下拉框
+        self.month_year_combo = QComboBox(self)
+        self.month_year_combo.addItems(self.generate_month_year_options())
+        layout.addWidget(QLabel("选择年月:"))
+        layout.addWidget(self.month_year_combo)
+        
+        # 确认和取消按钮
+        button_layout = QHBoxLayout()
+        self.confirm_button = QPushButton("确认", self)
+        self.confirm_button.clicked.connect(self.accept)
+        self.cancel_button = QPushButton("取消", self)
+        self.cancel_button.clicked.connect(self.reject)
+        
+        button_layout.addWidget(self.confirm_button)
+        button_layout.addWidget(self.cancel_button)
+        
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+    def generate_month_year_options(self):
+        """生成年月选项"""
+        options = []
+        for year in range(2020, 2031):  # 2020到2030年
+            for month in range(1, 13):
+                options.append(f"{year}-{month:02d}")
+        return options
+
+    def get_input_data(self):
+        """获取输入的数据"""
+        return self.days_input.text(), self.month_year_combo.currentText()
 
 class Tab3(QWidget):
     """收油表生成Tab，实现餐厅和车辆信息的加载与收油表生成"""
@@ -46,8 +92,14 @@ class Tab3(QWidget):
         self.cp_button.clicked.connect(self.select_cp)
         self.cp_button.setFixedWidth(150)
         
+        # 清空按钮
+        self.clear_button = QPushButton("清空页面")
+        self.clear_button.clicked.connect(self.clear_page)
+        self.clear_button.setFixedWidth(100)
+        
         top_layout.addStretch(1)
         top_layout.addWidget(self.cp_button)
+        top_layout.addWidget(self.clear_button)  # 添加清空按钮
         
         self.layout.addLayout(top_layout)
         
@@ -91,10 +143,10 @@ class Tab3(QWidget):
         self.step3_status = QLabel()
         self.set_step_image(self.step3_status, "unfinish.png")
         step3_layout.addWidget(self.step3_status, alignment=Qt.AlignCenter)
-        self.generate_report_button = QPushButton("生成收油表")
+        self.generate_report_button = QPushButton("生成收油表和平衡表")
         self.generate_report_button.clicked.connect(self.generate_report)
         self.generate_report_button.setEnabled(False)
-        self.generate_report_button.setFixedWidth(100)
+        self.generate_report_button.setFixedWidth(150)
         step3_layout.addWidget(self.generate_report_button, alignment=Qt.AlignCenter)
         steps_and_buttons_layout.addLayout(step3_layout)
         
@@ -111,9 +163,19 @@ class Tab3(QWidget):
         self.restaurant_viewer = None
         self.vehicle_viewer = None
         self.report_viewer = None
+        self.balance_view = None
         
         self.layout.addWidget(self.tab_widget)
+            # 在添加 tab_widget 之后，添加保存所有按钮的布局
+        bottom_layout = QHBoxLayout()
+        self.save_all_button = QPushButton("保存所有信息")
+        self.save_all_button.clicked.connect(self.save_all_data)
+        self.save_all_button.setFixedWidth(120)  # 设置按钮宽度
+        bottom_layout.addStretch()  # 添加弹性空间，使按钮靠右
+        bottom_layout.addWidget(self.save_all_button)
         
+        # 将底部布局添加到主布局
+        self.layout.addLayout(bottom_layout)
         # 获取全局日志对象
         self.logger = get_logger()
     
@@ -174,16 +236,17 @@ class Tab3(QWidget):
                     self.restaurant_file = f"CPs/{cp_data['cp_id']}/restaurant/restaurants.xlsx"
                     self.vehicle_file = f"CPs/{cp_data['cp_id']}/vehicle/vehicles.xlsx"
                     self.receive_record_file = f"CPs/{cp_data['cp_id']}/receive_record/receive_records.xlsx"
-                    
+                    self.balance_record_file = f"CPs/{cp_data['cp_id']}/balance_record/balance_record.xlsx"
                     # 在选择CP后创建XlsxViewerWidget实例
-                    self.restaurant_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.restaurant_file)
-                    self.vehicle_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.vehicle_file)
-                    self.report_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.receive_record_file)
-                    
+                    self.restaurant_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.restaurant_file,show_open=False,show_save=False)
+                    self.vehicle_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.vehicle_file,show_open=False,show_save=False)
+                    self.report_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.receive_record_file,show_open=False,show_save=False)
+                    self.balance_view =  XlsxViewerWidget(use_oss=True, oss_path=self.balance_record_file,show_open=False,show_save=False)
                     # 将XlsxViewerWidget实例添加到tab_widget
                     self.tab_widget.addTab(self.restaurant_viewer, "餐厅信息")
                     self.tab_widget.addTab(self.vehicle_viewer, "车辆信息")
                     self.tab_widget.addTab(self.report_viewer, "收油表")
+                    self.tab_widget.addTab(self.balance_view,'平衡表')
                     
                     # 更新CP按钮文本
                     self.cp_button.setText(f"已选择CP为：{cp_data['cp_name']}")
@@ -315,22 +378,38 @@ class Tab3(QWidget):
     def generate_report(self):
         """生成收油表"""
         self.update_step_status(3, 'dealing')
-        try:
-            service = GetReceiveRecordService(model=ReceiveRecordModel, conf=CONF)
-            result, cp_restaurants_df, cp_vehicle_df = service.get_restaurant_oil_records(self.restaurants, self.vehicles, self.current_cp['cp_id'])
+        
+        # 弹出运输信息对话框
+        dialog = TransportDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            days_input, month_year = dialog.get_input_data()
             
-            # 将结果加载到收油表页签
-            self.report_viewer.load_data(data=result)
+            # 验证天数输入
+            if not days_input.isdigit() or not (1 <= int(days_input) <= 31):
+                QMessageBox.warning(self, "输入错误", "运输天数必须为1到31之间的数字。")
+                self.update_step_status(3, 'error')
+                return
             
-            # 切换到收油表页签
-            self.tab_widget.setCurrentIndex(2)
+            # 处理输入数据
+            days_to_trans = int(days_input)
+            self.logger.info(f"运输天数: {days_to_trans}, 选择的年月: {month_year}")
             
-            self.logger.info("收油表生成成功")
-            self.update_step_status(3, 'finish')
-        except Exception as e:
-            self.logger.error(f"生成收油表时出错: {str(e)}")
-            QMessageBox.critical(self, "生成失败", f"生成收油表时出错: {str(e)}")
-            self.update_step_status(3, 'error')
+            try:
+                service = GetReceiveRecordService(model=ReceiveRecordModel, conf=CONF)
+                oil_records_df, restaurant_balance, cp_restaurants_df, cp_vehicle_df = service.get_restaurant_oil_records(self.restaurants, self.vehicles, self.current_cp['cp_id'],days_to_trans, month_year)
+                # 将结果加载到收油表页签
+                self.report_viewer.load_data(data=oil_records_df)
+                self.balance_view.load_data(data= restaurant_balance )
+                
+                # 切换到收油表页签
+                self.tab_widget.setCurrentIndex(2)
+                
+                self.logger.info("收油表、平衡表生成成功")
+                self.update_step_status(3, 'finish')
+            except Exception as e:
+                self.logger.error(f"生成收油表、平衡表时出错: {str(e)}")
+                QMessageBox.critical(self, "生成失败", f"生成收油表时出错: {str(e)}")
+                self.update_step_status(3, 'error')
     
     def upload_restaurant_file(self):
         """上传餐厅信息文件"""
@@ -373,3 +452,93 @@ class Tab3(QWidget):
                 QMessageBox.critical(self, "上传失败", f"上传餐厅信息时出错: {str(e)}")
                 self.update_step_status(1, 'error')
 
+    def clear_page(self):
+        """清空页面，重置所有状态"""
+        self.current_cp = None
+        self.restaurants = []
+        self.vehicles = []
+        
+        self.cp_button.setText("未选择CP")
+        self.load_restaurants_button.setEnabled(False)
+        self.load_vehicles_button.setEnabled(False)
+        self.generate_report_button.setEnabled(False)
+        
+        self.step1_status.clear()
+        self.step2_status.clear()
+        self.step3_status.clear()
+        
+        self.tab_widget.clear()  # 清空所有页签内容
+
+        # 其他必要的重置操作
+        self.update_step_status(1, 'unfinish')
+        self.update_step_status(2, 'unfinish')
+        self.update_step_status(3, 'unfinish')
+
+    """保存所有信息（车辆信息、收油表、平衡表）"""
+    def save_all_data(self):
+        try:
+            success_count = 0
+            error_messages = []
+            
+            # 保存车辆信息
+            if self.vehicle_viewer :
+                try:
+                    if self.vehicle_viewer.save_file():
+                        success_count += 1
+                except Exception as e:
+                    error_messages.append(f"保存车辆信息失败: {str(e)}")
+            
+            # 保存收油表
+            if self.report_viewer :
+                try:
+                    if self.report_viewer.save_file():
+                        success_count += 1
+                except Exception as e:
+                    error_messages.append(f"保存收油表失败: {str(e)}")
+            
+            # 保存平衡表
+            if self.balance_view :
+                try:
+                    if self.balance_view.save_file():
+                        success_count += 1
+                except Exception as e:
+                    error_messages.append(f"保存平衡表失败: {str(e)}")
+            
+            # 显示保存结果
+            if error_messages:
+                # 如果有错误，显示错误信息
+                error_text = "\n".join(error_messages)
+                if success_count > 0:
+                    QMessageBox.warning(
+                        self,
+                        "部分保存成功",
+                        f"成功保存 {success_count} 个文件。\n\n以下保存失败：\n{error_text}"
+                    )
+                else:
+                    QMessageBox.critical(
+                        self,
+                        "保存失败",
+                        f"所有保存操作失败：\n{error_text}"
+                    )
+            elif success_count > 0:
+                # 如果全部成功，显示成功信息
+                QMessageBox.information(
+                    self,
+                    "保存成功",
+                    f"已成功保存所有修改的文件（{success_count} 个）。"
+                )
+            else:
+                # 如果没有需要保存的内容
+                QMessageBox.information(
+                    self,
+                    "无需保存",
+                    "没有需要保存的修改内容。"
+                )
+                
+        except Exception as e:
+            self.logger.error(f"保存所有信息时出错: {str(e)}")
+            QMessageBox.critical(
+                self,
+                "保存错误",
+                f"保存过程中发生错误：{str(e)}"
+            )
