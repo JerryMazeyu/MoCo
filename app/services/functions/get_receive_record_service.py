@@ -7,13 +7,13 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from app.services.instances.receive_record import ReceiveRecord, ReceiveRecordsGroup, ReceiveRecordsBalance
+from app.services.instances.receive_record import ReceiveRecord, ReceiveRecordsGroup, ReceiveRecordsBalance,BalanceRecords,BalanceRecordsGroup
 from app.utils.logger import setup_logger
 from app.services.instances.restaurant import Restaurant,RestaurantsGroup
 from app.services.instances.vehicle import Vehicle,VehicleGroup
 import numpy as np
 import pandas as pd
-from app.models.receive_record import ReceiveRecordModel
+from app.models.receive_record import ReceiveRecordModel,RestaurantBalanceModel
 from app.models.vehicle_model import VehicleModel
 import random
 import math
@@ -273,6 +273,7 @@ class GetReceiveRecordService:
                         
                     # 分配车牌号
                     total_accumulated += accumulated_sum
+
                     for temp_row in temp_group:
                         temp_row = temp_row.copy()  # 防止修改原DataFrame
                         if current_vehicle_index < len(vehicle_sorted_df):
@@ -281,9 +282,10 @@ class GetReceiveRecordService:
                             vehicle_id = current_vehicle['vehicle_id']
                             license_plate = current_vehicle['vehicle_license_plate']
                            
-                            temp_row['vehicle_license_plate'] = license_plate
+                            temp_row['rr_vehicle_license_plate'] = license_plate
                             temp_row['rr_vehicle'] = vehicle_id
-                            temp_row['rr_sum_amount'] = accumulated_sum
+                            temp_row['rr_amount_of_day'] = accumulated_sum
+                            temp_row['temp_vehicle_index'] =  current_vehicle_index ## 增加一个唯一标识后面分配时间
                             result_rows.append(temp_row)
                             
 
@@ -307,7 +309,7 @@ class GetReceiveRecordService:
         # 打印统计信息
         print(f"总分配桶数: {total_accumulated}")
         print(f"总桶数限制: {total_barrels}")
-        print(f"已分配车辆数: {len(set(result_df['vehicle_license_plate']))}")
+        print(f"已分配车辆数: {len(set(result_df['rr_vehicle_license_plate']))}")
         print(f"已处理餐厅数: {len(result_rows)}")
         print(f"总餐厅数: {len(df_restaurants)}")
         
@@ -405,7 +407,7 @@ class GetReceiveRecordService:
     # 从餐厅获取收油记录
     def get_restaurant_oil_records(
             self,res_info: list[dict],vehicle_info: list[dict],
-            cp_id: str,his_oil_info:list[dict]= None) -> List[ReceiveRecord]:
+            cp_id: str,days_to_trans: int,month_year: str) :
         """
         获取餐厅的收油记录
         
@@ -415,7 +417,7 @@ class GetReceiveRecordService:
             cp_id: CP ID
             
         Returns:
-            餐厅的收油记录列表
+            餐厅的收油记录列表,餐厅信息dataframe,车辆信息dataframe
         """
         # 调用RestaurantsGroup，通过cp_id获取餐厅列表
         restaurants = [Restaurant(info) for info in res_info]  # 将字典列表转换为 Restaurant 实例列表
@@ -495,30 +497,121 @@ class GetReceiveRecordService:
         # 调用桶分配函数
         result_df = self._allocate_barrels(result_df, count_of_barrel_55)
 
+        
+        
+        
+
+        # 过滤掉以下划线开头的列名，获得最后的收油表
+        result_df = result_df[[col for col in result_df.columns if not col.startswith('_')]]
+
+        ## 由于收油表由餐厅信息得到，需要将餐厅信息中的字段转化成收油表的字段名
+        result_df.rename(columns={'rest_chinese_name':'rr_restaurant_name',
+                                  'rest_chinese_address':'rr_restaurant_address',
+                                  'rest_district':'rr_district',
+                                  'rest_street':'rr_street',
+                                  'rest_belonged_cp':'rr_cp',
+                                  'rest_contact_person':'rr_contact_person',
+                                  'rest_id':'rr_restaurant_id'},inplace=True)
+        ## 转成model
+        result_df_instance = [ReceiveRecord(info,model = ReceiveRecordModel) for info in result_df.to_dict(orient='records')]
+        result_df_instance_group = ReceiveRecordsGroup(result_df_instance)
+        result_df_final = result_df_instance_group.to_dataframe()   
+        print('收油表生成成功')
+        # 获得最终的收油表和平衡表
+        oil_records_df, restaurant_balance = self.get_restaurant_balance(result_df_final,days_to_trans,month_year)
+        ##修改餐厅和车辆信息
         # 根据收油表更新餐厅信息中的 rest_verified_date 和 rest_allocated_barrel
-        for index, row in result_df.iterrows():
-            restaurant_id = row['rest_id']
+        for index, row in oil_records_df.iterrows():
+            restaurant_id = row['rr_restaurant_id']
             rest_verified_date = row['rr_date']
             rest_allocated_barrel = row['rr_amount']
             cp_restaurants_group.update_restaurant_info(restaurant_id, {'rest_verified_date': rest_verified_date, 'rest_allocated_barrel': rest_allocated_barrel})
 
         # 根据收油表更新车辆信息中的 vehicle_last_use
-        for index, row in result_df[['rr_vehicle','rr_date']].drop_duplicates().iterrows():
+        for index, row in oil_records_df[['rr_vehicle','rr_date']].drop_duplicates().iterrows():
             vehicle_id = row['rr_vehicle']
             vehicle_last_use = row['rr_date']
             cp_vehicle_group.update_vehicle_info(vehicle_id, {'vehicle_last_use': vehicle_last_use})
-        
         ## 将最后的餐厅信息和车辆信息转化为dataframe
         cp_restaurants_df = cp_restaurants_group.to_dataframe()
         cp_vehicle_df = cp_vehicle_group.to_dataframe()
 
-        # 过滤掉以下划线开头的列名，获得最后的收油表
-        result_df = result_df[[col for col in result_df.columns if not col.startswith('_')]]
-
-        # 返回所有记录
-        return result_df,cp_restaurants_df,cp_vehicle_df
+        return oil_records_df,restaurant_balance,cp_restaurants_df,cp_vehicle_df
     
+    # 
+    def get_restaurant_balance(self,oil_records_df: pd.DataFrame, n: int,current_date: str):
+
+        """
+        根据给定的步骤处理输入的DataFrame。
         
+        :param df: 输入的DataFrame，包含'区域', '车牌号', '累计收油数'字段
+        :param n: 多少天运完
+        :return: 处理后的DataFrame
+        """
+        # 步骤1：读取dataframe中的'区域', '车牌号', '累计收油数'字段作为新的dataframe的字段，并去重
+        restaurant_balance_df = oil_records_df[['rr_cp','rr_district', 'rr_vehicle_license_plate', 'rr_amount_of_day','temp_vehicle_index']].drop_duplicates()
+        restaurant_balance_df.rename(columns={'rr_district':'balance_district','rr_vehicle_license_plate':'balance_vehicle_license_plate','rr_amount_of_day':'balance_amount_of_day','rr_cp':'balance_cp'},inplace=True)
+        # 步骤2：新建一列榜单净重，公式为累计收油数*0.18-RANDBETWEEN(1,5)/100
+        restaurant_balance_df['balance_weight_of_order'] = restaurant_balance_df['balance_amount_of_day'].apply(lambda x: x * 0.18 - random.randint(1, 5) / 100)
+
+        # 步骤3：新建几列固定值的列
+        current_year_month = datetime.datetime.strptime(current_date, '%Y-%m').strftime('%Y%m')
+        restaurant_balance_df['balance_oil_type'] = '餐厨废油'
+        restaurant_balance_df['balance_tranport_type'] = '大卡车'
+        restaurant_balance_df['balance_serial_number'] = [f"{current_year_month}{str(i+1).zfill(3)}" for i in range(len(restaurant_balance_df))]
+        restaurant_balance_df['balance_order_number'] = 'B' + restaurant_balance_df['balance_serial_number']
+
+        # 步骤4：计算车数car_number_of_day并新增交付日期列
+        car_number_of_day = int(np.ceil(len(restaurant_balance_df) // n)) ## 计算每天大概需要多少辆车
+        dates_in_month = pd.date_range(
+                start=datetime.datetime(datetime.datetime.strptime(current_date, '%Y-%m').year, datetime.datetime.strptime(current_date, '%Y-%m').month, 1),
+                end=(datetime.datetime(datetime.datetime.strptime(current_date, '%Y-%m').year, datetime.datetime.strptime(current_date, '%Y-%m').month, 1) + pd.offsets.MonthEnd(0))
+            )
+        delivery_dates = []
+        day_index = 0
+        # 如果 n 大于 restaurant_balance_df 的长度，随机跳过 n - len(restaurant_balance_df) 个日期
+        if n > len(restaurant_balance_df):
+            skip_days = n - len(restaurant_balance_df)
+            random_skip_days = random.sample(range(len(dates_in_month)), skip_days)
+            dates_in_month = [date for i, date in enumerate(dates_in_month) if i not in random_skip_days]
+
+        while day_index < len(dates_in_month):
+            delta = int(car_number_of_day + random.choice([-1, 0, 1]))
+            if delta <= 0:
+                delta = 1  # 确保至少有一辆车
+            for _ in range(min(delta, len(restaurant_balance_df) - len(delivery_dates))):
+                delivery_dates.append(dates_in_month[day_index].date())
+            day_index += 1
+        
+        # 如果生成的交付日期少于新数据框的行数，则用最后一天填充剩余部分
+        if len(delivery_dates) < len(restaurant_balance_df):
+            last_date = delivery_dates[-1] if delivery_dates else dates_in_month[-1].date()
+            delivery_dates.extend([last_date] * (len(restaurant_balance_df) - len(delivery_dates)))
+        
+        restaurant_balance_df['balance_date'] = delivery_dates[:len(restaurant_balance_df)]
+        
+        ## 回写收油表，将平衡表中的收购时间和流水号回写到收
+        oil_records_df[['rr_date','rr_serial_number']] = pd.merge(
+            oil_records_df[['rr_cp', 'rr_district', 'rr_vehicle_license_plate', 'rr_amount_of_day', 'temp_vehicle_index']],
+            restaurant_balance_df[['balance_date', 'balance_serial_number', 'balance_vehicle_license_plate', 'balance_cp', 'balance_district', 'balance_amount_of_day', 'temp_vehicle_index']],
+            left_on=['rr_cp', 'rr_district', 'rr_vehicle_license_plate', 'rr_amount_of_day', 'temp_vehicle_index'],
+            right_on=['balance_cp', 'balance_district', 'balance_vehicle_license_plate', 'balance_amount_of_day', 'temp_vehicle_index'],
+            how='left'
+        )[['balance_date','balance_serial_number']]
+        
+        ## 将收油表和平衡表转成对应的model
+        oil_records_df_instance = [ReceiveRecord(info,model = ReceiveRecordModel) for info in oil_records_df.to_dict(orient='records')]
+        oil_records_df_instance_group = ReceiveRecordsGroup(oil_records_df_instance)
+        oil_records_df_final=oil_records_df_instance_group.to_dataframe()
+
+        restaurant_balance_instances = [
+        BalanceRecords(info,model= RestaurantBalanceModel) for info in restaurant_balance_df.to_dict(orient='records')
+        ]
+        restaurant_balance_instances_group  = BalanceRecordsGroup(restaurant_balance_instances)
+        restaurant_balance_final = restaurant_balance_instances_group.to_dataframe()
+
+
+        return oil_records_df_final, restaurant_balance_final
 
 
 if __name__ == "__main__":
@@ -570,7 +663,8 @@ if __name__ == "__main__":
     
     cp_id = "cp1"
     his_oil_info = None
-    result,cp_restaurants_df,cp_vehicle_df = service.get_restaurant_oil_records(restaurant_list, vehicle_list, cp_id, his_oil_info)
-    result.to_excel("result.xlsx",index=False)
-    cp_restaurants_df.to_excel("cp_restaurants_df.xlsx",index=False)
-    cp_vehicle_df.to_excel("cp_vehicle_df.xlsx",index=False)
+    oil,restaurant_balance,cp_restaurants_df,cp_vehicle_df = service.get_restaurant_oil_records(restaurant_list, vehicle_list, cp_id,10,'2025-01')
+    cp_restaurants_df.to_excel("cp_restaurants_df1.xlsx",index=False)
+    cp_vehicle_df.to_excel("cp_vehicle_df1.xlsx",index=False)
+    oil.to_excel('oil.xlsx',index=False)
+    restaurant_balance.to_excel('balance.xlsx',index=False)

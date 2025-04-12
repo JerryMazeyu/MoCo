@@ -129,11 +129,17 @@ class PandasModel(QAbstractTableModel):
 class XlsxViewerWidget(QWidget):
     """Excel表格查看器组件，用于展示和编辑Excel数据"""
     
-    def __init__(self, parent=None,use_oss=False,oss_path=None):
+    def __init__(self, parent=None,use_oss=False,oss_path=None,show_open=True, show_save=True, 
+             show_save_as=True, show_refresh=True):
         super().__init__(parent)
         self.current_file = None
         self.use_oss = use_oss
         self.oss_path = oss_path
+         # 保存按钮显示状态
+        self.show_open = show_open
+        self.show_save = show_save
+        self.show_save_as = show_save_as
+        self.show_refresh = show_refresh
         self.initUI()
     
     def initUI(self):
@@ -170,32 +176,35 @@ class XlsxViewerWidget(QWidget):
         # 创建按钮布局
         button_layout = QHBoxLayout()
         button_layout.setContentsMargins(0, 5, 0, 0)  # 顶部间距，使按钮与表格有一定间隔
-        
-        # 创建按钮
-        self.open_button = QPushButton("打开文件")
-        self.save_button = QPushButton("保存")
-        self.save_as_button = QPushButton("另存为")
-        self.refresh_button = QPushButton("刷新")
-        
-        # 连接按钮信号
-        self.open_button.clicked.connect(self.open_file)
-        self.save_button.clicked.connect(self.save_file)
-        self.save_as_button.clicked.connect(self.save_file_as)
-        self.refresh_button.clicked.connect(self.refresh)
-        
-        # 设置按钮等宽
         button_width = 90  # 固定宽度
-        for button in [self.open_button, self.save_button, self.save_as_button, self.refresh_button]:
-            button.setFixedWidth(button_width)
+        # 创建按钮
+        # 根据设置创建并添加按钮
+        if self.show_open:
+            self.open_button = QPushButton("打开文件")
+            self.open_button.setFixedWidth(button_width)
+            self.open_button.clicked.connect(self.open_file)
+            button_layout.addWidget(self.open_button)
+            button_layout.addStretch(1)
         
-        # 添加按钮到布局，均匀分布
-        button_layout.addWidget(self.open_button)
-        button_layout.addStretch(1)
-        button_layout.addWidget(self.save_button)
-        button_layout.addStretch(1)
-        button_layout.addWidget(self.save_as_button)
-        button_layout.addStretch(1)
-        button_layout.addWidget(self.refresh_button)
+        if self.show_save:
+            self.save_button = QPushButton("保存")
+            self.save_button.setFixedWidth(button_width)
+            self.save_button.clicked.connect(self.save_file)
+            button_layout.addWidget(self.save_button)
+            button_layout.addStretch(1)
+        
+        if self.show_save_as:
+            self.save_as_button = QPushButton("另存为")
+            self.save_as_button.setFixedWidth(button_width)
+            self.save_as_button.clicked.connect(self.save_file_as)
+            button_layout.addWidget(self.save_as_button)
+            button_layout.addStretch(1)
+        
+        if self.show_refresh:
+            self.refresh_button = QPushButton("刷新")
+            self.refresh_button.setFixedWidth(button_width)
+            self.refresh_button.clicked.connect(self.refresh)
+            button_layout.addWidget(self.refresh_button)
         
         # 先添加表格到主布局，再添加按钮
         self.layout.addWidget(self.table_view)
@@ -270,7 +279,7 @@ class XlsxViewerWidget(QWidget):
             
             # 获取最新的数据
             data_to_save = self.model.getDataFrame()
-            print("Saving data to OSS:", data_to_save)  # 调试输出
+            # print("Saving data to OSS:", data_to_save)  # 调试输出
             
             # 保存到 OSS
             oss_rename_excel_file(self.oss_path, oss_rename_file)

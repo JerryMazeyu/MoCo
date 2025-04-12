@@ -75,3 +75,6 @@ class StepIndicator(QFrame):
                 label.setStyleSheet("color: gray; opacity: 0.5; padding: 5px;")
             
             icon.setPixmap(QPixmap(icon_file).scaled(24, 24, Qt.KeepAspectRatio))
+
+
+
