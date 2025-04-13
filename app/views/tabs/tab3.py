@@ -272,9 +272,29 @@ class Tab3(QWidget):
     
     def set_step_image(self, label, image_name):
         """设置步骤状态图片"""
-        pixmap = QPixmap(f"app/resources/icons/{image_name}")  # 修改图片路径
-        scaled_pixmap = pixmap.scaled(24, 24)  # 设置图片大小
-        label.setPixmap(scaled_pixmap)
+        try:
+            import sys
+            import os
+            
+            # 获取正确的资源路径
+            if getattr(sys, 'frozen', False):
+                # 如果是打包后的 exe
+                base_path = sys._MEIPASS
+                image_path = os.path.join(base_path, 'app', 'resources', 'icons', image_name)
+            else:
+                # 如果是直接运行 Python 脚本
+                image_path = os.path.join('app', 'resources', 'icons', image_name)
+            
+            # 检查文件是否存在
+            if not os.path.exists(image_path):
+                LOGGER.error(f"图标文件不存在: {image_path}")
+                return
+            
+            pixmap = QPixmap(image_path)
+            scaled_pixmap = pixmap.scaled(24, 24)  # 设置图片大小
+            label.setPixmap(scaled_pixmap)
+        except Exception as e:
+            LOGGER.error(f"设置步骤图标时出错: {str(e)}")
 
     def update_step_status(self, step, status):
         """更新步骤状态
@@ -378,7 +398,26 @@ class Tab3(QWidget):
     def generate_report(self):
         """生成收油表"""
         self.update_step_status(3, 'dealing')
+         # 首先从 XlsxViewerWidget 获取最新的数据
+        if not self.restaurant_viewer or not self.vehicle_viewer:
+            QMessageBox.warning(self, "数据不完整", "请先载入餐厅信息和车辆信息。")
+            self.update_step_status(3, 'error')
+            return
+         # 获取最新的餐厅数据
+        restaurant_df = self.restaurant_viewer.get_data()
+        if restaurant_df is None or restaurant_df.empty:
+            QMessageBox.warning(self, "数据不完整", "餐厅信息为空，请先载入餐厅数据。")
+            self.update_step_status(3, 'error')
+            return
+         # 获取最新的车辆数据
+        vehicle_df = self.vehicle_viewer.get_data()
+        if vehicle_df is None or vehicle_df.empty:
+            QMessageBox.warning(self, "数据不完整", "车辆信息为空，请先载入车辆数据。")
+            self.update_step_status(3, 'error')
+            return
         
+        self.restaurants = restaurant_df.to_dict('records')
+        self.vehicles = vehicle_df.to_dict('records')
         # 弹出运输信息对话框
         dialog = TransportDialog(self)
         if dialog.exec_() == QDialog.Accepted:

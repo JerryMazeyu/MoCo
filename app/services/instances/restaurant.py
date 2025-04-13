@@ -99,16 +99,30 @@ def youdao_translate(text: str, from_lang: str = 'zh', to_lang: str = 'en', conf
 # ===========高德Utils==========
 
 def query_gaode(key, city):
+    if not city:
+        LOGGER.error("城市名称为空")
+        return None
+        
     api_url = f"https://restapi.amap.com/v3/config/district?keywords={city}&subdistrict=3&key={key}"
-    response = requests.get(api_url, timeout=5)
-    if response.status_code != 200:
-        LOGGER.error(f"高德地图API请求失败: {response.status_code}")
+    try:
+        response = requests.get(api_url, timeout=5)
+        if response.status_code != 200:
+            LOGGER.error(f"高德地图API请求失败: {response.status_code}")
+            return None
+            
+        result = response.json()
+        if result.get('status') != '1':
+            LOGGER.error(f"高德地图API返回状态错误: {result.get('info', '未知错误')}")
+            return None
+            
+        if 'districts' not in result or not result['districts']:
+            LOGGER.error(f"未找到城市 '{city}' 的信息")
+            return None
+            
+        return result['districts'][0]
+    except Exception as e:
+        LOGGER.error(f"查询城市 '{city}' 时发生错误: {str(e)}")
         return None
-    result = response.json()
-    if result.get('status') != '1' or 'districts' not in result:
-        LOGGER.error(f"高德地图API返回结果无效: {result}")
-        return None
-    return result['districts'][0]
 
 
 # ===========KIMI Utils==========
@@ -364,7 +378,7 @@ class Restaurant(BaseInstance):
                 geoinfo = robust_query(query_gaode, self.conf.KEYS.gaode_keys, city=self.inst.rest_city)
                 setattr(self.conf.runtime, 'geoinfo', {})
                 self.conf.runtime.geoinfo[self.inst.rest_city] = geoinfo
-        except:
+        except Exception as e:
             LOGGER.error(f"初始化地理位置信息失败: {e}")
             self.conf.runtime.geoinfo = None
     
