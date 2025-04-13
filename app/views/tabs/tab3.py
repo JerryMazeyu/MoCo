@@ -90,7 +90,7 @@ class Tab3(QWidget):
         # CP选择按钮
         self.cp_button = QPushButton("未选择CP")
         self.cp_button.clicked.connect(self.select_cp)
-        self.cp_button.setFixedWidth(150)
+        self.cp_button.setFixedWidth(200)
         
         # 清空按钮
         self.clear_button = QPushButton("清空页面")
@@ -231,6 +231,9 @@ class Tab3(QWidget):
                     
                     CONF.runtime.CP = cp_data
                     self.current_cp = cp_data
+                    
+                    # 在创建新的 viewer 之前，先清除所有现有的标签页
+                    self.tab_widget.clear()
                     
                     # 生成文件路径
                     self.restaurant_file = f"CPs/{cp_data['cp_id']}/restaurant/restaurants.xlsx"
@@ -436,9 +439,18 @@ class Tab3(QWidget):
             try:
                 service = GetReceiveRecordService(model=ReceiveRecordModel, conf=CONF)
                 oil_records_df, restaurant_balance, cp_restaurants_df, cp_vehicle_df = service.get_restaurant_oil_records(self.restaurants, self.vehicles, self.current_cp['cp_id'],days_to_trans, month_year)
-                # 将结果加载到收油表页签
+                # 更新所有相关页面的数据
+                    # 1. 更新收油表
                 self.report_viewer.load_data(data=oil_records_df)
-                self.balance_view.load_data(data= restaurant_balance )
+                
+                # 2. 更新平衡表
+                self.balance_view.load_data(data=restaurant_balance)
+                
+                # 3. 更新餐厅信息
+                self.restaurant_viewer.load_data(data=cp_restaurants_df)
+                
+                # 4. 更新车辆信息
+                self.vehicle_viewer.load_data(data=cp_vehicle_df)
                 
                 # 切换到收油表页签
                 self.tab_widget.setCurrentIndex(2)

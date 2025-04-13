@@ -6,7 +6,7 @@ from app.services.instances.base import BaseInstance, BaseGroup
 from app.utils.hash import hash_text
 from app.utils.logger import setup_logger
 from app.utils.file_io import rp
-
+import pandas as pd
 # 设置日志
 LOGGER = setup_logger("moco.log")
 
@@ -270,14 +270,22 @@ class Vehicle(BaseInstance):
         
         # 同样使用字典的方法检查 last_use
         if 'vehicle_last_use' in self.info and self.info['vehicle_last_use']:
-            last_use = datetime.datetime.strptime(self.info['vehicle_last_use'], "%Y-%m-%d")
-            current = datetime.datetime.strptime(date, "%Y-%m-%d")
+            last_use = self.info['vehicle_last_use']
+            
+            # 确保 last_use 是字符串或 Timestamp
+            if isinstance(last_use, pd.Timestamp):
+                last_use = last_use.strftime("%Y-%m-%d")  # 转换为字符串
+            elif not isinstance(last_use, str):
+                raise ValueError("vehicle_last_use 必须是字符串或 Timestamp 类型")
+            
+            last_use_date = datetime.datetime.strptime(last_use, "%Y-%m-%d")
+            current_date = datetime.datetime.strptime(date, "%Y-%m-%d")
             
             # 简单示例：3天冷却期
             cooldown_days = 3
-            if (current - last_use).days < cooldown_days:
+            if (current_date - last_use_date).days < cooldown_days:
                 return False
-        
+    
         return True
     
     def go(self, date, payload=None) -> bool:
