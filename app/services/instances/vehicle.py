@@ -51,7 +51,7 @@ class Vehicle(BaseInstance):
         if "vehicle_status" not in info:
             self.info["vehicle_status"] = "available"  # 默认为可用状态
             
-        print(f"Initialized vehicle with info: {self.info}")
+        # print(f"Initialized vehicle with info: {self.info}")
         
         if "driver_name" not in info:
             self.info["driver_name"] = ""
