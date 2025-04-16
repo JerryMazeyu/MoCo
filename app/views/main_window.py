@@ -86,28 +86,34 @@ class MainWindow(QMainWindow):
             from app.views.tabs.tab2 import Tab2  # 餐厅获取
             from app.views.tabs.tab3 import Tab3  # 车辆获取
             from app.views.tabs.tab1_new import Tab1New  # 配置界面
+            from app.views.tabs.tab4 import Tab4  # 油站获取
 
             # 创建Tab组件
             self.tab1_widget = QWidget()
             self.tab2_widget = QWidget()
             self.tab3_widget = QWidget()
+            self.tab4_widget = QWidget()
             # 设置Tab布局
             self.tab1_widget.setLayout(QVBoxLayout())
             self.tab2_widget.setLayout(QVBoxLayout())
             self.tab3_widget.setLayout(QVBoxLayout())
+            self.tab4_widget.setLayout(QVBoxLayout())
             # 创建Tab内容
             # self.tab1_content = Tab1(self)  # 配置界面
             self.tab1_content = Tab1New(self)  # 配置界面
             self.tab2_content = Tab2(self)  # 餐厅获取
             self.tab3_content = Tab3(self)  # 车辆获取
+            self.tab4_content = Tab4(self)  # 油站获取
             # 添加内容到布局
             self.tab1_widget.layout().addWidget(self.tab1_content)
             self.tab2_widget.layout().addWidget(self.tab2_content)
             self.tab3_widget.layout().addWidget(self.tab3_content)
+            self.tab4_widget.layout().addWidget(self.tab4_content)
             # 添加Tab到标签页控件
             self.tab_widget.addTab(self.tab1_widget, "配置界面")
             self.tab_widget.addTab(self.tab2_widget, "餐厅获取")
             self.tab_widget.addTab(self.tab3_widget, "收油表获取")
+            self.tab_widget.addTab(self.tab4_widget, "油站获取")
         except Exception as e:
             LOGGER.error(f"设置标签页失败: {str(e)}")
 

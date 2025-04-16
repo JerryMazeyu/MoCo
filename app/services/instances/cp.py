@@ -80,6 +80,59 @@ class CP(BaseInstance):
             LOGGER.error(f"注册CP失败: {e}")
             return False
     
+    def update(self) -> bool:
+        """
+        更新CP信息到OSS
+        
+        :return: 是否更新成功
+        """
+        try:
+            # 准备要保存的数据
+            cp_data = {}
+            for key, value in self.inst.__dict__.items():
+                if not key.startswith('_'):
+                    cp_data[key] = value
+            
+            # 更新到OSS，路径结构：CPs/<id>/<id>.json
+            file_path = f"CPs/{self.inst.cp_id}/{self.inst.cp_id}.json"
+            oss_put_json_file(file_path, cp_data)
+            
+            LOGGER.info(f"CP '{self.inst.cp_name}' 已成功更新到OSS，路径: {file_path}")
+            self.status = 'updated'
+            return True
+            
+        except Exception as e:
+            LOGGER.error(f"更新CP失败: {e}")
+            return False
+    
+    def delete(self) -> bool:
+        """
+        从OSS删除CP
+        
+        :return: 是否删除成功
+        """
+        try:
+            # 获取OSS连接
+            access_key_id = OSS_CONF['access_key_id']
+            access_key_secret = OSS_CONF['access_key_secret']
+            endpoint = OSS_CONF['endpoint']
+            bucket_name = OSS_CONF['bucket_name']
+            region = OSS_CONF['region']
+            auth = oss2.Auth(access_key_id, access_key_secret)
+            bucket = oss2.Bucket(auth, endpoint, bucket_name, region=region)
+            
+            # 删除CP文件
+            file_path = f"CPs/{self.inst.cp_id}/{self.inst.cp_id}.json"
+            bucket.delete_object(file_path)
+            
+            LOGGER.info(f"CP '{self.inst.cp_name}' 已成功从OSS删除，路径: {file_path}")
+            self.status = 'deleted'
+            return True
+            
+        except Exception as e:
+            LOGGER.error(f"删除CP失败: {e}")
+            return False
+    
     @classmethod
     def list(cls) -> List[Dict[str, Any]]:
         """

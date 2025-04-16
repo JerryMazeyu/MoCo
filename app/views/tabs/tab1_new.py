@@ -100,7 +100,13 @@ class CustomTreeModel(QStandardItemModel):
                         # 否则递归添加所有子项
                         for sub_key, sub_value in current_value.items():
                             sub_key_item = QStandardItem(sub_key)
-                            if isinstance(sub_value, dict):
+                            
+                            # 特殊处理收油关系映射中的复杂值
+                            if current_path == "BUSINESS.RESTAURANT.收油关系映射":
+                                sub_key_item.setFont(self._get_font(False, 10))
+                                sub_value_item = QStandardItem(str(sub_value))
+                                key_item.appendRow([sub_key_item, sub_value_item])
+                            elif isinstance(sub_value, dict):
                                 sub_value_item = QStandardItem("")
                                 key_item.appendRow([sub_key_item, sub_value_item])
                                 self._add_structured_items(sub_key_item, {}, config_data, f"{current_path}.{sub_key}")
@@ -166,7 +172,12 @@ class Tab1New(QWidget):
                     "path": "BUSINESS.REST2CP"
                 },
                 "餐厅信息": {
-                    "path": "BUSINESS.RESTAURANT"
+                    "path": "BUSINESS.RESTAURANT",
+                    "children": {
+                        "关键词": {"path": "关键词"},
+                        "屏蔽词": {"path": "屏蔽词"},
+                        "收油关系映射": {"path": "收油关系映射"}
+                    }
                 }
             }
         }
@@ -330,11 +341,11 @@ class Tab1New(QWidget):
         """从模型中提取修改后的值到配置数据，并同步到global_context"""
         try:
             # 实现配置提取的基本逻辑
-            self._extract_from_item(self.config_model.invisibleRootItem(), {}, "")
+            self._extract_from_item(self.config_model.invisibleRootItem(), "")
         except Exception as e:
             LOGGER.error(f"提取配置值时出错: {e}")
     
-    def _extract_from_item(self, item, current_dict, current_path):
+    def _extract_from_item(self, item, current_path):
         """递归从模型项提取数据到配置字典"""
         row_count = item.rowCount()
         
@@ -342,7 +353,7 @@ class Tab1New(QWidget):
         if item == self.config_model.invisibleRootItem():
             for i in range(row_count):
                 section_item = item.child(i, 0)
-                self._extract_from_item(section_item, self.config_data, "")
+                self._extract_from_item(section_item, "")
             return
         
         # 获取当前项的键名
@@ -355,11 +366,12 @@ class Tab1New(QWidget):
             # 这是根节点，不对应实际配置项
             for i in range(row_count):
                 child_item = item.child(i, 0)
-                self._extract_from_item(child_item, self.config_data, "")
+                self._extract_from_item(child_item, "")
             return
         
-        # 处理KEYS特殊情况
+        # 处理顶级配置节点
         if key == "KEYS":
+            # 直接处理KEYS下的子项
             for i in range(row_count):
                 child_item = item.child(i, 0)
                 child_key = child_item.text()
@@ -368,20 +380,18 @@ class Tab1New(QWidget):
                     continue
                 
                 # 映射UI名称到实际配置名称
-                config_key = {
+                config_map = {
                     "KIMI大模型KEY": "kimi_keys",
                     "高德地图KEY": "gaode_keys",
                     "有道词典KEY": "youdao_keys"
-                }.get(child_key, child_key)
+                }
+                config_key = config_map.get(child_key, child_key)
                 
-                if child_item.rowCount() == 0:
+                if child_item.rowCount() == 0 and item.child(i, 1) is not None:
                     # 叶节点，直接获取值
                     value_item = item.child(i, 1)
                     value = self._parse_value(value_item.text())
                     self.config_data["KEYS"][config_key] = value
-                else:
-                    # 非叶节点，递归处理
-                    self._extract_from_item(child_item, self.config_data, f"KEYS.{config_key}")
             return
         
         # 处理CP信息特殊情况
@@ -389,58 +399,179 @@ class Tab1New(QWidget):
             for i in range(row_count):
                 child_item = item.child(i, 0)
                 child_key = child_item.text()
-                if child_item.rowCount() == 0:
+                if "[不可修改]" in child_key:
+                    continue
+                    
+                if child_item.rowCount() == 0 and item.child(i, 1) is not None:
                     # 叶节点，直接获取值
                     value_item = item.child(i, 1)
                     value = self._parse_value(value_item.text())
+                    # 确保路径存在
+                    if "BUSINESS" not in self.config_data:
+                        self.config_data["BUSINESS"] = {}
+                    if "CP" not in self.config_data["BUSINESS"]:
+                        self.config_data["BUSINESS"]["CP"] = {}
                     self.config_data["BUSINESS"]["CP"][child_key] = value
                 else:
                     # 非叶节点，递归处理
-                    self._extract_from_item(child_item, self.config_data, f"BUSINESS.CP.{child_key}")
+                    self._extract_from_item(child_item, f"BUSINESS.CP.{child_key}")
             return
         
-        # 处理餐饮信息特殊情况
-        if key == "餐饮信息":
+        # 处理餐厅-CP关系特殊情况
+        if key == "餐厅-CP关系":
             for i in range(row_count):
                 child_item = item.child(i, 0)
                 child_key = child_item.text()
-                if child_item.rowCount() == 0:
+                if "[不可修改]" in child_key:
+                    continue
+                    
+                if child_item.rowCount() == 0 and item.child(i, 1) is not None:
                     # 叶节点，直接获取值
                     value_item = item.child(i, 1)
                     value = self._parse_value(value_item.text())
+                    # 确保路径存在
+                    if "BUSINESS" not in self.config_data:
+                        self.config_data["BUSINESS"] = {}
+                    if "REST2CP" not in self.config_data["BUSINESS"]:
+                        self.config_data["BUSINESS"]["REST2CP"] = {}
                     self.config_data["BUSINESS"]["REST2CP"][child_key] = value
                 else:
                     # 非叶节点，递归处理
-                    self._extract_from_item(child_item, self.config_data, f"BUSINESS.REST2CP.{child_key}")
+                    self._extract_from_item(child_item, f"BUSINESS.REST2CP.{child_key}")
+            return
+        
+        # 处理餐厅信息特殊情况
+        if key == "餐厅信息":
+            for i in range(row_count):
+                child_item = item.child(i, 0)
+                child_key = child_item.text()
+                if "[不可修改]" in child_key:
+                    continue
+                
+                # 确保路径存在
+                if "BUSINESS" not in self.config_data:
+                    self.config_data["BUSINESS"] = {}
+                if "RESTAURANT" not in self.config_data["BUSINESS"]:
+                    self.config_data["BUSINESS"]["RESTAURANT"] = {}
+                    
+                if child_key == "关键词" or child_key == "屏蔽词":
+                    if child_item.rowCount() == 0 and item.child(i, 1) is not None:
+                        # 叶节点，直接获取值
+                        value_item = item.child(i, 1)
+                        value = self._parse_value(value_item.text())
+                        self.config_data["BUSINESS"]["RESTAURANT"][child_key] = value
+                    else:
+                        # 非叶节点，递归处理
+                        self._extract_from_item(child_item, f"BUSINESS.RESTAURANT.{child_key}")
+                elif child_key == "收油关系映射":
+                    if child_item.rowCount() == 0 and item.child(i, 1) is not None:
+                        # 如果是叶节点（不应该出现这种情况）
+                        value_item = item.child(i, 1)
+                        value = self._parse_value(value_item.text())
+                        self.config_data["BUSINESS"]["RESTAURANT"]["收油关系映射"] = value
+                    else:
+                        # 递归处理收油关系映射的子项
+                        if "收油关系映射" not in self.config_data["BUSINESS"]["RESTAURANT"]:
+                            self.config_data["BUSINESS"]["RESTAURANT"]["收油关系映射"] = {}
+                            
+                        # 处理子项，每个子项是一个映射关系
+                        for j in range(child_item.rowCount()):
+                            map_item = child_item.child(j, 0)
+                            map_key = map_item.text()
+                            
+                            if map_item.rowCount() == 0 and child_item.child(j, 1) is not None:
+                                # 叶节点，直接获取值
+                                map_value_item = child_item.child(j, 1)
+                                map_value = self._parse_value(map_value_item.text())
+                                self.config_data["BUSINESS"]["RESTAURANT"]["收油关系映射"][map_key] = map_value
+                            else:
+                                # 递归处理更深层次的映射（如果存在）
+                                self._extract_from_item(map_item, f"BUSINESS.RESTAURANT.收油关系映射.{map_key}")
+                else:
+                    # 处理其他可能的子项
+                    if child_item.rowCount() == 0 and item.child(i, 1) is not None:
+                        # 叶节点，直接获取值
+                        value_item = item.child(i, 1)
+                        value = self._parse_value(value_item.text())
+                        self.config_data["BUSINESS"]["RESTAURANT"][child_key] = value
+                    else:
+                        # 非叶节点，递归处理
+                        self._extract_from_item(child_item, f"BUSINESS.RESTAURANT.{child_key}")
             return
         
         # 常规项目处理
-        for i in range(row_count):
-            child_item = item.child(i, 0)
-            child_key = child_item.text()
-            if "[不可修改]" in child_key:
-                # 跳过不可修改的项
-                continue
-                
-            if child_item.rowCount() == 0:
-                # 叶节点，直接获取值
-                value_item = item.child(i, 1)
-                value = self._parse_value(value_item.text())
-                
-                # 更新配置
-                path_parts = current_path.split(".")
-                target_dict = self.config_data
-                for part in path_parts:
-                    if part:  # 忽略空部分
+        # 确定实际的配置路径，基于structure结构
+        actual_path = ""
+        # 从structure中找到当前项的实际路径
+        for root_key, sections in self.structure.items():
+            if key in sections:
+                if isinstance(sections[key], dict) and "path" in sections[key]:
+                    actual_path = sections[key]["path"]
+                else:
+                    actual_path = key
+                break
+        
+        if actual_path:
+            # 处理当前项下的所有子项
+            for i in range(row_count):
+                child_item = item.child(i, 0)
+                child_key = child_item.text()
+                if "[不可修改]" in child_key:
+                    continue
+                    
+                if child_item.rowCount() == 0 and item.child(i, 1) is not None:
+                    # 叶节点，直接获取值
+                    value_item = item.child(i, 1)
+                    value = self._parse_value(value_item.text())
+                    
+                    # 找到配置中的对应位置并更新
+                    target_dict = self.config_data
+                    path_parts = actual_path.split(".")
+                    for part in path_parts[:-1]:  # 除最后一个部分
                         if part not in target_dict:
                             target_dict[part] = {}
                         target_dict = target_dict[part]
-                
-                target_dict[child_key] = value
-            else:
-                # 非叶节点，递归处理
-                new_path = f"{current_path}.{child_key}" if current_path else child_key
-                self._extract_from_item(child_item, self.config_data, new_path)
+                    
+                    # 更新最后一级
+                    last_part = path_parts[-1]
+                    if last_part not in target_dict:
+                        target_dict[last_part] = {}
+                    
+                    if isinstance(target_dict[last_part], dict):
+                        target_dict[last_part][child_key] = value
+                    else:
+                        # 如果不是字典，则直接赋值
+                        target_dict[last_part] = value
+                else:
+                    # 非叶节点，递归处理
+                    new_path = f"{actual_path}.{child_key}"
+                    self._extract_from_item(child_item, new_path)
+        else:
+            # 如果在结构中找不到对应的路径，则使用当前路径
+            target_dict = self.config_data
+            if current_path:
+                path_parts = current_path.split(".")
+                for part in path_parts:
+                    if part not in target_dict:
+                        target_dict[part] = {}
+                    target_dict = target_dict[part]
+            
+            # 处理当前层级下的所有子项
+            for i in range(row_count):
+                child_item = item.child(i, 0)
+                child_key = child_item.text()
+                if "[不可修改]" in child_key:
+                    continue
+                    
+                if child_item.rowCount() == 0 and item.child(i, 1) is not None:
+                    # 叶节点，直接获取值
+                    value_item = item.child(i, 1)
+                    value = self._parse_value(value_item.text())
+                    target_dict[child_key] = value
+                else:
+                    # 非叶节点，递归处理
+                    new_path = f"{current_path}.{child_key}" if current_path else child_key
+                    self._extract_from_item(child_item, new_path)
     
     def _parse_value(self, value_str):
         """解析值字符串为适当的类型"""

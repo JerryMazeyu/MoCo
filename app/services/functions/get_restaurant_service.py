@@ -128,7 +128,7 @@ class GetRestaurantService:
             print("{}查询失败".format(self.address))
         return lon_lat_list
 
-    def _gaode_search(self,n = None, token = None, keywords = None, address = None, maptype = 1,radius = 50000) -> list[dict]:
+    def _gaode_search(self, n = None, token = None, keywords = None, address = None, maptype = 1,radius = 50000) -> list[dict]:
         """
         从高德地图API获取餐厅信息
         
@@ -214,8 +214,8 @@ class GetRestaurantService:
                             'rest_type_gaode': i.get('type') if i.get('type') is not None else '',
                             'distance': i.get('distance') if i.get('distance') is not None else '',
                             'rest_city': i.get('cityname') if i.get('cityname') is not None else '',
-                            'rest_type': keywords
                         }
+                        # 注意：不再在这里设置rest_type字段，而是在run方法中根据use_llm参数决定是否设置
                         datalist.append(dict1)
                     if len(l)<20: ## 当最后一次小于20的话说明最后一页，退出
                         break
@@ -394,7 +394,7 @@ class GetRestaurantService:
         
         LOGGER.info(f"已将 {len(self.info)} 条餐厅信息转换为餐厅实体")
     
-    def gen_info(self, restaurants_group: RestaurantsGroup, num_workers: int = 4) -> RestaurantsGroup:
+    def gen_info(self, restaurants_group: RestaurantsGroup, num_workers: int = 1) -> RestaurantsGroup:
         """
         并行生成餐厅信息
         
@@ -410,24 +410,41 @@ class GetRestaurantService:
                 return restaurant
             except Exception as e:
                 LOGGER.error(f"生成餐厅 {restaurant.inst.rest_chinese_name if hasattr(restaurant.inst, 'rest_chinese_name') else '未知'} 信息时出错: {e}")
+                # 返回原始餐厅对象，不中断处理流程
                 return restaurant
 
         # 获取餐厅列表
-        restaurants = restaurants_group.instances
+        restaurants = restaurants_group.members
         
         if not restaurants:
             LOGGER.warning("餐厅列表为空，无需生成信息")
             return restaurants_group
         
-        # 使用线程池并行处理
-        with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
-            processed_restaurants = list(executor.map(process_restaurant, restaurants))
-        
-        # 创建新的餐厅组合并返回
-        result_group = RestaurantsGroup(processed_restaurants, group_type=restaurants_group.group_type)
-        LOGGER.info(f"餐厅信息生成完成，共处理 {len(processed_restaurants)} 个餐厅")
-        
-        return result_group
+        try:
+            # 使用线程池并行处理
+            processed_restaurants = []
+            with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
+                # 使用list收集future对象，确保所有任务都被处理
+                future_to_restaurant = {executor.submit(process_restaurant, restaurant): restaurant for restaurant in restaurants}
+                for future in concurrent.futures.as_completed(future_to_restaurant):
+                    try:
+                        result = future.result()
+                        processed_restaurants.append(result)
+                    except Exception as e:
+                        restaurant = future_to_restaurant[future]
+                        LOGGER.error(f"处理餐厅时发生未捕获异常: {e}，餐厅: {restaurant.inst.rest_chinese_name if hasattr(restaurant.inst, 'rest_chinese_name') else '未知'}")
+                        # 将原始餐厅对象添加到结果中，确保不丢失数据
+                        processed_restaurants.append(restaurant)
+            
+            # 创建新的餐厅组合并返回
+            result_group = RestaurantsGroup(processed_restaurants, group_type=restaurants_group.group_type)
+            LOGGER.info(f"餐厅信息生成完成，共处理 {len(processed_restaurants)} 个餐厅")
+            
+            return result_group
+        except Exception as e:
+            LOGGER.error(f"生成餐厅信息过程中发生严重错误: {e}")
+            # 出现错误时返回原始组合，确保不中断程序执行
+            return restaurants_group
     
     def get_restaurants_group(self, group_type='all') -> RestaurantsGroup:
         """
@@ -438,7 +455,7 @@ class GetRestaurantService:
         """
         return RestaurantsGroup(self.restaurants, group_type=group_type)
     
-    def run(self, cities=None, cp_id=None, model_class=None, file_path=None, use_api=True, if_gen_info=True) -> RestaurantsGroup:
+    def run(self, cities=None, cp_id=None, model_class=None, file_path=None, use_api=True, if_gen_info=True, use_llm=True) -> RestaurantsGroup:
         """
         执行获取餐厅信息的完整流程
         
@@ -448,6 +465,7 @@ class GetRestaurantService:
         :param file_path: 餐厅信息文件路径
         :param use_api: 是否使用API获取餐厅信息
         :param if_gen_info: 是否生成餐厅信息，如翻译和类型分析等
+        :param use_llm: 是否使用大模型生成餐厅类型，默认为True
         :return: 餐厅组合
         """
         # 如果提供了文件路径，从文件加载
@@ -477,6 +495,17 @@ class GetRestaurantService:
                         def _gaode_search_func(key):
                             return self._gaode_search(n = self.n, token = key, keywords = key_words, address = city_lat_lng, maptype = 1,radius = 50000)
                         restaurant_list = robust_query(_gaode_search_func, self.conf.KEYS.gaode_keys)
+                        
+                        # 根据use_llm设置决定是否在这里设置rest_type
+                        if not use_llm:
+                            for restaurant in restaurant_list:
+                                restaurant['rest_type'] = key_words
+                        else:
+                            # 如果使用大模型，则不设置rest_type，让_generate_type方法处理
+                            for restaurant in restaurant_list:
+                                if 'rest_type' in restaurant:
+                                    del restaurant['rest_type']
+                        
                         ## 将获得的餐厅信息添加到info中
                         self.info.extend(restaurant_list)
                         LOGGER.info(f"高德地图API搜索{city_name}结果: {len(restaurant_list)} 条")

@@ -2,8 +2,9 @@
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                             QLabel, QFrame, QComboBox, QGroupBox, QGridLayout,
-                            QFileDialog, QMessageBox, QLayout, QListWidget, QDialog, QLineEdit)
-from PyQt5.QtCore import Qt, QSize, QPoint, QRect, QThread, pyqtSignal
+                            QFileDialog, QMessageBox, QLayout, QListWidget, QDialog, QLineEdit, 
+                            QApplication, QCheckBox)
+from PyQt5.QtCore import Qt, QSize, QPoint, QRect, QThread, pyqtSignal, QEvent
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QPainter
 import pandas as pd
 from app.views.components.xlsxviewer import XlsxViewerWidget
@@ -170,6 +171,12 @@ class ApiTestWidget(QWidget):
     
     def update_status_light(self, label, status):
         """更新状态指示灯"""
+        # 确保在主线程执行UI更新
+        if QApplication.instance().thread() != QThread.currentThread():
+            # 如果在非主线程中调用，推迟到主线程执行
+            QApplication.instance().postEvent(self, QEvent(QEvent.Type.User))
+            return
+            
         if status is None:
             color = QColor(150, 150, 150)  # 灰色，表示未测试
         elif status:
@@ -181,15 +188,22 @@ class ApiTestWidget(QWidget):
         pixmap = QPixmap(QSize(16, 16))
         pixmap.fill(Qt.transparent)
         
-        # 使用 QPainter 直接绘制
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(color)
-        painter.drawEllipse(2, 2, 12, 12)
-        painter.end()
-        
-        label.setPixmap(pixmap)
+        try:
+            # 使用 QPainter 直接绘制
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(color)
+            painter.drawEllipse(2, 2, 12, 12)
+            painter.end()
+            
+            label.setPixmap(pixmap)
+        except Exception as e:
+            LOGGER.error(f"绘制状态指示灯失败: {str(e)}")
+            # 创建一个备用的纯色pixmap以防绘制失败
+            fallback = QPixmap(QSize(16, 16))
+            fallback.fill(color)
+            label.setPixmap(fallback)
     
     def test_api(self):
         """测试API连通性"""
@@ -339,24 +353,81 @@ class RestaurantWorker(QThread):
     # 定义信号
     finished = pyqtSignal(pd.DataFrame)  # 完成信号，携带查询结果
     error = pyqtSignal(str)  # 错误信号，携带错误信息
+    progress = pyqtSignal(str)  # 进度信号，用于实时更新进度
     
-    def __init__(self, city, cp_id):
+    def __init__(self, city, cp_id, use_llm=True):
         super().__init__()
         self.city = city
         self.cp_id = cp_id
+        self.use_llm = use_llm
+        self.running = True
+    
+    def stop(self):
+        """停止线程执行"""
+        self.running = False
     
     def run(self):
         try:
             LOGGER.info(f"线程开始: 正在获取 {self.city} 的餐厅信息...")
+            self.progress.emit(f"开始获取 {self.city} 的餐厅信息...")
             
+            # 创建服务实例
             restaurant_service = GetRestaurantService()
-            restaurant_service.run(cities=self.city, cp_id=self.cp_id, model_class=RestaurantModel, file_path=None, use_api=True)
-
-            restaurant_group = restaurant_service.get_restaurants_group()
-            restaurant_data = restaurant_group.to_dataframe()
             
-            LOGGER.info(f"{self.city} 餐厅信息获取完成，共 {len(restaurant_data)} 条记录")
-            self.finished.emit(restaurant_data)
+            # 检查线程是否仍在运行
+            if not self.running:
+                LOGGER.info("线程被用户中断")
+                return
+                
+            # 获取基础餐厅信息
+            self.progress.emit(f"正在从API获取餐厅基础信息...")
+            try:
+                restaurant_service.run(cities=self.city, cp_id=self.cp_id, model_class=RestaurantModel, 
+                                      file_path=None, use_api=True, if_gen_info=False, use_llm=self.use_llm)
+            except Exception as e:
+                LOGGER.error(f"获取餐厅基础信息时出错: {str(e)}")
+                self.error.emit(f"获取餐厅基础信息时出错: {str(e)}")
+                return
+            
+            # 检查是否有餐厅信息
+            if not restaurant_service.restaurants:
+                LOGGER.warning(f"未找到 {self.city} 的餐厅信息")
+                self.error.emit(f"未找到 {self.city} 的餐厅信息")
+                return
+                
+            self.progress.emit(f"已找到 {len(restaurant_service.restaurants)} 家餐厅，正在生成详细信息...")
+            
+            # 检查线程是否仍在运行
+            if not self.running:
+                LOGGER.info("线程被用户中断")
+                return
+                
+            # 获取餐厅组
+            restaurant_group = restaurant_service.get_restaurants_group()
+            
+            # 单独执行生成信息步骤，带错误处理
+            try:
+                # 将use_llm参数传递给gen_info方法
+                restaurant_group = restaurant_service.gen_info(restaurant_group, num_workers=2)  # 减少工作线程数
+            except Exception as e:
+                LOGGER.error(f"生成餐厅详细信息时出错: {str(e)}")
+                self.progress.emit(f"生成餐厅详细信息时出错，但会继续处理已获取的数据")
+                # 继续使用原始餐厅组
+            
+            # 最后一次检查线程是否仍在运行
+            if not self.running:
+                LOGGER.info("线程被用户中断")
+                return
+                
+            # 转换为DataFrame并发送结果
+            try:
+                restaurant_data = restaurant_group.to_dataframe()
+                LOGGER.info(f"{self.city} 餐厅信息获取完成，共 {len(restaurant_data)} 条记录")
+                self.progress.emit(f"餐厅信息获取完成，共 {len(restaurant_data)} 条记录")
+                self.finished.emit(restaurant_data)
+            except Exception as e:
+                LOGGER.error(f"转换餐厅数据为DataFrame时出错: {str(e)}")
+                self.error.emit(f"处理餐厅数据时出错: {str(e)}")
         except Exception as e:
             LOGGER.error(f"获取餐厅信息时出错: {str(e)}")
             self.error.emit(str(e))
@@ -487,6 +558,11 @@ class Tab2(QWidget):
         self.city_input.setMinimumWidth(200)  # 设置最小宽度
         self.city_input.setMaximumWidth(250)  # 设置最大宽度
         
+        # 添加使用大模型的复选框
+        self.use_llm_checkbox = QCheckBox("使用大模型生成餐厅类型")
+        self.use_llm_checkbox.setChecked(True)  # 默认选中
+        self.use_llm_checkbox.setEnabled(False)  # 默认禁用，需要先选择CP
+        
         # 获取餐厅按钮
         self.get_restaurant_button = QPushButton("餐厅获取")
         self.get_restaurant_button.clicked.connect(self.get_restaurants)
@@ -510,6 +586,8 @@ class Tab2(QWidget):
         
         control_layout.addWidget(city_label)
         control_layout.addWidget(self.city_input)  # 使用输入框
+        control_layout.addSpacing(20)
+        control_layout.addWidget(self.use_llm_checkbox)  # 添加复选框
         control_layout.addSpacing(20)
         control_layout.addWidget(self.get_restaurant_button)
         # control_layout.addWidget(self.import_button)
@@ -582,8 +660,9 @@ class Tab2(QWidget):
                     # 更新CP按钮文本
                     self.cp_button.setText(f"已选择CP为：{cp_data['cp_name']}")
                     
-                    # 启用城市输入框和获取餐厅按钮
+                    # 启用城市输入框、复选框和获取餐厅按钮
                     self.city_input.setEnabled(True)  # 启用城市输入框
+                    self.use_llm_checkbox.setEnabled(True)  # 启用复选框
                     self.get_restaurant_button.setEnabled(True)  # 启用获取餐厅按钮
                     
                     # 通知主窗口更新CP
@@ -664,11 +743,25 @@ class Tab2(QWidget):
     def get_restaurants(self):
         """获取餐厅信息"""
         try:
+            # 检查是否已经有一个正在运行的线程
+            if hasattr(self, 'worker') and self.worker is not None and self.worker.isRunning():
+                # 线程正在运行，则停止它
+                self.worker.stop()
+                self.get_restaurant_button.setText("餐厅获取")
+                if hasattr(self, 'progress_label'):
+                    self.progress_label.setText("操作已取消")
+                LOGGER.info("用户取消了餐厅获取操作")
+                return
+                
             # 获取当前输入的城市
             city = self.city_input.text().strip()  # 获取输入框中的城市名称
             if not city:
                 QMessageBox.warning(self, "请输入城市", "请先输入餐厅城市")
                 return
+            
+            # 获取是否使用大模型
+            use_llm = self.use_llm_checkbox.isChecked()
+            LOGGER.info(f"用户选择{'使用' if use_llm else '不使用'}大模型生成餐厅类型")
             
             # 检查API连通性
             api_ok = self.check_apis()
@@ -682,25 +775,40 @@ class Tab2(QWidget):
                     return
             
             # 禁用获取按钮，防止重复点击
-            self.get_restaurant_button.setEnabled(False)
-            self.get_restaurant_button.setText("正在获取...")
+            self.get_restaurant_button.setText("取消获取")
             
-            # 创建工作线程
-            self.worker = RestaurantWorker(city=city, cp_id=self.current_cp['cp_id'])
+            # 添加进度提示
+            if not hasattr(self, 'progress_label'):
+                self.progress_label = QLabel("正在准备...")
+                self.progress_label.setStyleSheet("color: #666; margin-top: 5px;")
+                self.layout.addWidget(self.progress_label)
+            else:
+                self.progress_label.setText("正在准备...")
+                self.progress_label.setVisible(True)
+            
+            # 创建工作线程，传递使用大模型的选项
+            self.worker = RestaurantWorker(city=city, cp_id=self.current_cp['cp_id'], use_llm=use_llm)
             
             # 连接信号
             self.worker.finished.connect(self.on_restaurant_search_finished)
             self.worker.error.connect(self.on_restaurant_search_error)
+            self.worker.progress.connect(self.update_progress)
             
             # 启动线程
-            LOGGER.info(f"启动餐厅获取线程，搜索城市: {city}")
+            LOGGER.info(f"启动餐厅获取线程，搜索城市: {city}，{'使用' if use_llm else '不使用'}大模型")
             self.worker.start()
             
         except Exception as e:
             LOGGER.error(f"启动餐厅获取线程时出错: {str(e)}")
             QMessageBox.critical(self, "获取失败", f"启动餐厅获取线程时出错: {str(e)}")
-            self.get_restaurant_button.setEnabled(True)
             self.get_restaurant_button.setText("餐厅获取")
+            if hasattr(self, 'progress_label'):
+                self.progress_label.setVisible(False)
+    
+    def update_progress(self, message):
+        """更新进度信息"""
+        if hasattr(self, 'progress_label'):
+            self.progress_label.setText(message)
     
     def on_restaurant_search_finished(self, restaurant_data):
         """餐厅搜索完成的回调函数"""
@@ -712,20 +820,35 @@ class Tab2(QWidget):
             QMessageBox.information(self, "获取成功", f"餐厅信息获取完成，共 {len(restaurant_data)} 条记录")
             
             # 恢复按钮状态
-            self.get_restaurant_button.setEnabled(True)
             self.get_restaurant_button.setText("餐厅获取")
+            
+            # 隐藏进度标签
+            if hasattr(self, 'progress_label'):
+                self.progress_label.setVisible(False)
+            
+            # 清理线程
+            if hasattr(self, 'worker'):
+                self.worker.disconnect()  # 断开所有信号连接
+                self.worker = None
             
         except Exception as e:
             LOGGER.error(f"处理餐厅搜索结果时出错: {str(e)}")
             QMessageBox.critical(self, "处理失败", f"处理餐厅搜索结果时出错: {str(e)}")
-            self.get_restaurant_button.setEnabled(True)
             self.get_restaurant_button.setText("餐厅获取")
+            if hasattr(self, 'progress_label'):
+                self.progress_label.setVisible(False)
     
     def on_restaurant_search_error(self, error_msg):
         """餐厅搜索出错的回调函数"""
         QMessageBox.critical(self, "获取失败", f"获取餐厅信息时出错: {error_msg}")
-        self.get_restaurant_button.setEnabled(True)
         self.get_restaurant_button.setText("餐厅获取")
+        if hasattr(self, 'progress_label'):
+            self.progress_label.setVisible(False)
+            
+        # 清理线程
+        if hasattr(self, 'worker'):
+            self.worker.disconnect()  # 断开所有信号连接
+            self.worker = None
     
     def check_apis(self):
         """检查所有API连通性"""

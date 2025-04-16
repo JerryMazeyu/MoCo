@@ -86,14 +86,31 @@ class ReceiveRecord(BaseInstance):
         ## 读取配置文件收油关系映射
         # 根据餐厅类型分配收油量
         def oil_determine_collection_amount(restaurant_type: str, oil_mapping: dict) -> int:
+            
+            # 如果餐厅类型为空，则使用默认值
+            if not restaurant_type:
+                return np.random.choice([1, 2])
+            # 遍历映射关系，找到对应的收油量
             for key, value in oil_mapping.items():
-                if ',' in str(value):
-                    allocate_value =  [int(item.strip()) for item in str(value).split(',')]
-                else:
-                    allocate_value = [int(value)]
-                if any(type_keyword in restaurant_type for type_keyword in key.split('/')):
-                    return np.random.choice(allocate_value)
+                if restaurant_type == key or any(type_keyword in restaurant_type for type_keyword in key.split('/')):
+                    if isinstance(value, list):
+                        return np.random.choice(value)
+                    else:
+                        return value
             return np.random.choice([1, 2])  # 默认值
+            
+            # Jerry Modified
+            # for key, value in oil_mapping.items():
+            #     if ',' in str(value):
+            #         try:
+            #             allocate_value =  [int(item.strip()) for item in str(value).split(',')]
+            #         except:
+            #             allocate_value = [int(item.strip()) for item in value]
+            #     else:
+            #         allocate_value = [int(value)]
+            #     if any(type_keyword in restaurant_type for type_keyword in key.split('/')):
+            #         return np.random.choice(allocate_value)
+            # return np.random.choice([1, 2])  # 默认值
         try:
             # 1、设置数据生成日期
             if not hasattr(self.inst, 'rr_create_date') or not self.inst.rr_date:
