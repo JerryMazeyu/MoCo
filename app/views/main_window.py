@@ -86,7 +86,9 @@ class MainWindow(QMainWindow):
             from app.views.tabs.tab2 import Tab2  # 餐厅获取
             from app.views.tabs.tab3 import Tab3  # 车辆获取
             from app.views.tabs.tab1_new import Tab1New  # 配置界面
+
             from app.views.tabs.tab4 import Tab4  # 油站获取
+
 
             # 创建Tab组件
             self.tab1_widget = QWidget()

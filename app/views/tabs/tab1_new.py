@@ -178,6 +178,7 @@ class Tab1New(QWidget):
                         "屏蔽词": {"path": "屏蔽词"},
                         "收油关系映射": {"path": "收油关系映射"}
                     }
+
                 }
             }
         }
@@ -346,6 +347,7 @@ class Tab1New(QWidget):
             LOGGER.error(f"提取配置值时出错: {e}")
     
     def _extract_from_item(self, item, current_path):
+
         """递归从模型项提取数据到配置字典"""
         row_count = item.rowCount()
         
@@ -354,6 +356,7 @@ class Tab1New(QWidget):
             for i in range(row_count):
                 section_item = item.child(i, 0)
                 self._extract_from_item(section_item, "")
+
             return
         
         # 获取当前项的键名
@@ -372,6 +375,7 @@ class Tab1New(QWidget):
         # 处理顶级配置节点
         if key == "KEYS":
             # 直接处理KEYS下的子项
+
             for i in range(row_count):
                 child_item = item.child(i, 0)
                 child_key = child_item.text()
@@ -388,6 +392,7 @@ class Tab1New(QWidget):
                 config_key = config_map.get(child_key, child_key)
                 
                 if child_item.rowCount() == 0 and item.child(i, 1) is not None:
+
                     # 叶节点，直接获取值
                     value_item = item.child(i, 1)
                     value = self._parse_value(value_item.text())
@@ -572,6 +577,7 @@ class Tab1New(QWidget):
                     # 非叶节点，递归处理
                     new_path = f"{current_path}.{child_key}" if current_path else child_key
                     self._extract_from_item(child_item, new_path)
+
     
     def _parse_value(self, value_str):
         """解析值字符串为适当的类型"""

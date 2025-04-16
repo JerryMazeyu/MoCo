@@ -394,7 +394,8 @@ class GetRestaurantService:
         
         LOGGER.info(f"已将 {len(self.info)} 条餐厅信息转换为餐厅实体")
     
-    def gen_info(self, restaurants_group: RestaurantsGroup, num_workers: int = 1) -> RestaurantsGroup:
+
+    def gen_info(self, restaurants_group: RestaurantsGroup, num_workers: int = 4) -> RestaurantsGroup:
         """
         并行生成餐厅信息
         
@@ -420,6 +421,7 @@ class GetRestaurantService:
             LOGGER.warning("餐厅列表为空，无需生成信息")
             return restaurants_group
         
+
         try:
             # 使用线程池并行处理
             processed_restaurants = []
@@ -445,6 +447,7 @@ class GetRestaurantService:
             LOGGER.error(f"生成餐厅信息过程中发生严重错误: {e}")
             # 出现错误时返回原始组合，确保不中断程序执行
             return restaurants_group
+
     
     def get_restaurants_group(self, group_type='all') -> RestaurantsGroup:
         """
@@ -456,6 +459,7 @@ class GetRestaurantService:
         return RestaurantsGroup(self.restaurants, group_type=group_type)
     
     def run(self, cities=None, cp_id=None, model_class=None, file_path=None, use_api=True, if_gen_info=True, use_llm=True) -> RestaurantsGroup:
+
         """
         执行获取餐厅信息的完整流程
         
