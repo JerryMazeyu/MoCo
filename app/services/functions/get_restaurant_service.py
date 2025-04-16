@@ -6,6 +6,7 @@ from typing import Dict, Any, List, Optional, Union
 import threading
 import time
 import sys 
+import concurrent.futures
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 from app.services.instances.restaurant import Restaurant, RestaurantsGroup
 from app.utils.logger import setup_logger
@@ -98,6 +99,7 @@ class GetRestaurantService:
             LOGGER.error(f"从文件加载餐厅信息失败: {e}")
     
      ## 利用高德地图自动获取地区以及下一级地区经纬度
+    
     def _gaode_get_lat_lng(self,token = None, address = None,subdistrict = 1) -> dict: # 默认查下一级
         parama = 'keywords={}&subdistrict={}&key={}'.format(address, subdistrict, token)
         get_area_url = 'https://restapi.amap.com/v3/config/district?'+parama
@@ -387,13 +389,45 @@ class GetRestaurantService:
             # 创建餐厅实体
             restaurant = Restaurant(data, model=model_class, conf=self.conf,cp_location = cp_location)
             
-            # 生成缺失字段
-            restaurant.generate()
-            
             # 添加到餐厅列表
             self.restaurants.append(restaurant)
         
         LOGGER.info(f"已将 {len(self.info)} 条餐厅信息转换为餐厅实体")
+    
+    def gen_info(self, restaurants_group: RestaurantsGroup, num_workers: int = 4) -> RestaurantsGroup:
+        """
+        并行生成餐厅信息
+        
+        :param restaurants_group: 餐厅组合
+        :param num_workers: 并行工作线程数
+        :return: 处理后的餐厅组合
+        """
+        LOGGER.info(f"开始并行生成餐厅信息，使用 {num_workers} 个工作线程")
+        
+        def process_restaurant(restaurant):
+            try:
+                restaurant.generate()
+                return restaurant
+            except Exception as e:
+                LOGGER.error(f"生成餐厅 {restaurant.inst.rest_chinese_name if hasattr(restaurant.inst, 'rest_chinese_name') else '未知'} 信息时出错: {e}")
+                return restaurant
+
+        # 获取餐厅列表
+        restaurants = restaurants_group.instances
+        
+        if not restaurants:
+            LOGGER.warning("餐厅列表为空，无需生成信息")
+            return restaurants_group
+        
+        # 使用线程池并行处理
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
+            processed_restaurants = list(executor.map(process_restaurant, restaurants))
+        
+        # 创建新的餐厅组合并返回
+        result_group = RestaurantsGroup(processed_restaurants, group_type=restaurants_group.group_type)
+        LOGGER.info(f"餐厅信息生成完成，共处理 {len(processed_restaurants)} 个餐厅")
+        
+        return result_group
     
     def get_restaurants_group(self, group_type='all') -> RestaurantsGroup:
         """
@@ -404,16 +438,16 @@ class GetRestaurantService:
         """
         return RestaurantsGroup(self.restaurants, group_type=group_type)
     
-    def run(self, cities=None, cp_id=None, model_class=None, file_path=None, use_api=True) -> RestaurantsGroup:
+    def run(self, cities=None, cp_id=None, model_class=None, file_path=None, use_api=True, if_gen_info=True) -> RestaurantsGroup:
         """
         执行获取餐厅信息的完整流程
         
         :param cities: 城市列表或城市名
-        :param keywords: 搜索关键词
         :param cp_id: 餐厅所属CP ID
         :param model_class: 餐厅模型类
         :param file_path: 餐厅信息文件路径
         :param use_api: 是否使用API获取餐厅信息
+        :param if_gen_info: 是否生成餐厅信息，如翻译和类型分析等
         :return: 餐厅组合
         """
         # 如果提供了文件路径，从文件加载
@@ -430,9 +464,7 @@ class GetRestaurantService:
             if isinstance(cities, str):
                 cities = [cities]
             
-            
-            
-              # 遍历城市进行搜索
+            # 遍历城市进行搜索
             for city in cities:
                 LOGGER.info(f"开始搜索城市: {city}")
                 def _gaode_get_lat_lont_func(key):
@@ -448,13 +480,6 @@ class GetRestaurantService:
                         ## 将获得的餐厅信息添加到info中
                         self.info.extend(restaurant_list)
                         LOGGER.info(f"高德地图API搜索{city_name}结果: {len(restaurant_list)} 条")
-                        # LOGGER.info(f"高德地图API搜索{city_name}结果: {restaurant_list}")
-                # 使用百度地图API
-                # self._baidu_search(keywords=keywords, city=city)
-                
-                # 这里可以添加其他API的搜索
-                # self._serp_search(keywords=keywords, city=city)
-                # self._tripadvisor_search(keywords=keywords, city=city)
 
         # 屏蔽词
         LOGGER.info(f"开始过滤屏蔽词")
@@ -463,35 +488,21 @@ class GetRestaurantService:
         # 去重
         self._dedup()
         
-
-        # 计算距离
-        # 首先检查工厂坐标是否有效
-        # if not factory_lat_lon:
-        #     LOGGER.warning("警告: 工厂坐标未设置，跳过距离计算")
-        #     # 给所有餐厅设置一个默认距离
-        #     for restaurant in self.info:
-        #         restaurant['rest_distance'] = 0
-        # else:
-        #     for restaurant in self.info:
-        #         try:
-        #             # 提取餐厅的坐标
-        #             location = restaurant.get('rest_location', '')
-        #             if not location:
-        #                 LOGGER.warning(f"警告: 餐厅 {restaurant.get('rest_chinese_name', '未知')} 没有坐标信息，跳过距离计算")
-        #                 restaurant['rest_distance'] = 0
-        #                 continue
-                        
-        #             res_lon, res_lat = map(float, location.split(','))  # 假设坐标格式为 "经度,纬度"
-        #             distance = self._haversine((res_lat, res_lon), factory_lat_lon)  # 计算距离(维度,经度),(维度,经度)
-        #             restaurant['rest_distance'] = distance  # 添加新的键
-        #         except Exception as e:
-        #             self.progress.emit(f"警告: 计算餐厅 {restaurant.get('name', '未知')} 的距离时出错: {str(e)}")
-        #             restaurant['rest_distance'] = 0  # 设置默认值
         # 转换为餐厅实体
         self._info_to_restaurant(model_class=model_class, cp_id=cp_id)
         
+        # 获取餐厅组合
+        restaurant_group = self.get_restaurants_group()
+        
+        # 如果需要生成信息，则调用gen_info方法
+        if if_gen_info:
+            LOGGER.info("开始生成餐厅信息")
+            restaurant_group = self.gen_info(restaurant_group)
+        else:
+            LOGGER.info("跳过生成餐厅信息")
+        
         # 返回餐厅组合
-        return self.get_restaurants_group()
+        return restaurant_group
     
     def save_results(self, folder_path=None, filename_prefix='restaurants'):
         """

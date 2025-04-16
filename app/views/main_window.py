@@ -70,8 +70,6 @@ class MainWindow(QMainWindow):
             self.showMaximized()
             
             
-            
-            
         except Exception as e:
             LOGGER.error(f"登录后初始化失败: {str(e)}")
             # 恢复到登录页面
@@ -87,6 +85,7 @@ class MainWindow(QMainWindow):
             from app.views.tabs.tab1 import Tab1  # 配置界面
             from app.views.tabs.tab2 import Tab2  # 餐厅获取
             from app.views.tabs.tab3 import Tab3  # 车辆获取
+            from app.views.tabs.tab1_new import Tab1New  # 配置界面
 
             # 创建Tab组件
             self.tab1_widget = QWidget()
@@ -97,7 +96,8 @@ class MainWindow(QMainWindow):
             self.tab2_widget.setLayout(QVBoxLayout())
             self.tab3_widget.setLayout(QVBoxLayout())
             # 创建Tab内容
-            self.tab1_content = Tab1(self)  # 配置界面
+            # self.tab1_content = Tab1(self)  # 配置界面
+            self.tab1_content = Tab1New(self)  # 配置界面
             self.tab2_content = Tab2(self)  # 餐厅获取
             self.tab3_content = Tab3(self)  # 车辆获取
             # 添加内容到布局
