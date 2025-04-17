@@ -17,6 +17,5 @@ app/var/
 .env
 
 # 敏感配置文件
-app/config/huizhou_temp.yaml
-**/config/*_temp.yaml
+**/config/*.yaml
 

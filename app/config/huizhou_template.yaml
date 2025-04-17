@@ -1,8 +1,0 @@
-# 阿里云配置模板
-# 请将此文件复制为实际配置文件，并填入您的凭据
-# 注意：不要将包含真实凭据的文件提交到git仓库
-
-alicloud:
-  access_key_id: "YOUR_ACCESS_KEY_ID"      # 替换为您的Access Key ID
-  access_key_secret: "YOUR_ACCESS_SECRET"  # 替换为您的Access Key Secret
-  region: "cn-hangzhou"                    # 替换为您的区域 
