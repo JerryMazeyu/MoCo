@@ -394,22 +394,46 @@ class XlsxViewerWidget(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "保存错误", f"无法保存文件: {str(e)}")
                 return False
-    
+    """另存为文件到本地"""
     def save_file_as(self):
-        """另存为文件"""
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "保存Excel文件", "", "Excel文件 (*.xlsx);;CSV文件 (*.csv)"
-        )
-        
-        if not file_path:
+        try:
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "保存Excel文件", "", "Excel文件 (*.xlsx);;CSV文件 (*.csv)"
+            )
+            
+            if not file_path:
+                return False
+            
+            # 确保文件有正确的扩展名
+            if not file_path.endswith(('.xlsx', '.xls', '.csv')):
+                file_path += '.xlsx'
+            
+            # 获取当前数据
+            data = self.model.getDataFrame()
+            if data is None or data.empty:
+                QMessageBox.warning(self, "保存失败", "没有数据可以保存")
+                return False
+                
+            # 根据文件扩展名选择保存格式
+            try:
+                if file_path.endswith('.csv'):
+                    data.to_csv(file_path, index=False, encoding='utf-8-sig')
+                else:
+                    data.to_excel(file_path, index=False)
+                
+                QMessageBox.information(self, "保存成功", f"文件已保存到：{file_path}")
+                return True
+                
+            except PermissionError:
+                QMessageBox.critical(self, "保存失败", "无法保存文件，可能是文件被其他程序占用或没有写入权限")
+                return False
+            except Exception as e:
+                QMessageBox.critical(self, "保存失败", f"保存文件时出错：{str(e)}")
+                return False
+                
+        except Exception as e:
+            QMessageBox.critical(self, "保存失败", f"保存文件时出错：{str(e)}")
             return False
-        
-        # 确保文件有正确的扩展名
-        if not file_path.endswith(('.xlsx', '.xls', '.csv')):
-            file_path += '.xlsx'
-        
-        self.current_file = file_path
-        return self.save_file()
     
     def refresh(self):
         """刷新当前文件数据"""

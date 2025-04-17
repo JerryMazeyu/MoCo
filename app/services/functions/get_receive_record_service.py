@@ -552,14 +552,6 @@ class GetReceiveRecordService:
                 rest_allocated_barrel = row['rr_amount']
                 cp_restaurants_group.update_restaurant_info(restaurant_id, {'rest_verified_date': rest_verified_date.strftime('%Y-%m-%d'), 'rest_allocated_barrel': rest_allocated_barrel})
 
-            # 根据收油表更新车辆信息中的 vehicle_last_use
-            for index, row in oil_records_df[['rr_vehicle','rr_date']].drop_duplicates().iterrows():
-                vehicle_id = row['rr_vehicle']
-                vehicle_last_use = row['rr_date']
-                cp_vehicle_group.update_vehicle_info(vehicle_id, {'vehicle_last_use': vehicle_last_use.strftime('%Y-%m-%d')})
-            # for vehicle in cp_vehicle_group.members:
-            #     print(f"to_dict result: {vehicle.to_dict()}")  # 打印to_dict的结果
-            ## 将最后的餐厅信息和车辆信息转化为dataframe
             cp_restaurants_df = cp_restaurants_group.to_dataframe()
             
             cp_vehicle_df = cp_vehicle_group.to_dataframe()
@@ -585,6 +577,7 @@ class GetReceiveRecordService:
         """
         # 步骤1：读取dataframe中的'区域', '车牌号', '累计收油数'字段作为新的dataframe的字段，并去重
         restaurant_balance_df = oil_records_df[['rr_cp','rr_district', 'rr_vehicle_license_plate', 'rr_amount_of_day','temp_vehicle_index']].drop_duplicates()
+        print('平衡表条数',len(restaurant_balance_df))
         restaurant_balance_df.rename(columns={'rr_district':'balance_district','rr_vehicle_license_plate':'balance_vehicle_license_plate','rr_amount_of_day':'balance_amount_of_day','rr_cp':'balance_cp'},inplace=True)
         # 步骤2：新建一列榜单净重，公式为累计收油数*0.18-RANDBETWEEN(1,5)/100
         restaurant_balance_df['balance_weight_of_order'] = restaurant_balance_df['balance_amount_of_day'].apply(lambda x: round(x * 0.18 - random.randint(1, 5) / 100,2))
@@ -626,10 +619,12 @@ class GetReceiveRecordService:
         restaurant_balance_df['balance_date'] = delivery_dates[:len(restaurant_balance_df)]
         # 用于存储更新后的车辆分配
         updated_vehicle_assignments = []
+        # 根据每辆车去重
+        restaurant_balance_temp = restaurant_balance_df[['balance_date','balance_cp','balance_district', 'balance_vehicle_license_plate', 'balance_amount_of_day','temp_vehicle_index']].drop_duplicates()
         # 按日期分组，以便统计每天需要的车辆数量
-        daily_vehicle_needs = restaurant_balance_df.groupby('balance_date').size()
+        daily_vehicle_needs = restaurant_balance_temp.groupby('balance_date').size()
         # 逐行分配车辆
-        for index, row in restaurant_balance_df.iterrows():
+        for index, row in restaurant_balance_temp.iterrows():
             date = row['balance_date']
             date_str = date.strftime('%Y-%m-%d')
             
@@ -660,8 +655,7 @@ class GetReceiveRecordService:
                 'balance_district': row['balance_district'],
                 'balance_cp': row['balance_cp'],
                 'new_vehicle_id': allocated_vehicle.info['vehicle_id'],
-                'new_vehicle_license_plate': allocated_vehicle.info['vehicle_license_plate'],
-                'vehicle_id': allocated_vehicle.info['vehicle_id']
+                'new_vehicle_license_plate': allocated_vehicle.info['vehicle_license_plate']
             })
 
         # 创建更新后的车辆分配DataFrame
@@ -683,7 +677,7 @@ class GetReceiveRecordService:
         ## 回写收油表，将平衡表中的收购时间和流水号回写到收油表
         oil_records_df[['rr_date','rr_serial_number','rr_vehicle_license_plate','rr_vehicle_id']] = pd.merge(
             oil_records_df[['rr_cp', 'rr_district', 'rr_vehicle_license_plate', 'rr_amount_of_day', 'temp_vehicle_index']],
-            restaurant_balance_df[['balance_date', 'balance_serial_number', 'balance_vehicle_license_plate', 'balance_cp', 'balance_district', 'balance_amount_of_day', 'temp_vehicle_index']],
+            restaurant_balance_df[['balance_date', 'balance_serial_number', 'balance_vehicle_license_plate', 'balance_cp', 'balance_district', 'balance_amount_of_day', 'temp_vehicle_index','balance_vehicle_id']],
             left_on=['rr_cp', 'rr_district', 'rr_amount_of_day', 'temp_vehicle_index'],
             right_on=['balance_cp', 'balance_district', 'balance_amount_of_day', 'temp_vehicle_index'],
             how='left'
