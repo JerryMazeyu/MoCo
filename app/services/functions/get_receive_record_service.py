@@ -482,11 +482,7 @@ class GetReceiveRecordService:
             
             ## 筛选车辆类型为运输车、车辆状态为非冻结
             # 筛选车辆类型是否可用，并且是否过冷却期，只筛选过了冷却器的车辆
-            if hasattr(self.conf.runtime, 'dates_to_trans'):
-                cp_vehicle_df = cp_vehicle_group.filter_available(self.conf.runtime.dates_to_trans)
-            else:
-                LOGGER.warn("没有设置运输日期，设置为当前日期")
-                cp_vehicle_df = cp_vehicle_group.filter_available()
+            cp_vehicle_df = cp_vehicle_group.filter_available()
             cp_vehicle_df = cp_vehicle_df.filter_by_type(vehicle_type="to_rest")
             cp_vehicle_df = cp_vehicle_df.to_dataframe()
 
@@ -547,7 +543,7 @@ class GetReceiveRecordService:
             result_df_final = result_df_instance_group.to_dataframe()   
             print('收油表生成成功')
             # 获得最终的收油表和平衡表
-            oil_records_df, restaurant_balance = self.get_restaurant_balance(result_df_final,days_to_trans,month_year)
+            oil_records_df, restaurant_balance = self.get_restaurant_balance(result_df_final,days_to_trans,month_year,cp_vehicle_group)
             ##修改餐厅和车辆信息
             # 根据收油表更新餐厅信息中的 rest_verified_date 和 rest_allocated_barrel
             for index, row in oil_records_df.iterrows():
@@ -578,7 +574,7 @@ class GetReceiveRecordService:
             # 其他未预期的错误，包装成 ValueError
             raise ValueError(f"生成收油表时发生错误: {str(e)}")
     # 
-    def get_restaurant_balance(self,oil_records_df: pd.DataFrame, n: int,current_date: str):
+    def get_restaurant_balance(self,oil_records_df: pd.DataFrame, n: int,current_date: str, cp_vehicle_group:VehicleGroup ):
 
         """
         根据给定的步骤处理输入的DataFrame。
@@ -591,7 +587,7 @@ class GetReceiveRecordService:
         restaurant_balance_df = oil_records_df[['rr_cp','rr_district', 'rr_vehicle_license_plate', 'rr_amount_of_day','temp_vehicle_index']].drop_duplicates()
         restaurant_balance_df.rename(columns={'rr_district':'balance_district','rr_vehicle_license_plate':'balance_vehicle_license_plate','rr_amount_of_day':'balance_amount_of_day','rr_cp':'balance_cp'},inplace=True)
         # 步骤2：新建一列榜单净重，公式为累计收油数*0.18-RANDBETWEEN(1,5)/100
-        restaurant_balance_df['balance_weight_of_order'] = restaurant_balance_df['balance_amount_of_day'].apply(lambda x: x * 0.18 - random.randint(1, 5) / 100)
+        restaurant_balance_df['balance_weight_of_order'] = restaurant_balance_df['balance_amount_of_day'].apply(lambda x: round(x * 0.18 - random.randint(1, 5) / 100,2))
 
         # 步骤3：新建几列固定值的列
         current_year_month = datetime.datetime.strptime(current_date, '%Y-%m').strftime('%Y%m')
@@ -628,15 +624,70 @@ class GetReceiveRecordService:
             delivery_dates.extend([last_date] * (len(restaurant_balance_df) - len(delivery_dates)))
         
         restaurant_balance_df['balance_date'] = delivery_dates[:len(restaurant_balance_df)]
+        # 用于存储更新后的车辆分配
+        updated_vehicle_assignments = []
+        # 按日期分组，以便统计每天需要的车辆数量
+        daily_vehicle_needs = restaurant_balance_df.groupby('balance_date').size()
+        # 逐行分配车辆
+        for index, row in restaurant_balance_df.iterrows():
+            date = row['balance_date']
+            date_str = date.strftime('%Y-%m-%d')
+            
+            # 获取当天可用的车辆
+            available_vehicles = cp_vehicle_group.filter_available(date_str)
+            available_vehicles = available_vehicles.filter_by_type(vehicle_type="to_rest")
+            
+            # 如果没有可用车辆，记录并继续使用原车辆
+            if available_vehicles.count() == 0:
+                needed = daily_vehicle_needs[date]
+                raise ValueError(f"日期 {date_str} 没有可用车辆，该日期需要 {needed} 辆车进行收油作业")
+            
+            # 分配一辆可用车辆
+            allocated_vehicle = available_vehicles.allocate(date=date_str)
+            if allocated_vehicle is None:
+                needed = daily_vehicle_needs[date]
+                available = available_vehicles.count()
+                raise ValueError(f"日期 {date_str} 车辆分配失败，需要 {needed} 辆车，但只有 {available} 辆可用车辆")
+            # 更新车辆最后使用时间
+            cp_vehicle_group.update_vehicle_info(
+                allocated_vehicle.info['vehicle_id'],
+                {'vehicle_last_use': date_str}
+            )
+            # 记录新的分配
+            updated_vehicle_assignments.append({
+                'temp_vehicle_index': row['temp_vehicle_index'],
+                'balance_date': date,
+                'balance_district': row['balance_district'],
+                'balance_cp': row['balance_cp'],
+                'new_vehicle_id': allocated_vehicle.info['vehicle_id'],
+                'new_vehicle_license_plate': allocated_vehicle.info['vehicle_license_plate'],
+                'vehicle_id': allocated_vehicle.info['vehicle_id']
+            })
+
+        # 创建更新后的车辆分配DataFrame
+        updated_assignments_df = pd.DataFrame(updated_vehicle_assignments)
+
+        # 更新平衡表中的车辆信息
+        restaurant_balance_df = pd.merge(
+            restaurant_balance_df,
+            updated_assignments_df,
+            on=['temp_vehicle_index','balance_date','balance_cp','balance_district'],
+            how='left'
+        )
+        # 更新车辆信息
+        restaurant_balance_df['balance_vehicle_license_plate'] = restaurant_balance_df['new_vehicle_license_plate']
+        restaurant_balance_df['balance_vehicle_id'] = restaurant_balance_df['new_vehicle_id']
+        restaurant_balance_df = restaurant_balance_df.drop(columns=['new_vehicle_id', 'new_vehicle_license_plate'])
         
-        ## 回写收油表，将平衡表中的收购时间和流水号回写到收
-        oil_records_df[['rr_date','rr_serial_number']] = pd.merge(
+        
+        ## 回写收油表，将平衡表中的收购时间和流水号回写到收油表
+        oil_records_df[['rr_date','rr_serial_number','rr_vehicle_license_plate','rr_vehicle_id']] = pd.merge(
             oil_records_df[['rr_cp', 'rr_district', 'rr_vehicle_license_plate', 'rr_amount_of_day', 'temp_vehicle_index']],
             restaurant_balance_df[['balance_date', 'balance_serial_number', 'balance_vehicle_license_plate', 'balance_cp', 'balance_district', 'balance_amount_of_day', 'temp_vehicle_index']],
-            left_on=['rr_cp', 'rr_district', 'rr_vehicle_license_plate', 'rr_amount_of_day', 'temp_vehicle_index'],
-            right_on=['balance_cp', 'balance_district', 'balance_vehicle_license_plate', 'balance_amount_of_day', 'temp_vehicle_index'],
+            left_on=['rr_cp', 'rr_district', 'rr_amount_of_day', 'temp_vehicle_index'],
+            right_on=['balance_cp', 'balance_district', 'balance_amount_of_day', 'temp_vehicle_index'],
             how='left'
-        )[['balance_date','balance_serial_number']]
+        )[['balance_date','balance_serial_number','balance_vehicle_license_plate','balance_vehicle_id']]
         
         ## 将收油表和平衡表转成对应的model
         oil_records_df_instance = [ReceiveRecord(info,model = ReceiveRecordModel) for info in oil_records_df.to_dict(orient='records')]
