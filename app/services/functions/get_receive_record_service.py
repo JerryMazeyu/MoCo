@@ -554,16 +554,21 @@ class GetReceiveRecordService:
                 restaurant_id = row['rr_restaurant_id']
                 rest_verified_date = row['rr_date']
                 rest_allocated_barrel = row['rr_amount']
-                cp_restaurants_group.update_restaurant_info(restaurant_id, {'rest_verified_date': rest_verified_date, 'rest_allocated_barrel': rest_allocated_barrel})
+                cp_restaurants_group.update_restaurant_info(restaurant_id, {'rest_verified_date': rest_verified_date.strftime('%Y-%m-%d'), 'rest_allocated_barrel': rest_allocated_barrel})
 
             # 根据收油表更新车辆信息中的 vehicle_last_use
             for index, row in oil_records_df[['rr_vehicle','rr_date']].drop_duplicates().iterrows():
                 vehicle_id = row['rr_vehicle']
                 vehicle_last_use = row['rr_date']
-                cp_vehicle_group.update_vehicle_info(vehicle_id, {'vehicle_last_use': vehicle_last_use})
+                cp_vehicle_group.update_vehicle_info(vehicle_id, {'vehicle_last_use': vehicle_last_use.strftime('%Y-%m-%d')})
+            # for vehicle in cp_vehicle_group.members:
+            #     print(f"to_dict result: {vehicle.to_dict()}")  # 打印to_dict的结果
             ## 将最后的餐厅信息和车辆信息转化为dataframe
             cp_restaurants_df = cp_restaurants_group.to_dataframe()
+            
             cp_vehicle_df = cp_vehicle_group.to_dataframe()
+            # print('更新后的车辆数据')
+            # print(cp_vehicle_df)
 
             return oil_records_df,restaurant_balance,cp_restaurants_df,cp_vehicle_df
         except ValueError as ve:

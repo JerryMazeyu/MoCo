@@ -545,6 +545,9 @@ class VehicleGroup(BaseGroup):
         for vehicle in self.members:
             if vehicle.info['vehicle_id'] == vehicle_id:
                 vehicle.info.update(update_fields)
+                # 同时更新 inst
+                for key, value in update_fields.items():
+                    setattr(vehicle.inst, key, value)
                 print(f"Updated vehicle {vehicle_id} with fields: {update_fields}")
                 return True
         print(f"Vehicle {vehicle_id} not found")

@@ -215,7 +215,7 @@ class Tab5(QWidget):
         """)
         
         excel_layout = QVBoxLayout(excel_group)
-        self.xlsx_viewer = XlsxViewerWidget(show_open=False, show_save=False, show_save_as=True, show_refresh=False)
+        self.xlsx_viewer = XlsxViewerWidget(show_open=False, show_save=False, show_save_as=True, show_refresh=True)
         excel_layout.addWidget(self.xlsx_viewer)
         
         # 添加到主布局
@@ -393,6 +393,18 @@ class Tab5(QWidget):
             if dialog.exec_() == QDialog.Accepted:
                 vehicle_info = dialog.get_vehicle_info()
                 if vehicle_info:
+                    # 检查车牌号是否已存在
+                    if self.vehicles_data is not None and not self.vehicles_data.empty:
+                        existing_plate = self.vehicles_data[
+                            self.vehicles_data['vehicle_license_plate'] == vehicle_info['vehicle_license_plate']
+                        ]
+                        if not existing_plate.empty:
+                            QMessageBox.warning(
+                                self, 
+                                "车牌号重复", 
+                                f"车牌号 {vehicle_info['vehicle_license_plate']} 已存在，请检查输入"
+                            )
+                            return
                     # 设置所属CP
                     vehicle_info["vehicle_belonged_cp"] = self.current_cp['cp_id']
                     

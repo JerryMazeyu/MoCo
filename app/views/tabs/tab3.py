@@ -452,6 +452,9 @@ class Tab3(QWidget):
                 
                 # 4. 更新车辆信息
                 self.vehicle_viewer.load_data(data=cp_vehicle_df)
+                # 验证更新
+                # self.logger.info("更新后的数据:")
+                # self.logger.info(f"显示的数据:\n{self.vehicle_viewer.get_data()}")
                 
                 # 切换到收油表页签
                 self.tab_widget.setCurrentIndex(2)
