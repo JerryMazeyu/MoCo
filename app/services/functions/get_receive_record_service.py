@@ -437,7 +437,7 @@ class GetReceiveRecordService:
                 if "vehicle_belonged_cp" not in info:
                     info["vehicle_belonged_cp"] = cp_id
             
-            vehicles = [Vehicle(info,model =VehicleModel ) for info in vehicle_info]  # 将字典列表转换为 Vehicle 实例列表
+            vehicles = [Vehicle(info, model = VehicleModel) for info in vehicle_info]  # 将字典列表转换为 Vehicle 实例列表
             vehicle_group = VehicleGroup(vehicles=vehicles,group_type="cp")
             cp_vehicle_group = vehicle_group.filter_by_cp(cp_id)
 
@@ -482,7 +482,11 @@ class GetReceiveRecordService:
             
             ## 筛选车辆类型为运输车、车辆状态为非冻结
             # 筛选车辆类型是否可用，并且是否过冷却期，只筛选过了冷却器的车辆
-            cp_vehicle_df = cp_vehicle_group.filter_available()
+            if hasattr(self.conf.runtime, 'dates_to_trans'):
+                cp_vehicle_df = cp_vehicle_group.filter_available(self.conf.runtime.dates_to_trans)
+            else:
+                LOGGER.warn("没有设置运输日期，设置为当前日期")
+                cp_vehicle_df = cp_vehicle_group.filter_available()
             cp_vehicle_df = cp_vehicle_df.filter_by_type(vehicle_type="to_rest")
             cp_vehicle_df = cp_vehicle_df.to_dataframe()
 

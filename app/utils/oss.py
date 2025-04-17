@@ -52,6 +52,24 @@ def oss_get_json_file(file_path):
         LOGGER.error(f"[OSS] 获取文件失败: {e}")
         return None
 
+def oss_put_yaml_file(file_path, data):
+    try:
+        access_key_id = OSS_CONF['access_key_id']
+        access_key_secret = OSS_CONF['access_key_secret']
+        endpoint = OSS_CONF['endpoint']
+        bucket_name = OSS_CONF['bucket_name']
+        region = OSS_CONF['region']
+        auth = oss2.Auth(access_key_id, access_key_secret)
+        bucket = oss2.Bucket(auth, endpoint, bucket_name, region=region)
+        # 将数据转换为YAML格式
+        content = yaml.dump(data, default_flow_style=False, allow_unicode=True)
+        bucket.put_object(file_path, content)
+        LOGGER.info(f"[OSS] 成功上传YAML文件: {file_path}")
+        return True
+    except Exception as e:
+        LOGGER.error(f"[OSS] 上传YAML文件失败: {e}")
+        return False
+
 def oss_put_json_file(file_path, data):
     try:
         access_key_id = OSS_CONF['access_key_id']

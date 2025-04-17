@@ -7,6 +7,7 @@ from app.utils.hash import hash_text
 from app.utils.logger import setup_logger
 from app.utils.file_io import rp
 import pandas as pd
+from app.models import VehicleModel
 # 设置日志
 LOGGER = setup_logger("moco.log")
 
@@ -17,7 +18,7 @@ class Vehicle(BaseInstance):
     def __init__(
         self, 
         info: Dict[str, Any],
-        model: Optional[Any] = None,
+        model: Optional[Any] = VehicleModel,
         conf: Optional[Dict[str, Any]] = None
     ):
         """
@@ -36,8 +37,8 @@ class Vehicle(BaseInstance):
         self.info = info
 
         # 设置默认值
-        if "vehicle_id" not in info:
-            self.info["vehicle_id"] = self._generate_id()
+        # if "vehicle_id" not in info:
+        #     self.info["vehicle_id"] = self._generate_id()
         
         if "vehicle_belonged_cp" not in info:
             self.info["vehicle_belonged_cp"] = None
@@ -50,65 +51,54 @@ class Vehicle(BaseInstance):
             
         if "vehicle_status" not in info:
             self.info["vehicle_status"] = "available"  # 默认为可用状态
+        
+        self.inst = model(**info)
             
         # print(f"Initialized vehicle with info: {self.info}")
         
-        if "driver_name" not in info:
-            self.info["driver_name"] = ""
+        # if "driver_name" not in info:
+        #     self.info["driver_name"] = ""
             
-        if "driver_phone" not in info:
-            self.info["driver_phone"] = ""
+        # if "driver_phone" not in info:
+        #     self.info["driver_phone"] = ""
             
-        if "type" not in info:
-            self.info["type"] = "oil_truck"  # 默认为油罐车
+        # if "type" not in info:
+        #     self.info["type"] = "oil_truck"  # 默认为油罐车
             
-        if "capacity" not in info:
-            self.info["capacity"] = 0  # 默认运力为0
+        # if "capacity" not in info:
+        #     self.info["capacity"] = 0  # 默认运力为0
             
-        if "status" not in info:
-            self.info["status"] = "active"  # 默认为激活状态
+        # if "status" not in info:
+        #     self.info["status"] = "active"  # 默认为激活状态
     
-    def _generate_id(self) -> str:
+    def _generate_id(self) -> bool:
         """生成唯一车辆ID"""
-        return f"V-{str(uuid.uuid4())[:8]}"
+        self.inst.vehicle_id = f"V-{str(uuid.uuid4())[:8]}"
+        return True
     
-    def update_driver_info(self, name: str, phone: str) -> None:
-        """
-        更新司机信息
+    # def update_driver_info(self, name: str, phone: str) -> None:
+    #     """
+    #     更新司机信息
         
-        Args:
-            name: 司机姓名
-            phone: 司机电话
-        """
-        self.info["driver_name"] = name
-        self.info["driver_phone"] = phone
+    #     Args:
+    #         name: 司机姓名
+    #         phone: 司机电话
+    #     """
+    #     self.info["driver_name"] = name
+    #     self.info["driver_phone"] = phone
         
-    def set_status(self, status: str) -> None:
-        """
-        设置车辆状态
+    # def update_capacity(self, capacity: float) -> None:
+    #     """
+    #     更新车辆容量
         
-        Args:
-            status: 状态 (active/inactive/maintenance)
-        """
-        allowed_status = ["active", "inactive", "maintenance"]
-        if status not in allowed_status:
-            LOGGER.warning(f"无效的车辆状态: {status}，允许的状态为: {allowed_status}")
-            return
+    #     Args:
+    #         capacity: 容量（单位：吨）
+    #     """
+    #     if capacity < 0:
+    #         LOGGER.warning(f"车辆容量不能为负数: {capacity}")
+    #         return
             
-        self.info["status"] = status
-        
-    def update_capacity(self, capacity: float) -> None:
-        """
-        更新车辆容量
-        
-        Args:
-            capacity: 容量（单位：吨）
-        """
-        if capacity < 0:
-            LOGGER.warning(f"车辆容量不能为负数: {capacity}")
-            return
-            
-        self.info["capacity"] = capacity
+    #     self.info["capacity"] = capacity
     
     def _generate_weights(self) -> bool:
         """
@@ -197,7 +187,7 @@ class Vehicle(BaseInstance):
             
             if not hasattr(self.inst, 'vehicle_last_use') or not self.inst.vehicle_last_use:
                 # 设置上次使用时间为现在
-                self.inst.vehicle_last_use = datetime.datetime.now().strftime("%Y-%m-%d")
+                self.inst.vehicle_last_use = '1900-01-01'
                 LOGGER.info(f"已为车辆设置上次使用时间: {self.inst.vehicle_last_use}")
             
             return True
@@ -245,8 +235,8 @@ class Vehicle(BaseInstance):
         
         # 如果全部成功，更新状态为就绪
         if success:
-            self.info["status"] = "active"
-            LOGGER.info(f"车辆 '{self.info['plate_number']}' 的所有字段已生成完成")
+            # self.info["status"] = "active"
+            LOGGER.info(f"车辆 '{self.info['vehicle_license_plate']}' 的所有字段已生成完成")
         
         return success
     
@@ -334,8 +324,8 @@ class Vehicle(BaseInstance):
         :return: 字符串表示
         """
         if hasattr(self.inst, 'vehicle_license_plate') and hasattr(self.inst, 'vehicle_id'):
-            return f"Vehicle(id={self.inst.vehicle_id}, plate={self.info['plate_number']}, type={getattr(self.inst, 'vehicle_type', 'unknown')}, status={getattr(self.inst, 'vehicle_status', 'unknown')})"
-        return f"Vehicle(未完成初始化, status={self.info['status']})"
+            return f"Vehicle(id={self.inst.vehicle_id}, plate={self.inst.vehicle_license_plate}, type={self.inst.vehicle_type}, status={self.inst.vehicle_status})"
+        return f"Vehicle(未完成初始化, plate={self.inst.vehicle_license_plate})"
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -344,7 +334,7 @@ class Vehicle(BaseInstance):
         Returns:
             包含车辆信息的字典
         """
-        return self.info.copy()  # 返回info字典的副本
+        return dict(self.inst)
 
 
 class VehicleGroup(BaseGroup):
@@ -393,18 +383,18 @@ class VehicleGroup(BaseGroup):
             匹配的车辆实例，未找到则返回None
         """
         for vehicle in self.instances:
-            if vehicle.info.get("plate_number") == plate_number:
+            if vehicle.info.get("vehicle_license_plate") == plate_number:
                 return vehicle
         return None
     
-    def get_active_vehicles(self) -> List[Vehicle]:
-        """
-        获取所有激活状态的车辆
+    # def get_active_vehicles(self) -> List[Vehicle]:
+    #     """
+    #     获取所有激活状态的车辆
         
-        Returns:
-            激活状态的车辆列表
-        """
-        return [v for v in self.instances if v.info.get("status") == "active"]
+    #     Returns:
+    #         激活状态的车辆列表
+    #     """
+    #     return [v for v in self.instances if v.info.get("status") == "active"]
     
     def get_by_type(self, vehicle_type: str) -> List[Vehicle]:
         """
@@ -418,15 +408,15 @@ class VehicleGroup(BaseGroup):
         """
         return [v for v in self.instances if v.info.get("type") == vehicle_type]
     
-    def get_total_capacity(self) -> float:
-        """
-        计算所有激活车辆的总容量
+    # def get_total_capacity(self) -> float:
+    #     """
+    #     计算所有激活车辆的总容量
         
-        Returns:
-            总容量
-        """
-        active_vehicles = self.get_active_vehicles()
-        return sum(v.info.get("capacity", 0) for v in active_vehicles)
+    #     Returns:
+    #         总容量
+    #     """
+    #     active_vehicles = self.get_active_vehicles()
+    #     return sum(v.info.get("capacity", 0) for v in active_vehicles)
     
     def filter_by_type(self, vehicle_type: str) -> 'VehicleGroup':
         """

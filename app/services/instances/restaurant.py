@@ -428,16 +428,20 @@ class Restaurant(BaseInstance):
                     else:
                         # 翻译失败，使用默认值
                         # self.inst.rest_english_name = convert_to_pinyin(chinese_name)
-                        self.inst.rest_english_name = translate_text(chinese_name)
+                        candidate_english_name = translate_text(chinese_name)
+                        if "MYMEMORY WARNING" in candidate_english_name:
+                            candidate_english_name = f"{convert_to_pinyin(chinese_name)}"
+                        self.inst.rest_english_name = candidate_english_name
                         LOGGER.warning(f"翻译API调用失败，使用默认英文名: {self.inst.rest_english_name}")
                 else:
                     # 没有配置翻译API，使用默认值
-                    self.inst.rest_english_name = f"{chinese_name} Restaurant"
+                    self.inst.rest_english_name = f"{convert_to_pinyin(chinese_name)} Restaurant"
                     LOGGER.info(f"未配置翻译API，使用默认英文名: {self.inst.rest_english_name}")
             return True
         except Exception as e:
-            LOGGER.error(f"生成餐厅英文名失败: {e}")
-            return False
+            self.inst.rest_english_name = f"{convert_to_pinyin(self.inst.rest_chinese_name)} Restaurant"
+            LOGGER.error(f"{self.inst.rest_chinese_name}生成餐厅英文名失败: {e}, 使用默认英文名: {self.inst.rest_english_name}")
+            return True
     
     def _generate_english_address(self) -> bool:
         """
@@ -466,11 +470,17 @@ class Restaurant(BaseInstance):
                     else:
                         # 翻译失败，使用默认值
                         # self.inst.rest_english_address = convert_to_pinyin(chinese_address)
-                        self.inst.rest_english_address = translate_text(chinese_address)
+                        candidate_english_address = translate_text(chinese_address)
+                        if "MYMEMORY WARNING" in candidate_english_address:
+                            candidate_english_address = f"{convert_to_pinyin(chinese_address)}"
+                        self.inst.rest_english_address = candidate_english_address
                         LOGGER.warning(f"翻译API调用失败，使用默认英文地址: {self.inst.rest_english_address}")
                 else:
                     # 没有配置翻译API，使用默认值
-                    self.inst.rest_english_address = translate_text(chinese_address)
+                    candidate_english_address = translate_text(chinese_address)
+                    if "MYMEMORY WARNING" in candidate_english_address:
+                        candidate_english_address = f"{convert_to_pinyin(chinese_address)}"
+                    self.inst.rest_english_address = candidate_english_address
                     LOGGER.info(f"未配置翻译API，使用默认英文地址: {self.inst.rest_english_address}")
             return True
         except Exception as e:
@@ -888,7 +898,8 @@ class Restaurant(BaseInstance):
                 LOGGER.error(f"餐厅 '{self.inst.rest_chinese_name}' 缺少字段: {key}")
                 return False
             else:
-                LOGGER.info(f"餐厅 '{self.inst.rest_chinese_name}' 字段: {key} 已检验")
+                pass
+                # LOGGER.info(f"餐厅 '{self.inst.rest_chinese_name}' 字段: {key} 已检验")
         return True
 
     def __str__(self) -> str:

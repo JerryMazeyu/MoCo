@@ -86,36 +86,40 @@ class MainWindow(QMainWindow):
             from app.views.tabs.tab2 import Tab2  # 餐厅获取
             from app.views.tabs.tab3 import Tab3  # 车辆获取
             from app.views.tabs.tab1_new import Tab1New  # 配置界面
-
             from app.views.tabs.tab4 import Tab4  # 油站获取
-
+            from app.views.tabs.tab5 import Tab5  # 车辆管理
 
             # 创建Tab组件
             self.tab1_widget = QWidget()
             self.tab2_widget = QWidget()
             self.tab3_widget = QWidget()
             self.tab4_widget = QWidget()
+            self.tab5_widget = QWidget()
             # 设置Tab布局
             self.tab1_widget.setLayout(QVBoxLayout())
             self.tab2_widget.setLayout(QVBoxLayout())
             self.tab3_widget.setLayout(QVBoxLayout())
             self.tab4_widget.setLayout(QVBoxLayout())
+            self.tab5_widget.setLayout(QVBoxLayout())
             # 创建Tab内容
             # self.tab1_content = Tab1(self)  # 配置界面
             self.tab1_content = Tab1New(self)  # 配置界面
             self.tab2_content = Tab2(self)  # 餐厅获取
             self.tab3_content = Tab3(self)  # 车辆获取
             self.tab4_content = Tab4(self)  # 油站获取
+            self.tab5_content = Tab5(self)  # 车辆管理
             # 添加内容到布局
             self.tab1_widget.layout().addWidget(self.tab1_content)
             self.tab2_widget.layout().addWidget(self.tab2_content)
             self.tab3_widget.layout().addWidget(self.tab3_content)
             self.tab4_widget.layout().addWidget(self.tab4_content)
+            self.tab5_widget.layout().addWidget(self.tab5_content)
             # 添加Tab到标签页控件
             self.tab_widget.addTab(self.tab1_widget, "配置界面")
             self.tab_widget.addTab(self.tab2_widget, "餐厅获取")
             self.tab_widget.addTab(self.tab3_widget, "收油表获取")
-            self.tab_widget.addTab(self.tab4_widget, "油站获取")
+            self.tab_widget.addTab(self.tab4_widget, "CP配置")
+            self.tab_widget.addTab(self.tab5_widget, "车辆管理")
         except Exception as e:
             LOGGER.error(f"设置标签页失败: {str(e)}")
 
@@ -149,6 +153,26 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """窗口关闭时清理资源"""
+        try:
+            # 清理临时文件
+            LOGGER.info("正在清理应用程序临时文件...")
+            
+            # 清理Tab2的临时文件
+            if hasattr(self, 'tab2_content') and self.tab2_content:
+                if hasattr(self.tab2_content, 'cleanup_temp_files'):
+                    self.tab2_content.cleanup_temp_files()
+            
+            # 清理Tab5的临时文件
+            if hasattr(self, 'tab5_content') and self.tab5_content:
+                if hasattr(self.tab5_content, 'cleanup_temp_files'):
+                    self.tab5_content.cleanup_temp_files()
+            
+            # 如果有其他Tab也有临时文件，可以在这里添加类似的清理代码
+            
+            LOGGER.info("临时文件清理完成")
+        except Exception as e:
+            LOGGER.error(f"清理临时文件时出错: {str(e)}")
+            
         # 无需还原标准输出，因为我们现在使用的是日志系统
         super().closeEvent(event)
 

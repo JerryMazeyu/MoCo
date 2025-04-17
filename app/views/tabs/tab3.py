@@ -425,7 +425,8 @@ class Tab3(QWidget):
         dialog = TransportDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             days_input, month_year = dialog.get_input_data()
-            
+            year, month = month_year.split('-')
+            CONF.runtime.dates_to_trans = f'{year}-{month}-{days_input}'
             # 验证天数输入
             if not days_input.isdigit() or not (1 <= int(days_input) <= 31):
                 QMessageBox.warning(self, "输入错误", "运输天数必须为1到31之间的数字。")

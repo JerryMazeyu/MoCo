@@ -18,6 +18,13 @@ class PandasModel(QAbstractTableModel):
         self._data = pd.DataFrame() if data is None else data
         self._original_data = self._data.copy()
         self.modified = False
+        
+        # 数据缓存，用于提高大数据集显示性能
+        self._cache = {}
+        self._cache_size = 1000  # 最大缓存项数
+        
+        # 为大型数据集优化
+        self._row_limit = 100000  # 处理的最大行数
     
     def rowCount(self, parent=None):
         return len(self._data)
@@ -29,34 +36,58 @@ class PandasModel(QAbstractTableModel):
         if not index.isValid():
             return QVariant()
         
-        value = self._data.iloc[index.row(), index.column()]
+        row, col = index.row(), index.column()
         
-        if role == Qt.DisplayRole or role == Qt.EditRole:
-            if pd.isna(value):
-                return ""
-            # 根据数据类型返回适当的格式
-            if isinstance(value, (int, float)):
-                return str(value)
-            return str(value)
+        # 检查是否超出范围
+        if row < 0 or row >= len(self._data) or col < 0 or col >= len(self._data.columns):
+            return QVariant()
         
-        if role == Qt.BackgroundRole:
-            # 如果数据被修改，显示不同的背景颜色
-            original_value = self._original_data.iloc[index.row(), index.column()]
-            if not pd.isna(value) and not pd.isna(original_value) and value != original_value:
-                return QColor(255, 230, 190)  # 浅橙色，表示已修改
+        # 优化处理，通过缓存减少pandas访问
+        cache_key = (row, col, role)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
             
-            # 交替行颜色
-            if index.row() % 2 == 0:
-                return QColor(245, 245, 245)  # 浅灰色
+        # 根据角色返回不同类型的数据
+        if role == Qt.DisplayRole or role == Qt.EditRole:
+            # 获取单元格的值
+            value = self._data.iloc[row, col]
+            
+            # 处理不同类型的值
+            if pd.isna(value):
+                result = "" if role == Qt.EditRole else "NA"
+            elif isinstance(value, (float, int)):
+                # 格式化数字
+                result = str(value)
+            else:
+                result = str(value)
+            
+            # 更新缓存
+            if len(self._cache) >= self._cache_size:
+                # 如果缓存已满，清除一半
+                keys_to_remove = list(self._cache.keys())[:self._cache_size//2]
+                for key in keys_to_remove:
+                    self._cache.pop(key, None)
+            
+            self._cache[cache_key] = result
+            return result
+            
+        # 对比原始数据，如果发生变化则显示不同的颜色
+        elif role == Qt.BackgroundRole:
+            # 仅在数据已修改的情况下执行，避免不必要的比较
+            if self.modified:
+                try:
+                    if self._data.iloc[row, col] != self._original_data.iloc[row, col]:
+                        return QBrush(QColor(255, 255, 200))  # 淡黄色背景表示修改过的单元格
+                except:
+                    pass
         
-        if role == Qt.FontRole:
-            font = QFont()
-            # 如果数据被修改，用粗体显示
-            original_value = self._original_data.iloc[index.row(), index.column()]
-            if not pd.isna(value) and not pd.isna(original_value) and value != original_value:
-                font.setBold(True)
-            return font
-        
+        # 文本对齐
+        elif role == Qt.TextAlignmentRole:
+            value = self._data.iloc[row, col]
+            if isinstance(value, (int, float)):
+                return Qt.AlignRight | Qt.AlignVCenter  # 数字右对齐
+            return Qt.AlignLeft | Qt.AlignVCenter  # 文本左对齐
+                
         return QVariant()
     
     def setData(self, index, value, role=Qt.EditRole):
@@ -107,11 +138,30 @@ class PandasModel(QAbstractTableModel):
     
     def setDataFrame(self, dataframe):
         """设置新的DataFrame数据"""
-        self.beginResetModel()
-        self._data = dataframe
-        self._original_data = dataframe.copy()
-        self.modified = False
-        self.endResetModel()
+        try:
+            # 如果数据过大，可能需要仅保留部分
+            if len(dataframe) > self._row_limit:
+                print(f"警告: 数据行数 ({len(dataframe)}) 超过显示限制 ({self._row_limit})，性能可能受影响")
+            
+            self.beginResetModel()
+            
+            # 清空缓存
+            self._cache.clear()
+            
+            self._data = dataframe
+            self._original_data = dataframe.copy()
+            self.modified = False
+            
+            # 主动进行一次垃圾回收，释放内存
+            import gc
+            gc.collect()
+            
+            self.endResetModel()
+        except Exception as e:
+            print(f"设置DataFrame时出错: {str(e)}")
+            # 确保即使出错，模型也重置完成
+            self.endResetModel()
+            raise
     
     def getDataFrame(self):
         """获取当前DataFrame数据"""
@@ -213,6 +263,9 @@ class XlsxViewerWidget(QWidget):
     def load_data(self, file_path=None, data=None):
         """加载数据，可以是文件路径或pandas DataFrame"""
         try:
+            # 记录开始时间，用于性能监控
+            start_time = datetime.now()
+            
             if file_path is not None:
                 # 加载Excel文件
                 if file_path.endswith(('.xlsx', '.xls')):
@@ -226,13 +279,46 @@ class XlsxViewerWidget(QWidget):
                 self.current_file = file_path
             
             if data is not None:
+                # 数据行数检查
+                row_count = len(data)
+                
+                # 如果数据超过10000行，给出警告并询问是否继续
+                if row_count > 10000:
+                    reply = QMessageBox.question(
+                        self, '大数据集警告', 
+                        f'数据集包含 {row_count} 行，加载可能需要较长时间并消耗大量内存。\n是否继续加载?',
+                        QMessageBox.Yes | QMessageBox.No, 
+                        QMessageBox.No
+                    )
+                    
+                    if reply == QMessageBox.No:
+                        return False
+                
+                # 处理大型数据集时使用分批加载机制
+                if row_count > 1000:
+                    # 确保UI响应
+                    QApplication.processEvents()
+                    
                 # 设置数据模型
                 self.model.setDataFrame(data)
+                
+                # 记录结束时间并计算耗时
+                end_time = datetime.now()
+                time_spent = (end_time - start_time).total_seconds()
+                
+                if time_spent > 1.0:  # 如果加载时间超过1秒，记录性能信息
+                    print(f"数据加载耗时: {time_spent:.2f} 秒 (行数: {row_count})")
+                
+                # 确保UI更新
+                QApplication.processEvents()
                 
                 # 自动调整列宽
                 self.table_view.resizeColumnsToContents()
                 
                 return True
+        except MemoryError:
+            QMessageBox.critical(self, "内存错误", "数据集太大，内存不足。请尝试减少数据量。")
+            return False
         except Exception as e:
             QMessageBox.critical(self, "加载错误", f"无法加载数据: {str(e)}")
             return False

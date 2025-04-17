@@ -351,7 +351,7 @@ class CPSelectDialog(QDialog):
 # 餐厅获取工作线程类
 class RestaurantWorker(QThread):
     # 定义信号
-    finished = pyqtSignal(pd.DataFrame)  # 完成信号，携带查询结果
+    finished = pyqtSignal(pd.DataFrame, str)  # 完成信号，携带查询结果和文件路径
     error = pyqtSignal(str)  # 错误信号，携带错误信息
     progress = pyqtSignal(str)  # 进度信号，用于实时更新进度
     
@@ -361,6 +361,10 @@ class RestaurantWorker(QThread):
         self.cp_id = cp_id
         self.use_llm = use_llm
         self.running = True
+        
+        # 创建临时目录
+        import tempfile
+        self.temp_dir = tempfile.gettempdir()
     
     def stop(self):
         """停止线程执行"""
@@ -395,7 +399,13 @@ class RestaurantWorker(QThread):
                 self.error.emit(f"未找到 {self.city} 的餐厅信息")
                 return
                 
-            self.progress.emit(f"已找到 {len(restaurant_service.restaurants)} 家餐厅，正在生成详细信息...")
+            restaurants_count = len(restaurant_service.restaurants)
+            self.progress.emit(f"已找到 {restaurants_count} 家餐厅，正在生成详细信息...")
+            
+            # 为大量餐厅进行分批处理
+            if restaurants_count > 500:
+                LOGGER.warning(f"餐厅数量过多 ({restaurants_count})，可能需要较长处理时间")
+                self.progress.emit(f"餐厅数量较多 ({restaurants_count})，正在分批处理...")
             
             # 检查线程是否仍在运行
             if not self.running:
@@ -407,8 +417,12 @@ class RestaurantWorker(QThread):
             
             # 单独执行生成信息步骤，带错误处理
             try:
+                # 减少工作线程数，防止资源占用过多
+                num_workers = 6  # 固定使用6个工作线程，避免资源争用
+                self.progress.emit(f"使用 {num_workers} 个工作线程生成餐厅详细信息...")
+                
                 # 将use_llm参数传递给gen_info方法
-                restaurant_group = restaurant_service.gen_info(restaurant_group, num_workers=2)  # 减少工作线程数
+                restaurant_group = restaurant_service.gen_info(restaurant_group, num_workers=num_workers)
             except Exception as e:
                 LOGGER.error(f"生成餐厅详细信息时出错: {str(e)}")
                 self.progress.emit(f"生成餐厅详细信息时出错，但会继续处理已获取的数据")
@@ -421,10 +435,30 @@ class RestaurantWorker(QThread):
                 
             # 转换为DataFrame并发送结果
             try:
+                self.progress.emit(f"正在将餐厅信息转换为表格数据...")
                 restaurant_data = restaurant_group.to_dataframe()
+                
+                # 保存完整数据到临时文件
+                import os
+                import datetime
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                file_path = os.path.join(self.temp_dir, f"restaurants_{self.city}_{timestamp}.xlsx")
+                
+                self.progress.emit(f"正在保存完整数据到临时文件: {file_path}")
+                restaurant_data.to_excel(file_path, index=False)
+                LOGGER.info(f"已将完整数据({len(restaurant_data)}条记录)保存到: {file_path}")
+                
+                # 清理内存中的大对象，确保发送前已经释放资源
+                restaurant_group = None
+                restaurant_service = None
+                
+                # 强制垃圾回收
+                import gc
+                gc.collect()
+                
                 LOGGER.info(f"{self.city} 餐厅信息获取完成，共 {len(restaurant_data)} 条记录")
                 self.progress.emit(f"餐厅信息获取完成，共 {len(restaurant_data)} 条记录")
-                self.finished.emit(restaurant_data)
+                self.finished.emit(restaurant_data, file_path)
             except Exception as e:
                 LOGGER.error(f"转换餐厅数据为DataFrame时出错: {str(e)}")
                 self.error.emit(f"处理餐厅数据时出错: {str(e)}")
@@ -442,7 +476,30 @@ class Tab2(QWidget):
         self.main_window_ref = parent
         self.cp_cities = []  # 当前CP的城市列表
         self.current_cp = None  # 当前选择的CP
+        
+        # 用于跟踪临时文件
+        self.temp_files = []
+        
         self.initUI()
+    
+    def __del__(self):
+        """析构函数，清理资源"""
+        self.cleanup_temp_files()
+        
+    def cleanup_temp_files(self):
+        """清理临时文件"""
+        import os
+        
+        for file_path in self.temp_files:
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    LOGGER.info(f"已删除临时文件: {file_path}")
+            except Exception as e:
+                LOGGER.error(f"删除临时文件时出错: {str(e)}")
+                
+        # 清空列表
+        self.temp_files = []
     
     def initUI(self):
         # 主布局
@@ -527,7 +584,7 @@ class Tab2(QWidget):
         """)
         
         excel_layout = QVBoxLayout(excel_group)
-        self.xlsx_viewer = XlsxViewerWidget()
+        self.xlsx_viewer = XlsxViewerWidget(show_open=False, show_save=False, show_save_as=True, show_refresh=False)
         excel_layout.addWidget(self.xlsx_viewer)
         
         # 添加到主内容区域
@@ -810,14 +867,54 @@ class Tab2(QWidget):
         if hasattr(self, 'progress_label'):
             self.progress_label.setText(message)
     
-    def on_restaurant_search_finished(self, restaurant_data):
+    def on_restaurant_search_finished(self, restaurant_data, file_path):
         """餐厅搜索完成的回调函数"""
         try:
-            # 更新Excel查看器
-            self.xlsx_viewer.load_data(data=restaurant_data)
+            # 记录临时文件，用于程序退出时清理
+            self.temp_files.append(file_path)
             
-            # 显示成功消息
-            QMessageBox.information(self, "获取成功", f"餐厅信息获取完成，共 {len(restaurant_data)} 条记录")
+            # 检查数据量大小
+            row_count = len(restaurant_data)
+            LOGGER.info(f"收到餐厅数据，共 {row_count} 条记录")
+            
+            # 限制显示的数据量，无论多大只显示前100行
+            max_display_rows = 100
+            if row_count > max_display_rows:
+                LOGGER.warning(f"数据量过大 ({row_count} 行)，将只显示前 {max_display_rows} 行")
+                restaurant_data_display = restaurant_data.head(max_display_rows).copy()
+                warning_msg = f"数据量过大，仅显示前 {max_display_rows} 条记录（共 {row_count} 条）"
+            else:
+                restaurant_data_display = restaurant_data
+                warning_msg = None
+            
+            # 确保在主线程中更新UI
+            QApplication.processEvents()
+            
+            # 更新Excel查看器 - 只显示有限的数据
+            self.xlsx_viewer.load_data(data=restaurant_data_display)
+            
+            # 显示成功消息，包含文件路径信息
+            success_msg = f"餐厅信息获取完成，共 {row_count} 条记录"
+            if warning_msg:
+                success_msg += "\n" + warning_msg
+            success_msg += f"\n\n完整数据已保存到文件：\n{file_path}"
+            
+            # 创建一个带有"打开文件"按钮的消息框
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("获取成功")
+            msg_box.setText(success_msg)
+            msg_box.setIcon(QMessageBox.Information)
+            
+            # 添加打开文件按钮
+            open_button = msg_box.addButton("打开完整数据", QMessageBox.ActionRole)
+            close_button = msg_box.addButton("关闭", QMessageBox.RejectRole)
+            
+            # 显示消息框并处理响应
+            msg_box.exec_()
+            
+            # 如果点击了打开文件按钮
+            if msg_box.clickedButton() == open_button:
+                self.open_file_external(file_path)
             
             # 恢复按钮状态
             self.get_restaurant_button.setText("餐厅获取")
@@ -837,6 +934,38 @@ class Tab2(QWidget):
             self.get_restaurant_button.setText("餐厅获取")
             if hasattr(self, 'progress_label'):
                 self.progress_label.setVisible(False)
+            
+            # 清理线程
+            if hasattr(self, 'worker'):
+                self.worker.disconnect()
+                self.worker = None
+    
+    def open_file_external(self, file_path):
+        """使用系统默认应用打开文件"""
+        try:
+            import os
+            import platform
+            import subprocess
+            
+            LOGGER.info(f"尝试打开文件: {file_path}")
+            
+            if os.path.exists(file_path):
+                system = platform.system()
+                
+                if system == 'Windows':
+                    os.startfile(file_path)
+                elif system == 'Darwin':  # macOS
+                    subprocess.call(['open', file_path])
+                else:  # Linux
+                    subprocess.call(['xdg-open', file_path])
+                    
+                LOGGER.info(f"已使用系统默认应用打开文件: {file_path}")
+            else:
+                LOGGER.error(f"文件不存在: {file_path}")
+                QMessageBox.warning(self, "文件错误", f"文件不存在: {file_path}")
+        except Exception as e:
+            LOGGER.error(f"打开文件时出错: {str(e)}")
+            QMessageBox.critical(self, "打开失败", f"无法打开文件: {str(e)}")
     
     def on_restaurant_search_error(self, error_msg):
         """餐厅搜索出错的回调函数"""
