@@ -536,6 +536,7 @@ class GetReceiveRecordService:
                                     'rest_street':'rr_street',
                                     'rest_belonged_cp':'rr_cp',
                                     'rest_contact_person':'rr_contact_person',
+                                    'rest_english_name':'rr_restaurant_english_name',
                                     'rest_id':'rr_restaurant_id'},inplace=True)
             ## 转成model
             result_df_instance = [ReceiveRecord(info,model = ReceiveRecordModel) for info in result_df.to_dict(orient='records')]

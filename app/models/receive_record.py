@@ -14,6 +14,7 @@ class ReceiveRecordModel(BaseModel):
     rr_amount: Any = Field(None, description="单次收油桶数") 
     rr_restaurant_id:Any = Field(None, description="餐厅ID")
     rr_restaurant_name: Any = Field(..., description="餐厅名称")
+    rr_restaurant_english_name: Any = Field(..., description="餐厅英文名称")
     rr_restaurant_address: Any = Field(None, description="餐厅地址")
     rr_district: Any = Field(None, description="所属区域")
     rr_street: Any = Field(None, description="所属街道")
