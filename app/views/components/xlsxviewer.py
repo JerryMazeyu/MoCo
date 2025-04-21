@@ -488,6 +488,17 @@ class XlsxViewerWidget(QWidget):
             self.model.setDataFrame(data)
             self.table_view.resizeColumnsToContents()
 
+    def update_table(self):
+        """更新表格视图显示当前数据"""
+        # 通知模型数据已变化，触发视图刷新
+        self.model.layoutChanged.emit()
+        # 调整列宽以适应新数据
+        self.table_view.resizeColumnsToContents()
+        # 确保UI更新
+        QApplication.processEvents()
+        # 标记数据已修改
+        self.data = self.model.getDataFrame()
+
 # Example usage:
 
 if __name__ == '__main__':

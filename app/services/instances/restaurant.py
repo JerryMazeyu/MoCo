@@ -18,6 +18,7 @@ import mingzi
 from datetime import datetime
 import math
 from app.utils.oss import oss_get_json_file
+import pandas as pd
 
 # 设置日志
 LOGGER = setup_logger("moco.log")
@@ -391,7 +392,7 @@ class Restaurant(BaseInstance):
         :return: 是否生成成功
         """
         try:
-            if not hasattr(self.inst, 'rest_id') or not self.inst.rest_id:
+            if not hasattr(self.inst, 'rest_id') or pd.isna(self.inst.rest_id) or not self.inst.rest_id:
                 # 使用餐厅中文名生成哈希ID
                 name = self.inst.rest_chinese_name
                 self.inst.rest_id = hash_text(name)[:16]  # 取哈希的前16位作为ID
@@ -409,7 +410,7 @@ class Restaurant(BaseInstance):
         """
         try:
             # 检查是否已有英文名
-            if not hasattr(self.inst, 'rest_english_name') or not self.inst.rest_english_name:
+            if not hasattr(self.inst, 'rest_english_name') or pd.isna(self.inst.rest_english_name) or not self.inst.rest_english_name:
                 # 获取餐厅中文名
                 chinese_name = self.inst.rest_chinese_name
                 
@@ -451,7 +452,7 @@ class Restaurant(BaseInstance):
         """
         try:
             # 检查是否已有英文地址
-            if (not hasattr(self.inst, 'rest_english_address') or not self.inst.rest_english_address) and hasattr(self.inst, 'rest_chinese_address'):
+            if (not hasattr(self.inst, 'rest_english_address') or pd.isna(self.inst.rest_english_address) or not self.inst.rest_english_address) and hasattr(self.inst, 'rest_chinese_address'):
                 # 获取餐厅中文地址
                 chinese_address = self.inst.rest_chinese_address
                 
@@ -501,7 +502,7 @@ class Restaurant(BaseInstance):
             city = self.inst.rest_city.split("市")[0]
             address = self.inst.rest_chinese_address
             # 检查是否已有区域和街道信息
-            if not hasattr(self.inst, 'rest_district') or not self.inst.rest_district:  # 没有街道信息，生成
+            if not hasattr(self.inst, 'rest_district') or not self.inst.rest_district or pd.isna(self.inst.rest_district):  # 没有街道信息，生成
                 
                 geoinfo = None
                 if hasattr(self.conf, 'runtime') and hasattr(self.conf.runtime, 'geoinfo') and city in self.conf.runtime.geoinfo.keys():
@@ -572,7 +573,7 @@ class Restaurant(BaseInstance):
         
         # ================== 提取街道 ==================
         try:
-            if not hasattr(self.inst, 'rest_street') or not self.inst.rest_street:  # 如果没有，则生成
+            if not hasattr(self.inst, 'rest_street') or pd.isna(self.inst.rest_street) or not self.inst.rest_street:  # 如果没有，则生成
                
                 try:
                     geoinfo = self.conf.runtime.geoinfo[city]
@@ -651,7 +652,7 @@ class Restaurant(BaseInstance):
         """
         try:
             # 检查是否已有餐厅类型
-            if not hasattr(self.inst, 'rest_type') or not self.inst.rest_type:
+            if not hasattr(self.inst, 'rest_type') or pd.isna(self.inst.rest_type) or not self.inst.rest_type:
                 # 首先尝试通过餐厅名称中包含的关键词推断类型
                 if hasattr(self.conf, 'BUSINESS') and hasattr(self.conf.BUSINESS, 'RESTAURANT') and hasattr(self.conf.BUSINESS.RESTAURANT, '收油关系映射'):
                     candidate_types_merged = list(self.conf.BUSINESS.RESTAURANT.收油关系映射._config_dict.keys())
@@ -729,12 +730,12 @@ class Restaurant(BaseInstance):
         """
         try:
             # 检查是否已有联系人信息
-            if not hasattr(self.inst, 'rest_contact_person') or not self.inst.rest_contact_person:
+            if not hasattr(self.inst, 'rest_contact_person') or pd.isna(self.inst.rest_contact_person) or not self.inst.rest_contact_person:
                 name = mingzi.mingzi()[0]
                 self.inst.rest_contact_person = name
                 LOGGER.info(f"已为餐厅生成随机联系人: {self.inst.rest_contact_person}")
             
-            if not hasattr(self.inst, 'rest_contact_phone') or not self.inst.rest_contact_phone:
+            if not hasattr(self.inst, 'rest_contact_phone') or pd.isna(self.inst.rest_contact_phone) or not self.inst.rest_contact_phone:
                 # 生成随机手机号
                 prefix = ["130", "131", "132", "133", "134", "135", "136", "137", "138", "139", 
                          "150", "151", "152", "153", "155", "156", "157", "158", "159", 
@@ -758,34 +759,26 @@ class Restaurant(BaseInstance):
         """
         try:
             # 检查是否已有距离信息和必要的条件
-            if (not hasattr(self.inst, 'rest_distance') or not self.inst.rest_distance) and hasattr(self.inst, 'rest_location') and hasattr(self.inst, 'rest_belonged_cp'):
+            if (not hasattr(self.inst, 'rest_distance') or pd.isna(self.inst.rest_distance) or not self.inst.rest_distance or self.inst.rest_distance == 0) and hasattr(self.inst, 'rest_location') and hasattr(self.inst, 'rest_belonged_cp'):
                 # 获取餐厅位置
                 restaurant_location = self.inst.rest_location
                 
                 
-                if not cp_location:
+                if hasattr(self.conf.runtime, 'CP'):
+                    cp_location = self.conf.runtime.CP['cp_location']
+                    res_lon, res_lat = map(float, restaurant_location.split(','))  # 假设坐标格式为 "经度,纬度"
+                    cp_lon, cp_lat = map(float, cp_location.split(','))  # 假设坐标格式为 "经度,纬度"
+                    factory_lat_lon = (cp_lat, cp_lon)
+                    distance = self._haversine((res_lat, res_lon), factory_lat_lon)  # 计算距离(维度,经度),(维度,经度)
+                    self.inst.rest_distance = distance  
+                    LOGGER.info(f"已计算餐厅到CP的距离: {distance}公里")
+                    return True
+                else:
                     LOGGER.warning("警告: 工厂坐标未设置，跳过距离计算")
                     # 给所有餐厅设置一个默认距离
                     self.inst.rest_distance = 0
-                else:
-                        if not restaurant_location:
-                            LOGGER.warning(f"警告: 餐厅{self.inst.rest_chinese_name}没有坐标信息，跳过距离计算")
-                            self.inst.rest_distance = 0 
-                        else:
-                            res_lon, res_lat = map(float, restaurant_location.split(','))  # 假设坐标格式为 "经度,纬度"
-                            cp_lon, cp_lat = map(float, cp_location.split(','))  # 假设坐标格式为 "经度,纬度"
-                            factory_lat_lon = (cp_lat, cp_lon)
-                            distance = self._haversine((res_lat, res_lon), factory_lat_lon)  # 计算距离(维度,经度),(维度,经度)
-                            self.inst.rest_distance = distance  
-                            LOGGER.info(f"已计算餐厅到CP的距离: {distance}公里")
-                # # 使用哈希值来生成一个稳定但随机的距离
-                # distance_hash = hash(f"{restaurant_location}_{cp_location}")
-                # distance_km = 1 + abs(distance_hash % 20)  # 1-20公里范围内
-                
-                # self.inst.rest_distance = distance_km
-                # LOGGER.info(f"已计算餐厅到CP的距离: {distance_km}公里")
+                    return False
             
-            return True
         except Exception as e:
             LOGGER.error(f"计算餐厅距离失败: {e}")
             return False
@@ -846,10 +839,34 @@ class Restaurant(BaseInstance):
         
         :return: 是否生成成功
         """
-        self.inst.rest_verified_date = datetime.now().strftime("%Y-%m-%d")
-        LOGGER.info(f"已生成确认日期: {self.inst.rest_verified_date}")
-        return True
+        try:
+            self.inst.rest_verified_date = datetime.now().strftime("%Y-%m-%d")
+            LOGGER.info(f"已生成确认日期: {self.inst.rest_verified_date}")
+            return True
+        except Exception as e:
+            LOGGER.error(f"生成确认日期失败: {e}")
+            return False
     
+    def _generate_belonged_cp(self) -> bool:
+        """
+        生成所属CP
+        
+        :return: 是否生成成功
+        """
+        try:
+            if not hasattr(self.inst, 'rest_belonged_cp') or pd.isna(self.inst.rest_belonged_cp) or not self.inst.rest_belonged_cp:
+                if hasattr(self.conf.runtime, 'CP'):
+                    self.inst.rest_belonged_cp = self.conf.runtime.CP['cp_id']
+                    LOGGER.info(f"已生成所属CP: {self.inst.rest_belonged_cp}")
+                    return True
+            else:
+                LOGGER.warning("警告: CP信息未设置，跳过所属CP生成")
+                return False
+        except Exception as e:
+            LOGGER.error(f"生成所属CP失败: {e}")
+            return False
+
+
     def generate(self) -> bool:
         """
         生成餐厅的所有缺失字段
@@ -860,6 +877,8 @@ class Restaurant(BaseInstance):
         
         # 生成ID
         success &= self._generate_id_by_name()
+
+        success &= self._generate_belonged_cp()
         
         # 生成英文名和地址
         success &= self._generate_english_name()
@@ -883,8 +902,12 @@ class Restaurant(BaseInstance):
         # 如果全部成功，更新状态为就绪
         if success:
             self.status = 'ready'
-            self.check()
-            LOGGER.info(f"餐厅 '{self.inst.rest_chinese_name}' 的所有字段已生成完成")
+            is_complete = self.check()
+            if not is_complete:
+                LOGGER.error(f"餐厅 '{self.inst.rest_chinese_name}' 缺少字段，请检查")
+                return False
+            else:
+                LOGGER.info(f"餐厅 '{self.inst.rest_chinese_name}' 的所有字段已生成完成")
         return success
     
 
@@ -894,11 +917,20 @@ class Restaurant(BaseInstance):
         """
         all_keys = [x for x in self.inst.__dict__.keys() if x.startswith('rest_')]
         for key in all_keys:
-            if self.inst.__getattribute__(key) is None and key != 'rest_allocated_barrel' and key != 'rest_verified_date':
-                LOGGER.error(f"餐厅 '{self.inst.rest_chinese_name}' 缺少字段: {key}")
-                return False
-            else:
+            try:
+                if (pd.isna(self.inst.__getattribute__(key)) or self.inst.__getattribute__(key) is None) and (key != 'rest_allocated_barrel' and key != 'rest_verified_date'):
+                    LOGGER.error(f"餐厅 '{self.inst.rest_chinese_name}' 缺少字段: {key}")
+                    return False
+                if key == 'rest_distance' and self.inst.__getattribute__(key) == 0:
+                    LOGGER.error(f"餐厅 '{self.inst.rest_chinese_name}' 距离为0，请检查")
+                    return False
+            except:
                 pass
+            # if self.inst.__getattribute__(key) is None and key != 'rest_allocated_barrel' and key != 'rest_verified_date':
+            #     LOGGER.error(f"餐厅 '{self.inst.rest_chinese_name}' 缺少字段: {key}")
+            #     return False
+            # else:
+            #     pass
                 # LOGGER.info(f"餐厅 '{self.inst.rest_chinese_name}' 字段: {key} 已检验")
         return True
 

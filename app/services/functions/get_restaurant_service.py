@@ -100,7 +100,7 @@ class GetRestaurantService:
     
      ## 利用高德地图自动获取地区以及下一级地区经纬度
     
-    def _gaode_get_lat_lng(self,token = None, address = None,subdistrict = 1) -> dict: # 默认查下一级
+    def _gaode_get_lat_lng(self, token = None, address = None, subdistrict = 1) -> dict: # 默认查下一级
         parama = 'keywords={}&subdistrict={}&key={}'.format(address, subdistrict, token)
         get_area_url = 'https://restapi.amap.com/v3/config/district?'+parama
         res = requests.request('GET', url=get_area_url)
@@ -128,7 +128,7 @@ class GetRestaurantService:
             print("{}查询失败".format(self.address))
         return lon_lat_list
 
-    def _gaode_search(self, n = None, token = None, keywords = None, address = None, maptype = 1,radius = 50000) -> list[dict]:
+    def _gaode_search(self, n = None, token = None, keywords = None, address = None, maptype = 1, radius = 50000) -> list[dict]:
         """
         从高德地图API获取餐厅信息
         
@@ -202,9 +202,7 @@ class GetRestaurantService:
                 l = res.get('pois')
                 if l is not None and len(l)>0:
                     for i in l:
-                        # print(i)
                         j += 1
-                        # print(j)
                         dict1 = {
                             'rest_chinese_name': i.get('name') if i.get('name') is not None else '',
                             'rest_chinese_address': i.get('address') if i.get('address') is not None else '',
@@ -222,10 +220,14 @@ class GetRestaurantService:
                 else:
                     break
             return datalist
+        
         # 如果是输入的坐标，直接匹配周边搜索
         if loc:
+            LOGGER.info(f"使用周边搜索，地址: {self.gaode_address}")
             urls = create_gaode_around_url()
+            print("<<<>>>", urls[0])
         else:
+            LOGGER.info(f"使用关键词搜索，关键词: {self.gaode_keywords}")
             urls = create_gaode_url()
         restaurantList = get_gaode_restaurant(urls)
         ## 写入excel
@@ -237,7 +239,7 @@ class GetRestaurantService:
         ## 返回datalist
         return restaurantList          
        
-    
+
     def _baidu_search(self, keywords=None, city=None, radius=None) -> List[Dict]:
         """
         从百度地图API获取餐厅信息
@@ -479,7 +481,8 @@ class GetRestaurantService:
         # 加载关键词和屏蔽词
         self.load_keywords()
         self.load_blocked_words()
-        
+
+
         # 如果使用API获取，并且提供了城市
         if use_api and cities:
             # 如果是字符串，转换为列表
@@ -495,11 +498,24 @@ class GetRestaurantService:
                 # 使用高德地图API
                 for key_words in self.keywords_list:
                     LOGGER.info(f"开始搜索关键词: {key_words}")
-                    for city_name,city_lat_lng in city_list.items():
+                    for city_name, city_lat_lng in city_list.items():
+                        try:
+                            strict_mode = self.conf.runtime.STRICT_MODE
+                        except:
+                            strict_mode = False
+                        try:
+                            radius = int(self.conf.runtime.SEARCH_RADIUS * 1000)
+                        except:
+                            radius = 50000
+
                         def _gaode_search_func(key):
-                            return self._gaode_search(n = self.n, token = key, keywords = key_words, address = city_lat_lng, maptype = 1,radius = 50000)
+                            return self._gaode_search(n = self.n, token = key, keywords = key_words, address = city_lat_lng, maptype = 1, radius = radius)
                         restaurant_list = robust_query(_gaode_search_func, self.conf.KEYS.gaode_keys)
                         
+                        if strict_mode:
+                            restaurant_list_accurate = [restaurant for restaurant in restaurant_list if restaurant['adname'] == city_name]
+                            LOGGER.info(f"使用严格模式搜索，关键词: {key_words}, 城市: {city_name}, 周边结果：{len(restaurant_list)} 条， 精确结果：{len(restaurant_list_accurate)} 条")
+
                         # 根据use_llm设置决定是否在这里设置rest_type
                         if not use_llm:
                             for restaurant in restaurant_list:
@@ -578,6 +594,6 @@ class GetRestaurantService:
 if __name__ == "__main__":
     from app.services.instances.restaurant import RestaurantModel
     service = GetRestaurantService()
-    service.run(cities="淳安县", cp_id="de441ba852", model_class=RestaurantModel, file_path=None, use_api=True)
+    service.run(cities="广州", cp_id="de441ba852", model_class=RestaurantModel, file_path=None, use_api=True)
     service.save_results(folder_path=None, filename_prefix='restaurants')
 
