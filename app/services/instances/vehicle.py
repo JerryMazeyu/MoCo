@@ -52,6 +52,9 @@ class Vehicle(BaseInstance):
         if "vehicle_status" not in info:
             self.info["vehicle_status"] = "available"  # 默认为可用状态
         
+        if "vehicle_cooldown_days" not in info or not info["vehicle_cooldown_days"]:
+            self.info["vehicle_cooldown_days"] = 3
+        
         self.inst = model(**info)
             
         # print(f"Initialized vehicle with info: {self.info}")
@@ -190,6 +193,11 @@ class Vehicle(BaseInstance):
                 self.inst.vehicle_last_use = '1900-01-01'
                 LOGGER.info(f"已为车辆设置上次使用时间: {self.inst.vehicle_last_use}")
             
+            if not hasattr(self.inst, 'vehicle_cooldown_days') or not self.inst.vehicle_cooldown_days:
+                self.inst.vehicle_cooldown_days = 3
+                LOGGER.info(f"已为车辆设置冷却天数: {self.inst.vehicle_cooldown_days}")
+            
+
             return True
         except Exception as e:
             LOGGER.error(f"设置车辆默认状态失败: {e}")
@@ -272,7 +280,7 @@ class Vehicle(BaseInstance):
             current_date = datetime.datetime.strptime(date, "%Y-%m-%d")
             
             # 简单示例：3天冷却期
-            cooldown_days = 3
+            cooldown_days = self.info["vehicle_cooldown_days"]
             if (current_date - last_use_date).days < cooldown_days:
                 return False
     

@@ -20,5 +20,5 @@ class VehicleModel(BaseModel):
     vehicle_historys: Any = Field(default_factory=list, description="每次收油的记录，是一个列表，仅仅维护过去5次")
     vehicle_status: Any = Field(default="available", description="状态（分为可用available和不可用unavailable）")
     vehicle_last_use: Any = Field(None, description="上次使用的日期")
-    
+    vehicle_cooldown_days: Any = Field(None, description="冷却天数（从上次使用开始计算，用于防止短时间内频繁使用车辆）")
     vehicle_other_info: Any = Field(default_factory=dict, description="其他信息") 

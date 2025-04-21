@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                             QFileDialog, QMessageBox, QLayout, QListWidget, QDialog, QLineEdit,
                             QApplication, QFormLayout)
 from PyQt5.QtCore import Qt, QSize, QPoint, QRect
-from PyQt5.QtGui import QColor, QIcon, QPixmap
+from PyQt5.QtGui import QColor, QIcon, QPixmap,QIntValidator
 import pandas as pd
 from app.views.components.xlsxviewer import XlsxViewerWidget
 from app.views.components.singleton import global_context
@@ -95,6 +95,14 @@ class VehicleAddDialog(QDialog):
         self.type_combo.addItem("运油车", "to_rest")  # 运油车对应to_rest类型
         self.type_combo.addItem("送货车", "to_sale")  # 送货车对应to_sale类型
         form_layout.addRow("车辆类型:", self.type_combo)
+
+        #车辆冷冻时间
+        self.cooldown_input = QLineEdit()
+        self.cooldown_input.setText("3")  # 设置默认值为3
+        self.cooldown_input.setPlaceholderText("请输入冷却天数（默认为3天）")
+        # 只允许输入数字
+        self.cooldown_input.setValidator(QIntValidator(1, 99))
+        form_layout.addRow("冷却时间(天):", self.cooldown_input)
         
         layout.addLayout(form_layout)
         
@@ -117,7 +125,9 @@ class VehicleAddDialog(QDialog):
         plate = self.plate_input.text().strip()
         driver = self.driver_input.text().strip()
         vehicle_type = self.type_combo.currentData()
-        
+        cooldown_days = self.cooldown_input.text().strip()
+        cooldown_days = int(cooldown_days) if cooldown_days else 3
+
         if not plate:
             QMessageBox.warning(self, "输入错误", "车牌号不能为空")
             return None
@@ -127,6 +137,7 @@ class VehicleAddDialog(QDialog):
             "vehicle_license_plate": plate,
             "vehicle_driver_name": driver,
             "vehicle_type": vehicle_type,
+            "vehicle_cooldown_days": cooldown_days,
             "vehicle_belonged_cp": None  # CP ID会在外部设置
         }
 
