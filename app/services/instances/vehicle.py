@@ -52,7 +52,7 @@ class Vehicle(BaseInstance):
         if "vehicle_status" not in info:
             self.info["vehicle_status"] = "available"  # 默认为可用状态
         
-        if "vehicle_cooldown_days" not in info or not info["vehicle_cooldown_days"]:
+        if "vehicle_cooldown_days" not in info or pd.isna(self.info["vehicle_cooldown_days"]):
             self.info["vehicle_cooldown_days"] = 3
         
         self.inst = model(**info)

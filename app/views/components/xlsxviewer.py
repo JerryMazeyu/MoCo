@@ -42,41 +42,25 @@ class PandasModel(QAbstractTableModel):
         if row < 0 or row >= len(self._data) or col < 0 or col >= len(self._data.columns):
             return QVariant()
         
-        # 优化处理，通过缓存减少pandas访问
-        cache_key = (row, col, role)
-        if cache_key in self._cache:
-            return self._cache[cache_key]
-            
-        # 根据角色返回不同类型的数据
+        # 获取单元格的值
         if role == Qt.DisplayRole or role == Qt.EditRole:
-            # 获取单元格的值
             value = self._data.iloc[row, col]
             
             # 处理不同类型的值
             if pd.isna(value):
                 result = "" if role == Qt.EditRole else "NA"
             elif isinstance(value, (float, int)):
-                # 格式化数字
                 result = str(value)
             else:
                 result = str(value)
             
-            # 更新缓存
-            if len(self._cache) >= self._cache_size:
-                # 如果缓存已满，清除一半
-                keys_to_remove = list(self._cache.keys())[:self._cache_size//2]
-                for key in keys_to_remove:
-                    self._cache.pop(key, None)
-            
-            self._cache[cache_key] = result
             return result
             
         # 对比原始数据，如果发生变化则显示不同的颜色
         elif role == Qt.BackgroundRole:
-            # 仅在数据已修改的情况下执行，避免不必要的比较
             if self.modified:
                 try:
-                    if self._data.iloc[row, col] != self._original_data.iloc[row, col]:
+                    if str(self._data.iloc[row, col]) != str(self._original_data.iloc[row, col]):
                         return QBrush(QColor(255, 255, 200))  # 淡黄色背景表示修改过的单元格
                 except:
                     pass
@@ -96,7 +80,6 @@ class PandasModel(QAbstractTableModel):
         
         row, col = index.row(), index.column()
         
-        # 更新数据
         try:
             # 尝试转换为原数据类型
             current_type = type(self._data.iloc[row, col])
@@ -105,7 +88,6 @@ class PandasModel(QAbstractTableModel):
             elif current_type == float:
                 value = float(value)
             elif pd.isna(self._data.iloc[row, col]) and value.strip() == "":
-                # 如果原值是NA且新值是空字符串，保持为NA
                 value = pd.NA
             
             # 更新数据
@@ -115,8 +97,15 @@ class PandasModel(QAbstractTableModel):
             if self._data.iloc[row, col] != self._original_data.iloc[row, col]:
                 self.modified = True
             
+            # 清除所有缓存，确保显示更新
+            self._cache.clear()
+            
             # 发出数据更改信号
             self.dataChanged.emit(index, index)
+            
+            # 强制更新显示
+            self.layoutChanged.emit()
+            
             return True
         except Exception as e:
             print(f"设置数据错误: {str(e)}")
