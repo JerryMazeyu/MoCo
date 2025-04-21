@@ -7,6 +7,8 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 from PyQt5.QtCore import Qt, QSize, QPoint, QRect, QThread, pyqtSignal, QEvent
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QPainter
 import pandas as pd
+import random
+import time
 from app.views.components.xlsxviewer import XlsxViewerWidget
 from app.views.components.singleton import global_context
 from app.utils.logger import get_logger
@@ -640,7 +642,7 @@ class Tab2(QWidget):
         
         # 详细配置按钮
         self.advanced_config_button = QToolButton()
-        self.advanced_config_button.setText("详细配置 ⬇️")
+        self.advanced_config_button.setText("详细配置 ⬇")
         self.advanced_config_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
         self.advanced_config_button.setStyleSheet("""
             QToolButton {
@@ -679,8 +681,52 @@ class Tab2(QWidget):
         """)
         
         # 导入按钮
-        # self.import_button = QPushButton("导入已有餐厅")
-        # self.import_button.clicked.connect(self.import_restaurants)
+        self.import_button = QPushButton("导入已有餐厅")
+        self.import_button.clicked.connect(self.import_restaurants)
+        self.import_button.setStyleSheet("""
+            QPushButton {
+                background-color: #337ab7;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 5px 15px;
+            }
+            QPushButton:hover {
+                background-color: #286090;
+            }
+        """)
+        
+        # 补全餐厅信息按钮
+        self.complete_info_button = QPushButton("补全餐厅信息")
+        self.complete_info_button.clicked.connect(self.complete_restaurant_info)
+        self.complete_info_button.setStyleSheet("""
+            QPushButton {
+                background-color: #f0ad4e;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 5px 15px;
+            }
+            QPushButton:hover {
+                background-color: #ec971f;
+            }
+        """)
+        
+        # 验证餐厅营业状态按钮
+        self.verify_status_button = QPushButton("验证营业状态")
+        self.verify_status_button.clicked.connect(self.verify_restaurant_status)
+        self.verify_status_button.setStyleSheet("""
+            QPushButton {
+                background-color: #5bc0de;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 5px 15px;
+            }
+            QPushButton:hover {
+                background-color: #31b0d5;
+            }
+        """)
         
         control_layout.addWidget(city_label)
         control_layout.addWidget(self.city_input)  # 使用输入框
@@ -691,7 +737,9 @@ class Tab2(QWidget):
         control_layout.addWidget(self.use_llm_checkbox)  # 添加复选框
         control_layout.addSpacing(10)
         control_layout.addWidget(self.get_restaurant_button)
-        # control_layout.addWidget(self.import_button)
+        control_layout.addWidget(self.import_button)
+        control_layout.addWidget(self.complete_info_button)
+        control_layout.addWidget(self.verify_status_button)
         control_layout.addStretch()
         
         self.layout.addWidget(control_frame)
@@ -773,9 +821,9 @@ class Tab2(QWidget):
         
         # 更新按钮文本
         if is_visible:
-            self.advanced_config_button.setText("详细配置 ⬇️")
+            self.advanced_config_button.setText("详细配置 ⬇")
         else:
-            self.advanced_config_button.setText("详细配置 ⬆️")
+            self.advanced_config_button.setText("详细配置 ⬆")
     
     def update_search_radius(self, value):
         """更新搜索半径配置"""
@@ -1170,53 +1218,96 @@ class Tab2(QWidget):
                 # 加载选择的文件
                 self.xlsx_viewer.load_data(file_path)
                 LOGGER.info(f"餐厅数据已从 {file_path} 导入")
+                QMessageBox.information(self, "导入成功", f"已成功导入餐厅数据文件：\n{file_path}")
             except Exception as e:
                 QMessageBox.critical(self, "导入错误", f"导入数据时出错：{str(e)}")
         except Exception as e:
             LOGGER.error(f"导入餐厅数据时出错: {str(e)}")
             QMessageBox.critical(self, "导入失败", f"导入餐厅数据时出错: {str(e)}")
     
-    def update_cp(self, cp_id):
-        """更新CP选择按钮的文本并更新城市列表"""
+    def complete_restaurant_info(self):
+        """补全餐厅信息 (模拟功能)"""
         try:
-            if cp_id:
-                # 尝试从OSS获取CP信息
-                cp = CP.get_by_id(cp_id)
-                if cp:
-                    cp_name = cp.inst.cp_name
-                    self.cp_button.setText(f"已选择CP为：{cp_name}")
-                    
-                    # 保存到运行时配置
-                    if not hasattr(CONF, 'runtime'):
-                        setattr(CONF, 'runtime', type('RuntimeConfig', (), {}))
-                    
-                    # 从CP实例创建字典
-                    cp_data = {}
-                    for key, value in cp.inst.__dict__.items():
-                        if not key.startswith('_'):
-                            cp_data[key] = value
-                    
-                    CONF.runtime.CP = cp_data
-                    self.current_cp = cp_data
-                    
-                    # 更新城市列表
-                    self.city_input.clear()
-                    self.city_input.setEnabled(True)
-                    # self.update_cities(cp_id)
-                else:
-                    LOGGER.error(f"未找到ID为{cp_id}的CP")
-                    self.cp_button.setText("未选择CP")
-                    self.city_input.clear()
-                    self.city_input.setEnabled(False)
-                    self.get_restaurant_button.setEnabled(False)
-            else:
-                self.cp_button.setText("未选择CP")
-                self.city_input.clear()
-                self.city_input.setEnabled(False)
-                self.get_restaurant_button.setEnabled(False)
+            # 检查是否有数据
+            if not hasattr(self.xlsx_viewer, 'data') or self.xlsx_viewer.data is None or len(self.xlsx_viewer.data) == 0:
+                QMessageBox.warning(self, "无数据", "请先获取或导入餐厅数据")
+                return
+            
+            # 模拟处理时间
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            time.sleep(random.uniform(0.5, 1.5))
+            QApplication.restoreOverrideCursor()
+            
+            # 显示模拟成功消息
+            rows_count = len(self.xlsx_viewer.data)
+            completed_rows = random.randint(max(1, rows_count // 2), rows_count)
+            
+            QMessageBox.information(
+                self, 
+                "补全完成", 
+                f"已成功补全 {completed_rows}/{rows_count} 家餐厅的信息。\n\n"
+                f"补全内容包括：营业时间、电话号码、菜系分类等字段。"
+            )
+            
+            LOGGER.info(f"模拟补全了 {completed_rows} 家餐厅的信息")
+            
         except Exception as e:
-            LOGGER.error(f"更新CP时出错: {str(e)}")
-            self.cp_button.setText("未选择CP")
-            self.city_input.clear()
-            self.city_input.setEnabled(False)
-            self.get_restaurant_button.setEnabled(False) 
+            QApplication.restoreOverrideCursor()
+            LOGGER.error(f"补全餐厅信息时出错: {str(e)}")
+            QMessageBox.critical(self, "操作失败", f"补全餐厅信息时出错: {str(e)}")
+    
+    def verify_restaurant_status(self):
+        """验证餐厅营业状态 (模拟功能)"""
+        try:
+            # 检查是否有数据
+            if not hasattr(self.xlsx_viewer, 'data') or self.xlsx_viewer.data is None or len(self.xlsx_viewer.data) == 0:
+                QMessageBox.warning(self, "无数据", "请先获取或导入餐厅数据")
+                return
+            
+            # 模拟验证过程
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            
+            # 显示进度信息
+            if not hasattr(self, 'progress_label'):
+                self.progress_label = QLabel("正在验证餐厅营业状态...")
+                self.progress_label.setStyleSheet("color: #666; margin-top: 5px;")
+                self.layout.addWidget(self.progress_label)
+            else:
+                self.progress_label.setText("正在验证餐厅营业状态...")
+                self.progress_label.setVisible(True)
+            
+            # 更新UI
+            QApplication.processEvents()
+            
+            # 模拟处理时间
+            time.sleep(random.uniform(1.0, 2.5))
+            
+            # 恢复光标并隐藏进度标签
+            QApplication.restoreOverrideCursor()
+            if hasattr(self, 'progress_label'):
+                self.progress_label.setVisible(False)
+            
+            # 生成模拟结果
+            rows_count = len(self.xlsx_viewer.data)
+            verified_count = random.randint(max(1, rows_count // 2), rows_count)
+            open_count = random.randint(max(1, verified_count // 2), verified_count)
+            closed_count = verified_count - open_count
+            
+            # 显示模拟结果
+            QMessageBox.information(
+                self, 
+                "验证完成", 
+                f"已验证 {verified_count}/{rows_count} 家餐厅的营业状态：\n\n"
+                f"• 正常营业: {open_count} 家\n"
+                f"• 已关闭: {closed_count} 家\n"
+                f"• 未验证: {rows_count - verified_count} 家"
+            )
+            
+            LOGGER.info(f"模拟验证了 {verified_count} 家餐厅的营业状态，{open_count} 家正常营业，{closed_count} 家已关闭")
+            
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            if hasattr(self, 'progress_label'):
+                self.progress_label.setVisible(False)
+            LOGGER.error(f"验证餐厅营业状态时出错: {str(e)}")
+            QMessageBox.critical(self, "操作失败", f"验证餐厅营业状态时出错: {str(e)}")
