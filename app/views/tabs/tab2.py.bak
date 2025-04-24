@@ -358,12 +358,11 @@ class RestaurantWorker(QThread):
     error = pyqtSignal(str)  # 错误信号，携带错误信息
     progress = pyqtSignal(str)  # 进度信号，用于实时更新进度
     
-    def __init__(self, city, cp_id, use_llm=True, if_gen_info=False):
+    def __init__(self, city, cp_id, use_llm=True):
         super().__init__()
         self.city = city
         self.cp_id = cp_id
         self.use_llm = use_llm
-        self.if_gen_info = if_gen_info
         self.running = True
         
         # 创建临时目录
@@ -397,7 +396,7 @@ class RestaurantWorker(QThread):
             self.progress.emit(f"正在从API获取餐厅基础信息...")
             try:
                 restaurant_service.run(cities=self.city, cp_id=self.cp_id, model_class=RestaurantModel, 
-                                      file_path=None, use_api=True, if_gen_info=self.if_gen_info, use_llm=self.use_llm)
+                                      file_path=None, use_api=True, if_gen_info=False, use_llm=self.use_llm)
             except Exception as e:
                 LOGGER.error(f"获取餐厅基础信息时出错: {str(e)}")
                 self.error.emit(f"获取餐厅基础信息时出错: {str(e)}")
@@ -410,58 +409,53 @@ class RestaurantWorker(QThread):
                 return
                 
             restaurants_count = len(restaurant_service.restaurants)
+            self.progress.emit(f"已找到 {restaurants_count} 家餐厅，正在生成详细信息...")
             
-            if self.if_gen_info:
-                self.progress.emit(f"已找到 {restaurants_count} 家餐厅，正在生成详细信息...")
+            # 为大量餐厅进行分批处理
+            if restaurants_count > 500:
+                LOGGER.warning(f"餐厅数量过多 ({restaurants_count})，正在分批处理...")
+                self.progress.emit(f"餐厅数量较多 ({restaurants_count})，正在分批处理...")
                 
-                # 为大量餐厅进行分批处理
-                if restaurants_count > 500:
-                    LOGGER.warning(f"餐厅数量过多 ({restaurants_count})，正在分批处理...")
-                    self.progress.emit(f"餐厅数量较多 ({restaurants_count})，正在分批处理...")
-                    
-                    # 实现分批处理
-                    batch_size = 200  # 每批处理200家餐厅
-                    restaurant_group = restaurant_service.get_restaurants_group()
-                    all_restaurants = restaurant_group.members.copy()
-                    processed_restaurants = []
-                    
-                    for i in range(0, len(all_restaurants), batch_size):
-                        if not self.running:
-                            LOGGER.info("线程被用户中断")
-                            break
-                            
-                        batch = all_restaurants[i:i+batch_size]
-                        self.progress.emit(f"正在处理第 {i//batch_size + 1} 批 (共 {(len(all_restaurants)-1)//batch_size + 1} 批)...")
-                        
-                        # 为当前批次创建一个临时组
-                        batch_group = RestaurantsGroup(batch, group_type=restaurant_group.group_type)
-                        
-                        try:
-                            # 使用动态计算的线程数
-                            batch_group = restaurant_service.gen_info(batch_group, num_workers=self.num_workers)
-                            processed_restaurants.extend(batch_group.members)
-                            
-                            # 强制执行垃圾回收
-                            import gc
-                            gc.collect()
-                            
-                        except Exception as e:
-                            LOGGER.error(f"处理批次 {i//batch_size + 1} 时出错: {str(e)}")
-                            self.progress.emit(f"处理批次 {i//batch_size + 1} 时出错，但会继续处理")
-                            # 添加未处理的批次数据，确保不丢失
-                            processed_restaurants.extend(batch)
-                    
-                    # 创建最终结果
-                    restaurant_group = RestaurantsGroup(processed_restaurants, group_type=restaurant_group.group_type)
-                    
-                else:
-                    # 对于小数据量，使用原始方法但调整线程数
-                    restaurant_group = restaurant_service.get_restaurants_group()
-                    self.progress.emit(f"使用 {self.num_workers} 个工作线程生成餐厅详细信息...")
-                    restaurant_group = restaurant_service.gen_info(restaurant_group, num_workers=self.num_workers)
-            else:
-                self.progress.emit(f"已找到 {restaurants_count} 家餐厅，跳过生成详细信息...")
+                # 实现分批处理
+                batch_size = 200  # 每批处理200家餐厅
                 restaurant_group = restaurant_service.get_restaurants_group()
+                all_restaurants = restaurant_group.members.copy()
+                processed_restaurants = []
+                
+                for i in range(0, len(all_restaurants), batch_size):
+                    if not self.running:
+                        LOGGER.info("线程被用户中断")
+                        break
+                        
+                    batch = all_restaurants[i:i+batch_size]
+                    self.progress.emit(f"正在处理第 {i//batch_size + 1} 批 (共 {(len(all_restaurants)-1)//batch_size + 1} 批)...")
+                    
+                    # 为当前批次创建一个临时组
+                    batch_group = RestaurantsGroup(batch, group_type=restaurant_group.group_type)
+                    
+                    try:
+                        # 使用动态计算的线程数
+                        batch_group = restaurant_service.gen_info(batch_group, num_workers=self.num_workers)
+                        processed_restaurants.extend(batch_group.members)
+                        
+                        # 强制执行垃圾回收
+                        import gc
+                        gc.collect()
+                        
+                    except Exception as e:
+                        LOGGER.error(f"处理批次 {i//batch_size + 1} 时出错: {str(e)}")
+                        self.progress.emit(f"处理批次 {i//batch_size + 1} 时出错，但会继续处理")
+                        # 添加未处理的批次数据，确保不丢失
+                        processed_restaurants.extend(batch)
+                
+                # 创建最终结果
+                restaurant_group = RestaurantsGroup(processed_restaurants, group_type=restaurant_group.group_type)
+                
+            else:
+                # 对于小数据量，使用原始方法但调整线程数
+                restaurant_group = restaurant_service.get_restaurants_group()
+                self.progress.emit(f"使用 {self.num_workers} 个工作线程生成餐厅详细信息...")
+                restaurant_group = restaurant_service.gen_info(restaurant_group, num_workers=self.num_workers)
             
             # 检查线程是否仍在运行
             if not self.running:
@@ -628,8 +622,6 @@ class Tab2(QWidget):
         
         # 用于跟踪临时文件
         self.temp_files = []
-        # 记录最后一次查询生成的文件路径
-        self.last_query_file = None
         
         self.conf.runtime.SEARCH_RADIUS = 50
         self.conf.runtime.STRICT_MODE = False
@@ -1161,11 +1153,12 @@ class Tab2(QWidget):
                     self.progress_label.setText("操作已取消")
                 LOGGER.info("用户取消了餐厅获取操作")
                 return
-            
-            # 如果没有传入城市名，从输入框获取
-            if not city:
-                city = self.city_input.text().strip()  # 获取输入框中的城市名称
                 
+            if city:
+                city = city
+            else:
+                # 获取当前输入的城市
+                city = self.city_input.text().strip()  # 获取输入框中的城市名称
             if not city:
                 QMessageBox.warning(self, "请输入城市", "请先输入餐厅城市")
                 return
@@ -1201,8 +1194,7 @@ class Tab2(QWidget):
             self.worker = RestaurantWorker(
                 city=city, 
                 cp_id=self.current_cp['cp_id'], 
-                use_llm=use_llm,
-                if_gen_info=False  # 不在查询阶段生成详细信息
+                use_llm=use_llm
             )
             
             # 将搜索半径和严格模式设置到工作线程中（如果Worker类支持这些参数）
@@ -1236,9 +1228,6 @@ class Tab2(QWidget):
             # 记录临时文件，用于程序退出时清理
             self.temp_files.append(file_path)
             
-            # 保存最后一次查询的文件路径
-            self.last_query_file = file_path
-            
             # 检查数据量大小
             row_count = len(restaurant_data)
             LOGGER.info(f"收到餐厅数据，共 {row_count} 条记录")
@@ -1264,7 +1253,6 @@ class Tab2(QWidget):
             if warning_msg:
                 success_msg += "\n" + warning_msg
             success_msg += f"\n\n完整数据已保存到文件：\n{file_path}"
-            success_msg += "\n\n您可以点击 补全餐厅信息 按钮来补全餐厅的详细数据。"
             
             # 创建一个带有"打开文件"按钮的消息框
             msg_box = QMessageBox(self)
@@ -1381,22 +1369,6 @@ class Tab2(QWidget):
         """补全餐厅信息"""
         try:
             assert hasattr(self, 'current_cp') and getattr(self, 'current_cp') is not None, "current_cp 未初始化"
-            
-            # 检查是否有一个最近查询的文件
-            if hasattr(self, 'last_query_file') and self.last_query_file and os.path.exists(self.last_query_file):
-                # 如果有最近查询的文件，优先使用它
-                LOGGER.info(f"使用最近查询的餐厅数据文件: {self.last_query_file}")
-                try:
-                    # 加载最近查询的文件
-                    restaurant_data = pd.read_excel(self.last_query_file)
-                    # 更新xlsx_viewer显示
-                    self.xlsx_viewer.load_data(data=restaurant_data)
-                    LOGGER.info(f"已从最近查询的文件中加载 {len(restaurant_data)} 条餐厅记录")
-                except Exception as e:
-                    LOGGER.error(f"加载最近查询的餐厅数据文件时出错: {str(e)}")
-                    QMessageBox.warning(self, "加载数据失败", 
-                                      f"无法加载最近查询的餐厅数据文件，将使用当前显示的数据。\n错误信息: {str(e)}")
-            
             # 检查是否有数据
             if self.xlsx_viewer.model._data is None or len(self.xlsx_viewer.model._data) == 0:
                 QMessageBox.warning(self, "无数据", "请先获取或导入餐厅数据")
