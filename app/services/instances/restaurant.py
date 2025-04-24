@@ -728,27 +728,39 @@ class Restaurant(BaseInstance):
         
         :return: 是否生成成功
         """
-        try:
-            # 检查是否已有联系人信息
-            if not hasattr(self.inst, 'rest_contact_person') or pd.isna(self.inst.rest_contact_person) or not self.inst.rest_contact_person:
-                name = mingzi.mingzi()[0]
-                self.inst.rest_contact_person = name
-                LOGGER.info(f"已为餐厅生成随机联系人: {self.inst.rest_contact_person}")
+        try:  # TODO 需要优化   
+            name = mingzi.mingzi()[0]
+            self.inst.rest_contact_person = name
+            LOGGER.info(f"已为餐厅生成随机联系人: {self.inst.rest_contact_person}")
             
-            if not hasattr(self.inst, 'rest_contact_phone') or pd.isna(self.inst.rest_contact_phone) or not self.inst.rest_contact_phone:
-                # 生成随机手机号
-                prefix = ["130", "131", "132", "133", "134", "135", "136", "137", "138", "139", 
-                         "150", "151", "152", "153", "155", "156", "157", "158", "159", 
-                         "176", "177", "178", "180", "181", "182", "183", "184", "185", "186", "187", "188", "189"]
+            # if (not hasattr(self.inst, 'rest_contact_phone') or 
+            #     (isinstance(self.inst.rest_contact_phone, (str, int, float)) and pd.isna(self.inst.rest_contact_phone)) or
+            #     (hasattr(self.inst.rest_contact_phone, 'size') and self.inst.rest_contact_phone.size == 0) or
+            #     self.inst.rest_contact_phone == ''):
                 
-                phone_prefix = random.choice(prefix)
-                phone_suffix = ''.join(random.choices('0123456789', k=8))
-                self.inst.rest_contact_phone = phone_prefix + phone_suffix
-                LOGGER.info(f"已为餐厅生成随机联系电话: {self.inst.rest_contact_phone}")
+            # 生成随机手机号
+            prefix = ["130", "131", "132", "133", "134", "135", "136", "137", "138", "139", 
+                        "150", "151", "152", "153", "155", "156", "157", "158", "159", 
+                        "176", "177", "178", "180", "181", "182", "183", "184", "185", "186", "187", "188", "189"]
+            
+            phone_prefix = random.choice(prefix)
+            phone_suffix = ''.join(random.choices('0123456789', k=8))
+            self.inst.rest_contact_phone = phone_prefix + phone_suffix
+            LOGGER.info(f"已为餐厅生成随机联系电话: {self.inst.rest_contact_phone}")
             
             return True
         except Exception as e:
+            # 增强错误日志
+            import traceback
             LOGGER.error(f"生成联系人信息失败: {e}")
+            LOGGER.error(f"错误详细信息: {traceback.format_exc()}")
+            
+            # 即使出错，也设置默认值防止后续处理出错
+            if not hasattr(self.inst, 'rest_contact_person') or pd.isna(self.inst.rest_contact_person):
+                self.inst.rest_contact_person = ""
+            if not hasattr(self.inst, 'rest_contact_phone') or pd.isna(self.inst.rest_contact_phone):
+                self.inst.rest_contact_phone = ""
+            
             return False
     
     def _calculate_distance(self,cp_location) -> bool:

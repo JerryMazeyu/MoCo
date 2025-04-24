@@ -46,13 +46,16 @@ class PandasModel(QAbstractTableModel):
         if role == Qt.DisplayRole or role == Qt.EditRole:
             value = self._data.iloc[row, col]
             
-            # 处理不同类型的值
-            if pd.isna(value):
-                result = "" if role == Qt.EditRole else "NA"
-            elif isinstance(value, (float, int)):
-                result = str(value)
-            else:
-                result = str(value)
+            try:
+                # 处理不同类型的值
+                if pd.isna(value):
+                    result = "" if role == Qt.EditRole else "NA"
+                elif isinstance(value, (float, int)):
+                    result = str(value)
+                else:
+                    result = str(value)
+            except:
+                result = ""
             
             return result
             

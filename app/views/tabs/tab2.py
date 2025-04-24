@@ -18,7 +18,8 @@ from app.services.instances.cp import CP
 from app.config.config import CONF
 import oss2
 from app.services.functions.get_restaurant_service import GetRestaurantService
-from app.services.instances.restaurant import RestaurantModel
+from app.services.instances.restaurant import RestaurantModel, Restaurant, RestaurantsGroup
+import concurrent.futures
 # 获取全局日志对象
 LOGGER = get_logger()
 
@@ -367,6 +368,12 @@ class RestaurantWorker(QThread):
         # 创建临时目录
         import tempfile
         self.temp_dir = tempfile.gettempdir()
+        
+        # 动态调整线程数，根据系统CPU核心数
+        import multiprocessing
+        # 使用CPU核心数的一半，但最少2个，最多4个
+        self.num_workers = max(2, min(4, multiprocessing.cpu_count() // 2))
+        LOGGER.info(f"设置工作线程数为: {self.num_workers}")
     
     def stop(self):
         """停止线程执行"""
@@ -406,31 +413,51 @@ class RestaurantWorker(QThread):
             
             # 为大量餐厅进行分批处理
             if restaurants_count > 500:
-                LOGGER.warning(f"餐厅数量过多 ({restaurants_count})，可能需要较长处理时间")
+                LOGGER.warning(f"餐厅数量过多 ({restaurants_count})，正在分批处理...")
                 self.progress.emit(f"餐厅数量较多 ({restaurants_count})，正在分批处理...")
+                
+                # 实现分批处理
+                batch_size = 200  # 每批处理200家餐厅
+                restaurant_group = restaurant_service.get_restaurants_group()
+                all_restaurants = restaurant_group.members.copy()
+                processed_restaurants = []
+                
+                for i in range(0, len(all_restaurants), batch_size):
+                    if not self.running:
+                        LOGGER.info("线程被用户中断")
+                        break
+                        
+                    batch = all_restaurants[i:i+batch_size]
+                    self.progress.emit(f"正在处理第 {i//batch_size + 1} 批 (共 {(len(all_restaurants)-1)//batch_size + 1} 批)...")
+                    
+                    # 为当前批次创建一个临时组
+                    batch_group = RestaurantsGroup(batch, group_type=restaurant_group.group_type)
+                    
+                    try:
+                        # 使用动态计算的线程数
+                        batch_group = restaurant_service.gen_info(batch_group, num_workers=self.num_workers)
+                        processed_restaurants.extend(batch_group.members)
+                        
+                        # 强制执行垃圾回收
+                        import gc
+                        gc.collect()
+                        
+                    except Exception as e:
+                        LOGGER.error(f"处理批次 {i//batch_size + 1} 时出错: {str(e)}")
+                        self.progress.emit(f"处理批次 {i//batch_size + 1} 时出错，但会继续处理")
+                        # 添加未处理的批次数据，确保不丢失
+                        processed_restaurants.extend(batch)
+                
+                # 创建最终结果
+                restaurant_group = RestaurantsGroup(processed_restaurants, group_type=restaurant_group.group_type)
+                
+            else:
+                # 对于小数据量，使用原始方法但调整线程数
+                restaurant_group = restaurant_service.get_restaurants_group()
+                self.progress.emit(f"使用 {self.num_workers} 个工作线程生成餐厅详细信息...")
+                restaurant_group = restaurant_service.gen_info(restaurant_group, num_workers=self.num_workers)
             
             # 检查线程是否仍在运行
-            if not self.running:
-                LOGGER.info("线程被用户中断")
-                return
-                
-            # 获取餐厅组
-            restaurant_group = restaurant_service.get_restaurants_group()
-            
-            # 单独执行生成信息步骤，带错误处理
-            try:
-                # 减少工作线程数，防止资源占用过多
-                num_workers = 6  # 固定使用6个工作线程，避免资源争用
-                self.progress.emit(f"使用 {num_workers} 个工作线程生成餐厅详细信息...")
-                
-                # 将use_llm参数传递给gen_info方法
-                restaurant_group = restaurant_service.gen_info(restaurant_group, num_workers=num_workers)
-            except Exception as e:
-                LOGGER.error(f"生成餐厅详细信息时出错: {str(e)}")
-                self.progress.emit(f"生成餐厅详细信息时出错，但会继续处理已获取的数据")
-                # 继续使用原始餐厅组
-            
-            # 最后一次检查线程是否仍在运行
             if not self.running:
                 LOGGER.info("线程被用户中断")
                 return

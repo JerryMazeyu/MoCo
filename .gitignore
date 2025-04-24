@@ -18,4 +18,7 @@ app/var/
 
 # 敏感配置文件
 **/config/*.yaml
+.DS_Store
+build*/
+dist*/
 

@@ -66,6 +66,6 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='MoCo数据助手.app',
-    icon='app/resources/icons/app_icon.icns',       # 你的 icns 图标
-    bundle_identifier='com.yourcompany.moco',       # 可选：反向域名标识
+    icon='app/resources/icons/oil.png',       # 你的 icns 图标
+    bundle_identifier='com.jx.moco',       # 可选：反向域名标识
 )
