@@ -508,11 +508,15 @@ class RestaurantCompleteWorker(QThread):
     error = pyqtSignal(str)  # 错误信号
     progress = pyqtSignal(str)  # 进度信号
     
-    def __init__(self, restaurant_data, cp_location=None, num_workers=6):
+    def __init__(self, restaurant_data, cp_location=None, num_workers=None):
         super().__init__()
         self.restaurant_data = restaurant_data
         self.cp_location = cp_location
-        self.num_workers = num_workers
+        import multiprocessing
+        # 使用CPU核心数的一半，但最少2个，最多4个
+        if num_workers is None:
+            self.num_workers = max(2, min(4, multiprocessing.cpu_count() // 2))
+            self.num_workers = num_workers
         self.running = True
         
         # 创建临时目录
@@ -1244,7 +1248,7 @@ class Tab2(QWidget):
             LOGGER.info(f"收到餐厅数据，共 {row_count} 条记录")
             
             # 限制显示的数据量，无论多大只显示前100行
-            max_display_rows = 100
+            max_display_rows = 10
             if row_count > max_display_rows:
                 LOGGER.warning(f"数据量过大 ({row_count} 行)，将只显示前 {max_display_rows} 行")
                 restaurant_data_display = restaurant_data.head(max_display_rows).copy()
