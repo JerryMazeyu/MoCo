@@ -20,6 +20,7 @@ import oss2
 from app.services.functions.get_restaurant_service import GetRestaurantService
 from app.services.instances.restaurant import RestaurantModel, Restaurant, RestaurantsGroup
 import concurrent.futures
+import copy
 # 获取全局日志对象
 LOGGER = get_logger()
 
@@ -360,6 +361,15 @@ class RestaurantWorker(QThread):
     
     def __init__(self, city, cp_id, use_llm=True, if_gen_info=False):
         super().__init__()
+        # 预先导入必要的模块
+        import tempfile
+        import multiprocessing
+        import os
+        import datetime
+        import gc
+        from app.services.instances.restaurant import RestaurantModel, Restaurant, RestaurantsGroup 
+        from app.services.functions.get_restaurant_service import GetRestaurantService
+        
         self.city = city
         self.cp_id = cp_id
         self.use_llm = use_llm
@@ -367,11 +377,9 @@ class RestaurantWorker(QThread):
         self.running = True
         
         # 创建临时目录
-        import tempfile
         self.temp_dir = tempfile.gettempdir()
         
         # 动态调整线程数，根据系统CPU核心数
-        import multiprocessing
         # 使用CPU核心数的一半，但最少2个，最多4个
         self.num_workers = max(2, min(4, multiprocessing.cpu_count() // 2))
         LOGGER.info(f"设置工作线程数为: {self.num_workers}")
@@ -510,148 +518,351 @@ class RestaurantCompleteWorker(QThread):
     
     def __init__(self, restaurant_data, cp_location=None, num_workers=None):
         super().__init__()
-        self.restaurant_data = restaurant_data
+        # 预先导入必要的模块
+        import multiprocessing
+        import gc
+        import os
+        import tempfile
+        import datetime
+        from app.services.instances.restaurant import Restaurant, RestaurantsGroup
+        from app.services.functions.get_restaurant_service import GetRestaurantService
+        
+        # 创建数据的一个安全副本，避免引用原始数据
+        try:
+            # 仅保留必要的列以减少内存使用
+            necessary_columns = [
+                'rest_chinese_name', 'rest_chinese_address', 'rest_contact_phone',
+                'rest_location', 'rest_type', 'rest_type_gaode', 'adname', 'rest_city'
+            ]
+            
+            # 获取餐厅数据中实际存在的列
+            existing_columns = [col for col in necessary_columns if col in restaurant_data.columns]
+            
+            # 只保留这些列
+            if existing_columns:
+                self.restaurant_data = restaurant_data[existing_columns].copy(deep=True)
+            else:
+                # 如果没有任何必要的列存在，则使用完整数据
+                self.restaurant_data = restaurant_data.copy(deep=True)
+            
+            LOGGER.info(f"创建RestaurantCompleteWorker，数据大小: {len(self.restaurant_data)}行")
+        except Exception as e:
+            LOGGER.error(f"创建餐厅数据副本时出错: {str(e)}")
+            # 仍然必须设置属性，即使发生错误
+            if restaurant_data is not None:
+                self.restaurant_data = restaurant_data.copy(deep=True)
+            else:
+                # 如果输入数据为None，创建一个空DataFrame
+                self.restaurant_data = pd.DataFrame()
+        
         self.cp_location = cp_location
+        
+        # 动态调整线程数
         import multiprocessing
         # 使用CPU核心数的一半，但最少2个，最多4个
         if num_workers is None:
             self.num_workers = max(2, min(4, multiprocessing.cpu_count() // 2))
+        else:
             self.num_workers = num_workers
+            
         self.running = True
         
-        # 创建临时目录
+        # 内部状态跟踪
+        self._batch_size = 30  # 减小批处理大小，降低内存压力
+        self._current_batch = 0
+        self._batches_processed = 0
+        
+        # 追踪的资源，用于安全释放
+        self._resources = {
+            'interim_df': None,
+            'current_batch': None,
+            'current_group': None,
+            'service': None,
+            'all_processed_records': []
+        }
+        
+        # 创建临时文件路径（在初始化时就创建）
+        import datetime
         import tempfile
-        self.temp_dir = tempfile.gettempdir()
+        import os
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        temp_dir = tempfile.gettempdir()
+        self.file_path = os.path.join(temp_dir, f"restaurants_completed_{timestamp}.xlsx")
+        LOGGER.info(f"临时文件将保存到: {self.file_path}")
     
     def stop(self):
         """停止线程执行"""
         self.running = False
+        LOGGER.info("餐厅信息补全线程收到停止信号")
+        
+    def __del__(self):
+        """析构函数，确保安全清理资源"""
+        try:
+            # 释放所有引用的数据
+            if hasattr(self, '_resources'):
+                for key in self._resources:
+                    self._resources[key] = None
+            
+            # 释放DataFrame
+            if hasattr(self, 'restaurant_data'):
+                self.restaurant_data = None
+                
+            # 强制垃圾回收
+            import gc
+            gc.collect()
+        except Exception as e:
+            LOGGER.error(f"RestaurantCompleteWorker析构时出错: {str(e)}")
+            
+    def _clean_batch_resources(self):
+        """清理单个批次的资源"""
+        try:
+            # 清理当前批次资源
+            if self._resources['current_batch'] is not None:
+                self._resources['current_batch'] = None
+                
+            if self._resources['current_group'] is not None:
+                self._resources['current_group'] = None
+                
+            if self._resources['service'] is not None:
+                self._resources['service'] = None
+                
+            # 强制垃圾回收
+            import gc
+            gc.collect()
+        except Exception as e:
+            LOGGER.error(f"清理批次资源时出错: {str(e)}")
     
     def run(self):
+        """运行线程 - 完全改写为单批次处理模式"""
+        # 预先导入所有需要的模块，避免运行时导入
+        import pandas as pd
+        import numpy as np
+        import time
+        import os
+        import tempfile
+        import gc
+        import copy
+        
+        # 必要的类
+        from app.services.instances.restaurant import Restaurant, RestaurantsGroup
+        from app.services.functions.get_restaurant_service import GetRestaurantService
+        
+        # 检查运行状态
+        if not self.running:
+            self.error.emit("线程在启动前被取消")
+            return
+            
+        # 检查数据有效性
+        if self.restaurant_data is None or len(self.restaurant_data) == 0:
+            self.error.emit("没有餐厅数据可以处理")
+            return
+            
         try:
-            LOGGER.info("线程开始: 正在补全餐厅信息...")
-            self.progress.emit("开始补全餐厅信息...")
-            
-            # 检查线程是否仍在运行
-            if not self.running:
-                LOGGER.info("线程被用户中断")
-                return
-            
-            # 为了避免内存问题，创建一个本地副本
-            try:
-                restaurant_data_copy = self.restaurant_data.copy()
-                # 获取餐厅记录
-                restaurant_records = restaurant_data_copy.to_dict('records')
-                total_restaurants = len(restaurant_records)
-            except Exception as e:
-                LOGGER.error(f"准备数据时出错: {str(e)}")
-                self.error.emit(f"准备数据时出错: {str(e)}")
-                return
-            
-            # 创建餐厅实例列表
-            self.progress.emit("正在创建餐厅实例...")
-            
-            # 从Restaurant类导入
-            from app.services.instances.restaurant import Restaurant, RestaurantsGroup
-            from app.services.functions.get_restaurant_service import GetRestaurantService
-            
-            restaurant_instances = []
-            try:
-                for idx, restaurant_info in enumerate(restaurant_records):
-                    if not self.running:
-                        LOGGER.info("线程被用户中断")
-                        return
-                    
-                    restaurant = Restaurant(restaurant_info, cp_location=self.cp_location)
-                    restaurant_instances.append(restaurant)
-                    
-                    if idx % 50 == 0:  # 每处理50家餐厅更新一次进度
-                        self.progress.emit(f"正在准备餐厅数据... ({idx+1}/{total_restaurants})")
-                        # 强制垃圾回收以减少内存占用
-                        if idx > 500:  # 处理大量数据时更积极地回收
-                            import gc
-                            gc.collect()
-            except Exception as e:
-                LOGGER.error(f"创建餐厅实例时出错: {str(e)}")
-                self.error.emit(f"创建餐厅实例时出错: {str(e)}")
-                return
-            
-            # 创建餐厅组
-            try:
-                restaurant_group = RestaurantsGroup(restaurant_instances)
-                # 释放可能不再需要的内存
-                restaurant_records = None
-                restaurant_data_copy = None
-                import gc
-                gc.collect()
-            except Exception as e:
-                LOGGER.error(f"创建餐厅组时出错: {str(e)}")
-                self.error.emit(f"创建餐厅组时出错: {str(e)}")
-                return
-            
-            # 使用GetRestaurantService的gen_info方法进行多线程处理
+            # 状态变量
+            total_restaurants = len(self.restaurant_data)
             completed_count = 0
-            try:
-                self.progress.emit(f"使用 {self.num_workers} 个工作线程补全餐厅详细信息...")
-                
-                # 创建服务实例并调用gen_info方法
-                service = GetRestaurantService()
-                restaurant_group = service.gen_info(restaurant_group, num_workers=self.num_workers)
-                
-                # 统计完成数量
-                completed_count = sum(1 for r in restaurant_group.members if r.check())
-                
-            except Exception as e:
-                LOGGER.error(f"补全餐厅详细信息时出错: {str(e)}")
-                self.progress.emit(f"补全餐厅详细信息时出错，但会继续处理已获取的数据")
-                # 我们仍然继续处理，尽量恢复
+            all_processed_records = []  # 最终结果列表
             
-            # 最后一次检查线程是否仍在运行
-            if not self.running:
-                LOGGER.info("线程被用户中断")
-                return
+            # 计算总批次数
+            total_batches = (total_restaurants + self._batch_size - 1) // self._batch_size
+            self.progress.emit(f"准备处理 {total_restaurants} 家餐厅信息，共 {total_batches} 批")
             
-            # 转换为DataFrame并保存结果
-            try:
-                self.progress.emit("正在将补全后的餐厅信息转换为表格数据...")
-                updated_data = restaurant_group.to_dataframe()
+            # 批次索引列表 - 预先计算所有批次的起始索引
+            batch_indices = list(range(0, total_restaurants, self._batch_size))
+            
+            # 每隔5个批次保存一次中间结果
+            save_interval = 2
+            
+            # 逐批处理
+            for batch_idx, start_idx in enumerate(batch_indices):
+                # 检查是否取消
+                if not self.running:
+                    self.progress.emit("用户取消了操作")
+                    break
+                    
+                # 计算批次范围
+                end_idx = min(start_idx + self._batch_size, total_restaurants)
+                self.progress.emit(f"处理第 {batch_idx+1}/{total_batches} 批 ({start_idx+1}-{end_idx})")
                 
-                # 保存完整数据到临时文件
-                import os
-                import datetime
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                file_path = os.path.join(self.temp_dir, f"restaurants_completed_{timestamp}.xlsx")
+                try:
+                    # ==== 第1步：提取批次数据 ====
+                    # 使用iloc切片获取批次数据，并立即创建深拷贝
+                    batch_data = self.restaurant_data.iloc[start_idx:end_idx].copy(deep=True)
+                    self._resources['current_batch'] = batch_data
+                    
+                    # ==== 第2步：转换为记录 ====
+                    batch_records = batch_data.to_dict('records')
+                    # 立即释放批次数据
+                    batch_data = None
+                    self._resources['current_batch'] = None
+                    
+                    # ==== 第3步：创建餐厅实例 ====
+                    restaurant_instances = []
+                    for idx, restaurant_info in enumerate(batch_records):
+                        if not self.running:
+                            break
+                            
+                        try:
+                            # 创建餐厅实例，为每个实例使用信息的副本
+                            restaurant = Restaurant(copy.deepcopy(restaurant_info), cp_location=self.cp_location)
+                            restaurant_instances.append(restaurant)
+                        except Exception as e:
+                            LOGGER.error(f"创建餐厅实例时出错({idx}): {str(e)}")
+                            continue
+                    
+                    # 释放记录列表
+                    batch_records = None
+                    gc.collect()
+                    
+                    # 检查是否取消
+                    if not self.running:
+                        self.progress.emit("用户取消了操作")
+                        # 清理资源
+                        restaurant_instances = None
+                        gc.collect()
+                        break
+                    
+                    # ==== 第4步：创建餐厅组并生成信息 ====
+                    if restaurant_instances:
+                        try:
+                            # 创建餐厅组
+                            restaurant_group = RestaurantsGroup(restaurant_instances)
+                            self._resources['current_group'] = restaurant_group
+                            
+                            # 释放实例列表
+                            restaurant_instances = None
+                            
+                            # 创建服务实例
+                            service = GetRestaurantService()
+                            self._resources['service'] = service
+                            
+                            # 生成信息
+                            self.progress.emit(f"正在补全第 {batch_idx+1}/{total_batches} 批的详细信息...")
+                            processed_group = service.gen_info(restaurant_group, num_workers=self.num_workers)
+                            
+                            # 清理旧组和服务
+                            restaurant_group = None
+                            service = None
+                            self._resources['current_group'] = processed_group
+                            self._resources['service'] = None
+                            
+                            # ==== 第5步：提取结果 ====
+                            # 处理结果并添加到总结果列表
+                            batch_processed_records = []
+                            batch_completed = 0
+                            
+                            for restaurant in processed_group.members:
+                                if hasattr(restaurant, 'inst') and restaurant.inst:
+                                    try:
+                                        # 安全地提取字典并创建副本
+                                        restaurant_dict = restaurant.to_dict()
+                                        if restaurant_dict:
+                                            batch_processed_records.append(restaurant_dict.copy())
+                                            batch_completed += 1
+                                    except Exception as e:
+                                        LOGGER.error(f"提取餐厅数据时出错: {str(e)}")
+                            
+                            # 更新总完成数
+                            completed_count += batch_completed
+                            
+                            # 将此批次结果添加到总结果（使用extend避免嵌套列表）
+                            all_processed_records.extend(batch_processed_records)
+                            
+                            # 释放批次结果和处理组
+                            batch_processed_records = None
+                            processed_group = None
+                            self._resources['current_group'] = None
+                            
+                            # 强制垃圾回收
+                            gc.collect()
+                            
+                            # 定期保存中间结果
+                            if (batch_idx + 1) % save_interval == 0 or batch_idx == total_batches - 1:
+                                try:
+                                    # 创建临时DataFrame保存结果
+                                    if all_processed_records:
+                                        interim_df = pd.DataFrame(copy.deepcopy(all_processed_records))
+                                        self._resources['interim_df'] = interim_df
+                                        
+                                        # 保存到文件
+                                        interim_df.to_excel(self.file_path, index=False)
+                                        
+                                        # 进度更新
+                                        self.progress.emit(f"已保存中间结果，目前完成 {completed_count}/{total_restaurants} 家")
+                                        
+                                        # 释放interim_df
+                                        interim_df = None
+                                        self._resources['interim_df'] = None
+                                except Exception as e:
+                                    LOGGER.error(f"保存中间结果时出错: {str(e)}")
+                            
+                        except Exception as e:
+                            LOGGER.error(f"处理餐厅组时出错: {str(e)}")
+                            # 清理资源但继续处理下一批
+                            self._clean_batch_resources()
+                    
+                except Exception as e:
+                    LOGGER.error(f"处理批次 {batch_idx+1} 时出错: {str(e)}")
+                    # 清理但继续处理
+                    self._clean_batch_resources()
                 
-                self.progress.emit(f"正在保存补全后的数据到临时文件: {file_path}")
-                updated_data.to_excel(file_path, index=False)
-                LOGGER.info(f"已将补全后的数据({len(updated_data)}条记录)保存到: {file_path}")
-                
-                # 清理内存中的大对象
-                restaurant_group = None
-                restaurant_instances = None
-                
-                # 强制垃圾回收
-                import gc
+                # 每个批次结束时都强制进行垃圾回收
                 gc.collect()
-                
-                LOGGER.info(f"餐厅信息补全完成，共补全 {completed_count}/{total_restaurants} 条记录")
-                self.progress.emit(f"餐厅信息补全完成，共补全 {completed_count}/{total_restaurants} 条记录")
-                self.finished.emit(updated_data, file_path, completed_count, total_restaurants)
-                
-            except Exception as e:
-                LOGGER.error(f"转换补全后的餐厅数据为DataFrame时出错: {str(e)}")
-                self.error.emit(f"处理餐厅数据时出错: {str(e)}")
+            
+            # 所有批次处理完毕
+            # 检查是否取消
+            if not self.running:
+                self.progress.emit("用户取消了操作，已完成部分将被保存")
+            
+            # 创建最终结果
+            if all_processed_records:
+                try:
+                    # 确保创建的是全新的副本
+                    result_records = copy.deepcopy(all_processed_records)
+                    
+                    # 创建结果DataFrame
+                    result_df = pd.DataFrame(result_records)
+                    
+                    # 保存最终结果
+                    result_df.to_excel(self.file_path, index=False)
+                    
+                    # 发送完成信号
+                    self.progress.emit(f"补全完成，已处理 {completed_count}/{total_restaurants} 家餐厅")
+                    self.finished.emit(result_df, self.file_path, completed_count, total_restaurants)
+                    
+                    # 不要在这里删除result_df，它需要传递给信号处理函数
+                    # 让Python的GC自行处理
+                    
+                except Exception as e:
+                    LOGGER.error(f"创建最终结果时出错: {str(e)}")
+                    self.error.emit(f"创建最终结果时出错: {str(e)}")
+            else:
+                self.error.emit("没有成功处理任何餐厅记录")
                 
         except Exception as e:
-            LOGGER.error(f"补全餐厅信息时出错: {str(e)}")
-            self.error.emit(str(e))
+            LOGGER.error(f"补全餐厅信息过程中发生错误: {str(e)}")
+            self.error.emit(f"补全餐厅信息过程中发生错误: {str(e)}")
+            
         finally:
-            # 确保释放所有资源
+            # 清理所有资源
             try:
-                import gc
+                # 清理资源字典
+                for key in self._resources:
+                    self._resources[key] = None
+                
+                # 清理数据引用
+                if hasattr(self, 'restaurant_data'):
+                    self.restaurant_data = None
+                
+                # 强制垃圾回收
                 gc.collect()
-            except:
-                pass
+                
+                LOGGER.info("餐厅信息补全线程清理完成")
+            except Exception as e:
+                LOGGER.error(f"清理资源时出错: {str(e)}")
+                
+            # 无论如何，都标记为已完成
+            self.progress.emit("处理已完成")
 
 class Tab2(QWidget):
     """餐厅获取Tab，实现餐厅信息获取功能"""
@@ -668,6 +879,9 @@ class Tab2(QWidget):
         self.temp_files = []
         # 记录最后一次查询生成的文件路径
         self.last_query_file = None
+        
+        # 内存监控标志
+        self.memory_debug = False
         
         self.conf.runtime.SEARCH_RADIUS = 50
         self.conf.runtime.STRICT_MODE = False
@@ -1470,29 +1684,17 @@ class Tab2(QWidget):
     def complete_restaurant_info(self):
         """补全餐厅信息"""
         try:
+            # 由于可能使用到这些模块，预先导入以确保可用
+            import os
+            import pandas as pd
+            import gc
+            import copy
+            from app.services.instances.restaurant import Restaurant, RestaurantsGroup
+            from app.services.functions.get_restaurant_service import GetRestaurantService
+            
             assert hasattr(self, 'current_cp') and getattr(self, 'current_cp') is not None, "current_cp 未初始化"
             
-            # 检查是否有一个最近查询的文件
-            if hasattr(self, 'last_query_file') and self.last_query_file and os.path.exists(self.last_query_file):
-                # 如果有最近查询的文件，优先使用它
-                LOGGER.info(f"使用最近查询的餐厅数据文件: {self.last_query_file}")
-                try:
-                    # 加载最近查询的文件
-                    restaurant_data = pd.read_excel(self.last_query_file)
-                    # 更新xlsx_viewer显示
-                    self.xlsx_viewer.load_data(data=restaurant_data)
-                    LOGGER.info(f"已从最近查询的文件中加载 {len(restaurant_data)} 条餐厅记录")
-                except Exception as e:
-                    LOGGER.error(f"加载最近查询的餐厅数据文件时出错: {str(e)}")
-                    QMessageBox.warning(self, "加载数据失败", 
-                                      f"无法加载最近查询的餐厅数据文件，将使用当前显示的数据。\n错误信息: {str(e)}")
-            
-            # 检查是否有数据
-            if self.xlsx_viewer.model._data is None or len(self.xlsx_viewer.model._data) == 0:
-                QMessageBox.warning(self, "无数据", "请先获取或导入餐厅数据")
-                return
-            
-            # 检查是否已经有一个正在运行的线程
+            # 防止重复点击
             if hasattr(self, 'complete_worker') and self.complete_worker is not None and self.complete_worker.isRunning():
                 # 线程正在运行，则停止它
                 self.complete_worker.stop()
@@ -1501,6 +1703,9 @@ class Tab2(QWidget):
                     self.progress_label.setText("操作已取消")
                 LOGGER.info("用户取消了餐厅信息补全操作")
                 return
+            
+            # 更改按钮文本
+            self.complete_info_button.setText("取消补全")
             
             # 显示进度信息
             if not hasattr(self, 'progress_label'):
@@ -1514,78 +1719,197 @@ class Tab2(QWidget):
             # 确保UI更新
             QApplication.processEvents()
             
+            # 数据准备
+            restaurant_data = None
+            
+            # 检查是否有一个最近查询的文件
+            if hasattr(self, 'last_query_file') and self.last_query_file and os.path.exists(self.last_query_file):
+                # 如果有最近查询的文件，优先使用它
+                LOGGER.info(f"使用最近查询的餐厅数据文件: {self.last_query_file}")
+                try:
+                    # 加载最近查询的文件
+                    restaurant_data = pd.read_excel(self.last_query_file)
+                    # 仅更新Excel查看器，不改变内部数据副本
+                    self.xlsx_viewer.load_data(data=restaurant_data)
+                    LOGGER.info(f"已从最近查询的文件中加载 {len(restaurant_data)} 条餐厅记录")
+                except Exception as e:
+                    LOGGER.error(f"加载最近查询的餐厅数据文件时出错: {str(e)}")
+                    QMessageBox.warning(self, "加载数据失败", 
+                                      f"无法加载最近查询的餐厅数据文件，将使用当前显示的数据。\n错误信息: {str(e)}")
+                    restaurant_data = None
+            
+            # 如果没有从文件加载数据，使用当前显示的数据
+            if restaurant_data is None:
+                LOGGER.info("从当前显示的数据中获取餐厅信息")
+                # 检查是否有数据
+                if not hasattr(self.xlsx_viewer, 'model') or self.xlsx_viewer.model is None or not hasattr(self.xlsx_viewer.model, '_data') or self.xlsx_viewer.model._data is None or len(self.xlsx_viewer.model._data) == 0:
+                    QMessageBox.warning(self, "无数据", "请先获取或导入餐厅数据")
+                    self.complete_info_button.setText("补全餐厅信息")
+                    if hasattr(self, 'progress_label'):
+                        self.progress_label.setVisible(False)
+                    return
+                
+                # 使用当前表格中的数据
+                try:
+                    # 数据深拷贝，避免引用问题
+                    restaurant_data = copy.deepcopy(self.xlsx_viewer.model._data)
+                    LOGGER.info(f"从当前表格中获取 {len(restaurant_data)} 条餐厅记录")
+                except Exception as e:
+                    LOGGER.error(f"复制当前表格数据时出错: {str(e)}")
+                    QMessageBox.critical(self, "数据错误", f"无法处理当前表格数据: {str(e)}")
+                    self.complete_info_button.setText("补全餐厅信息")
+                    if hasattr(self, 'progress_label'):
+                        self.progress_label.setVisible(False)
+                    return
+            
             # 获取当前CP的位置信息用于计算距离
             cp_location = None
             if hasattr(self, 'current_cp') and self.current_cp:
                 cp_location = self.current_cp.get('cp_location', None)
-            
-            # 从xlsx_viewer获取数据
-            # 使用deepcopy避免引用问题
-            import copy
-            try:
-                restaurant_data = copy.deepcopy(self.xlsx_viewer.model._data)
-            except Exception as e:
-                LOGGER.error(f"复制数据时出错: {str(e)}")
-                restaurant_data = self.xlsx_viewer.model._data.copy()
-            
-            # 更改按钮文本
-            self.complete_info_button.setText("取消补全")
+                if cp_location:
+                    # 创建副本，避免直接引用
+                    cp_location = copy.deepcopy(cp_location)
+                LOGGER.info(f"使用CP位置: {cp_location}")
             
             # 创建并启动工作线程
             try:
                 # 防止内存泄漏，确保之前的worker已被清理
                 if hasattr(self, 'complete_worker') and self.complete_worker is not None:
                     try:
+                        if self.complete_worker.isRunning():
+                            self.complete_worker.stop()
+                            self.complete_worker.wait(1000)  # 等待最多1秒
+                        
                         self.complete_worker.disconnect()
                         self.complete_worker = None
+                        
                         # 强制进行垃圾回收
-                        import gc
                         gc.collect()
                     except Exception as e:
                         LOGGER.error(f"清理旧工作线程时出错: {str(e)}")
                 
-                # 创建新的工作线程
-                self.complete_worker = RestaurantCompleteWorker(restaurant_data, cp_location)
+                # 确保创建RestaurantCompleteWorker前先释放其他引用
+                # 这有助于避免双重引用或内存泄漏
+                gc.collect()
+                
+                # 创建新的工作线程，不需要指定线程数，让其自动计算
+                self.update_progress("正在创建工作线程...")
+                
+                # 使用数据的完整深拷贝，确保安全
+                restaurant_data_copy = restaurant_data.copy(deep=True)
+                
+                # 创建工作线程，使用数据副本
+                self.complete_worker = RestaurantCompleteWorker(restaurant_data_copy, cp_location)
+                
+                # 清除原始数据的引用，帮助垃圾回收
+                restaurant_data_copy = None
+                restaurant_data = None
+                
+                # 强制一次垃圾回收
+                gc.collect()
                 
                 # 连接信号
                 self.complete_worker.finished.connect(self.on_complete_finished)
                 self.complete_worker.error.connect(self.on_complete_error)
                 self.complete_worker.progress.connect(self.update_progress)
                 
-                LOGGER.info("开始补全餐厅信息...")
+                LOGGER.info(f"开始补全餐厅信息，数据大小: {len(self.complete_worker.restaurant_data)} 条记录")
                 self.complete_worker.start()
+                
             except Exception as e:
                 LOGGER.error(f"创建工作线程时出错: {str(e)}")
                 self.complete_info_button.setText("补全餐厅信息")
                 if hasattr(self, 'progress_label'):
                     self.progress_label.setVisible(False)
                 QMessageBox.critical(self, "操作失败", f"创建工作线程时出错: {str(e)}")
-            
+        
         except Exception as e:
             LOGGER.error(f"启动餐厅信息补全时出错: {str(e)}")
             QMessageBox.critical(self, "操作失败", f"启动餐厅信息补全时出错: {str(e)}")
             self.complete_info_button.setText("补全餐厅信息")
             if hasattr(self, 'progress_label'):
                 self.progress_label.setVisible(False)
+                
+            # 确保清理所有资源
+            try:
+                if hasattr(self, 'complete_worker') and self.complete_worker is not None:
+                    self.complete_worker.disconnect()
+                    self.complete_worker = None
+                gc.collect()
+            except:
+                pass
     
     def on_complete_finished(self, updated_data, file_path, completed_count, total_restaurants):
         """餐厅信息补全完成的回调函数"""
         try:
+            # 更新状态
+            self.update_progress("数据补全完成，正在更新界面...")
+            
             # 记录临时文件
-            self.temp_files.append(file_path)
+            if file_path not in self.temp_files:
+                self.temp_files.append(file_path)
+            # 同时记录为最后查询文件，方便再次使用
+            self.last_query_file = file_path
+            
+            # 首先安全地断开线程连接，避免多次回调或资源访问冲突
+            if hasattr(self, 'complete_worker') and self.complete_worker is not None:
+                try:
+                    # 断开信号连接，避免重复触发
+                    self.complete_worker.finished.disconnect()
+                    self.complete_worker.error.disconnect()
+                    self.complete_worker.progress.disconnect()
+                except Exception as e:
+                    LOGGER.error(f"断开线程信号时出错: {str(e)}")
+            
+            # 恢复按钮文本
+            self.complete_info_button.setText("补全餐厅信息")
+            
+            # 隐藏进度标签
+            if hasattr(self, 'progress_label'):
+                self.progress_label.setVisible(False)
             
             # 使用QTimer延迟更新UI，确保在主线程的事件循环中执行
-            # 这样可以避免在线程回调中直接操作UI导致的绘图状态问题
+            # 关键是把updated_data参数变成本地副本，防止在多个地方引用同一个对象
             def update_ui():
                 try:
-                    # 更新xlsx_viewer显示的数据
-                    self.xlsx_viewer.model.setDataFrame(updated_data)
-                    # 使用Qt的事件循环机制确保表格视图更新完成
-                    QApplication.processEvents()
-                    # 调整列宽
-                    self.xlsx_viewer.table_view.resizeColumnsToContents()
-                    # 标记数据
-                    self.xlsx_viewer.data = updated_data
+                    # 创建一个本地的数据副本，与线程传递的数据分离
+                    local_updated_data = None
+                    try:
+                        if updated_data is not None and len(updated_data) > 0:
+                            # 使用copy方法创建一个新的DataFrame对象
+                            local_updated_data = updated_data.copy(deep=True)
+                    except Exception as e:
+                        LOGGER.error(f"创建数据副本时出错: {str(e)}")
+                        
+                    # 安全地更新UI
+                    if local_updated_data is not None:
+                        try:
+                            # 限制显示行数，避免UI卡顿
+                            max_display_rows = 10
+                            if len(local_updated_data) > max_display_rows:
+                                display_data = local_updated_data.head(max_display_rows).copy(deep=True)
+                                LOGGER.info(f"数据量过大，只显示前 {max_display_rows} 行")
+                            else:
+                                display_data = local_updated_data.copy(deep=True)
+                            
+                            # 安全地更新表格数据
+                            if hasattr(self.xlsx_viewer, 'model') and self.xlsx_viewer.model is not None:
+                                # 更新模型数据
+                                self.xlsx_viewer.model.setDataFrame(display_data)
+                                # 使用Qt的事件循环机制确保表格视图更新完成
+                                QApplication.processEvents()
+                                # 调整列宽
+                                self.xlsx_viewer.table_view.resizeColumnsToContents()
+                            
+                            # 安全地更新xlsx_viewer的数据引用
+                            self.xlsx_viewer.data = display_data  # 不使用原始数据
+                            
+                            # 清理不再需要的本地变量
+                            display_data = None
+                        except Exception as e:
+                            LOGGER.error(f"更新表格数据时出错: {str(e)}")
+                    else:
+                        LOGGER.warning("接收到的补全数据为空或无法创建副本")
                     
                     # 创建消息提示
                     message = f"已补全 {completed_count}/{total_restaurants} 家餐厅的信息。\n\n"
@@ -1609,28 +1933,115 @@ class Tab2(QWidget):
                     # 如果点击了打开文件按钮
                     if msg_box.clickedButton() == open_button:
                         self.open_file_external(file_path)
+                    
+                    # 清理local_updated_data
+                    local_updated_data = None
+                    
+                    # 强制执行垃圾回收
+                    import gc
+                    gc.collect()
+                    
+                    # 完成UI更新后，清理工作线程对象
+                    self._final_cleanup_worker()
+                        
                 except Exception as e:
                     LOGGER.error(f"更新UI时出错: {str(e)}")
+                    QMessageBox.critical(self, "更新失败", f"更新界面时出错: {str(e)}")
+                    # 即使出错也要尝试清理
+                    self._final_cleanup_worker()
             
             # 使用QTimer确保UI更新在主线程的下一个事件循环中执行
-            QTimer.singleShot(100, update_ui)
-            
-            # 恢复按钮文本
-            self.complete_info_button.setText("补全餐厅信息")
-            
-            # 隐藏进度标签
-            if hasattr(self, 'progress_label'):
-                self.progress_label.setVisible(False)
-            
-            # 清理线程
-            if hasattr(self, 'complete_worker'):
-                self.complete_worker.disconnect()
-                self.complete_worker = None
+            # 增加延迟时间，确保线程有更多时间完成清理
+            QTimer.singleShot(500, update_ui)
             
         except Exception as e:
             LOGGER.error(f"处理餐厅信息补全结果时出错: {str(e)}")
             QMessageBox.critical(self, "处理失败", f"处理餐厅信息补全结果时出错: {str(e)}")
             self.complete_info_button.setText("补全餐厅信息")
+            if hasattr(self, 'progress_label'):
+                self.progress_label.setVisible(False)
+            # 确保在错误情况下也清理资源
+            self._final_cleanup_worker()
+    
+    def _final_cleanup_worker(self):
+        """安全地清理工作线程资源"""
+        try:
+            if hasattr(self, 'complete_worker') and self.complete_worker is not None:
+                # 获取对象引用但不保留在方法中
+                worker = self.complete_worker
+                
+                # 立即将self.complete_worker设为None，避免多重引用
+                self.complete_worker = None
+                
+                try:
+                    # 确保线程已停止
+                    if worker.isRunning():
+                        worker.stop()
+                        worker.wait(1000)  # 等待最多1秒
+                except Exception as e:
+                    LOGGER.error(f"停止补全线程时出错: {str(e)}")
+                
+                try:
+                    # 清理worker内部资源
+                    if hasattr(worker, '_resources'):
+                        for key in worker._resources:
+                            worker._resources[key] = None
+                    
+                    # 清理DataFrame
+                    if hasattr(worker, 'restaurant_data'):
+                        worker.restaurant_data = None
+                except Exception as e:
+                    LOGGER.error(f"清理worker内部资源时出错: {str(e)}")
+                
+                # 断开所有可能的循环引用
+                worker.disconnect()
+                
+                # 删除引用
+                worker = None
+                
+                # 执行两次垃圾收集，确保循环引用被清理
+                import gc
+                gc.collect()
+                gc.collect()
+                
+                # 显示内存使用情况（如果启用调试）
+                if hasattr(self, 'memory_debug') and self.memory_debug:
+                    self._log_memory_usage()
+                
+                LOGGER.info("餐厅补全工作线程已清理")
+            else:
+                LOGGER.info("没有找到要清理的工作线程")
+                
+        except Exception as e:
+            LOGGER.error(f"清理补全工作线程资源时出错: {str(e)}")
+            
+    def _log_memory_usage(self):
+        """记录当前内存使用情况（仅在调试模式下使用）"""
+        try:
+            import psutil
+            import os
+            
+            # 获取当前进程
+            process = psutil.Process(os.getpid())
+            
+            # 获取内存信息
+            memory_info = process.memory_info()
+            
+            # 日志记录内存使用
+            LOGGER.info(f"内存使用情况: RSS={memory_info.rss/(1024*1024):.2f}MB, VMS={memory_info.vms/(1024*1024):.2f}MB")
+            
+            # 额外的垃圾回收信息
+            import gc
+            counts = gc.get_count()
+            LOGGER.info(f"GC计数: {counts}")
+            
+            # 列出不可达但未收集的对象
+            if gc.garbage:
+                LOGGER.info(f"GC垃圾对象数量: {len(gc.garbage)}")
+        except ImportError:
+            LOGGER.warning("psutil模块未安装，无法记录内存使用情况")
+        except Exception as e:
+            LOGGER.error(f"记录内存使用时出错: {str(e)}")
     
     def on_complete_error(self, error_msg):
         """餐厅信息补全出错的回调函数"""
