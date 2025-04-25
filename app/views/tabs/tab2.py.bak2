@@ -1,19 +1,5 @@
+# ================================ 餐厅收集 ================================
 import os
-import sys
-import tempfile
-import json
-import uuid
-import subprocess
-import time
-import pandas as pd
-
-# ============导入包============
-import gc
-import traceback
-from datetime import datetime
-from pathlib import Path
-# ============导入包============
-
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                             QLabel, QFrame, QComboBox, QGroupBox, QGridLayout,
                             QFileDialog, QMessageBox, QLayout, QListWidget, QDialog, QLineEdit, 
@@ -38,7 +24,8 @@ import copy
 # 获取全局日志对象
 LOGGER = get_logger()
 
-
+import cgitb
+cgitb.enable(format='text')
 
 
 # 自定义流式布局类，用于自适应地排列API测试项
@@ -1628,23 +1615,31 @@ class Tab2(QWidget):
                 self.worker = None
     
     def open_file_external(self, file_path):
-        """使用系统默认程序打开文件"""
+        """使用系统默认应用打开文件"""
         try:
+            import os
+            import platform
+            import subprocess
+            
             LOGGER.info(f"尝试打开文件: {file_path}")
+            
             if os.path.exists(file_path):
-                if sys.platform == 'win32':
+                system = platform.system()
+                
+                if system == 'Windows':
                     os.startfile(file_path)
-                elif sys.platform == 'darwin':  # macOS
+                elif system == 'Darwin':  # macOS
                     subprocess.call(['open', file_path])
                 else:  # Linux
                     subprocess.call(['xdg-open', file_path])
-                LOGGER.info(f"成功打开文件: {file_path}")
+                    
+                LOGGER.info(f"已使用系统默认应用打开文件: {file_path}")
             else:
                 LOGGER.error(f"文件不存在: {file_path}")
-                QMessageBox.warning(self, "文件不存在", f"找不到文件: {file_path}")
+                QMessageBox.warning(self, "文件错误", f"文件不存在: {file_path}")
         except Exception as e:
-            LOGGER.error(f"打开文件失败: {str(e)}")
-            QMessageBox.warning(self, "打开失败", f"无法打开文件: {str(e)}")
+            LOGGER.error(f"打开文件时出错: {str(e)}")
+            QMessageBox.critical(self, "打开失败", f"无法打开文件: {str(e)}")
     
     def on_restaurant_search_error(self, error_msg):
         """餐厅搜索出错的回调函数"""
@@ -1687,32 +1682,29 @@ class Tab2(QWidget):
                 QMessageBox.critical(self, "导入错误", f"导入数据时出错：{str(e)}")
         except Exception as e:
             LOGGER.error(f"导入餐厅数据时出错: {str(e)}")
-            QMessageBox.critical(self, "导入失败", f"导入餐厅数据时出错: {str(e)}")    
+            QMessageBox.critical(self, "导入失败", f"导入餐厅数据时出错: {str(e)}")
+    
     def complete_restaurant_info(self):
         """补全餐厅信息"""
         try:
+            # 由于可能使用到这些模块，预先导入以确保可用
+            import os
+            import pandas as pd
+            import gc
+            import copy
+            from app.services.instances.restaurant import Restaurant, RestaurantsGroup
+            from app.services.functions.get_restaurant_service import GetRestaurantService
+            
+            assert hasattr(self, 'current_cp') and getattr(self, 'current_cp') is not None, "current_cp 未初始化"
+            
             # 防止重复点击
-            if hasattr(self, 'complete_task_running') and self.complete_task_running:
-                # 任务已在运行，询问是否取消
-                reply = QMessageBox.question(
-                    self, "任务进行中", 
-                    "当前已有补全任务正在进行中，是否取消?",
-                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-                )
-                
-                if reply == QMessageBox.Yes:
-                    # 取消任务
-                    self.cancel_complete_task = True
-                    self.complete_info_button.setText("补全餐厅信息")
-                    if hasattr(self, 'progress_label'):
-                        self.progress_label.setText("正在取消操作...")
-                    
-                    # 通过标志位停止轮询
-                    if hasattr(self, 'monitor_timer'):
-                        self.monitor_timer.stop()
-                        
-                    LOGGER.info("用户取消了餐厅信息补全操作")
-                
+            if hasattr(self, 'complete_worker') and self.complete_worker is not None and self.complete_worker.isRunning():
+                # 线程正在运行，则停止它
+                self.complete_worker.stop()
+                self.complete_info_button.setText("补全餐厅信息")
+                if hasattr(self, 'progress_label'):
+                    self.progress_label.setText("操作已取消")
+                LOGGER.info("用户取消了餐厅信息补全操作")
                 return
             
             # 更改按钮文本
@@ -1736,12 +1728,22 @@ class Tab2(QWidget):
             # 检查是否有一个最近查询的文件
             if hasattr(self, 'last_query_file') and self.last_query_file and os.path.exists(self.last_query_file):
                 # 如果有最近查询的文件，优先使用它
-                input_file = self.last_query_file
-                LOGGER.info(f"使用最近查询的餐厅数据文件: {input_file}")
-            else:
-                # 从当前显示的数据中获取并保存到临时文件
+                LOGGER.info(f"使用最近查询的餐厅数据文件: {self.last_query_file}")
+                try:
+                    # 加载最近查询的文件
+                    restaurant_data = pd.read_excel(self.last_query_file)
+                    # 仅更新Excel查看器，不改变内部数据副本
+                    self.xlsx_viewer.load_data(data=restaurant_data)
+                    LOGGER.info(f"已从最近查询的文件中加载 {len(restaurant_data)} 条餐厅记录")
+                except Exception as e:
+                    LOGGER.error(f"加载最近查询的餐厅数据文件时出错: {str(e)}")
+                    QMessageBox.warning(self, "加载数据失败", 
+                                      f"无法加载最近查询的餐厅数据文件，将使用当前显示的数据。\n错误信息: {str(e)}")
+                    restaurant_data = None
+            
+            # 如果没有从文件加载数据，使用当前显示的数据
+            if restaurant_data is None:
                 LOGGER.info("从当前显示的数据中获取餐厅信息")
-                
                 # 检查是否有数据
                 if not hasattr(self.xlsx_viewer, 'model') or self.xlsx_viewer.model is None or not hasattr(self.xlsx_viewer.model, '_data') or self.xlsx_viewer.model._data is None or len(self.xlsx_viewer.model._data) == 0:
                     QMessageBox.warning(self, "无数据", "请先获取或导入餐厅数据")
@@ -1750,21 +1752,11 @@ class Tab2(QWidget):
                         self.progress_label.setVisible(False)
                     return
                 
-                # 使用当前表格中的数据并保存到临时文件
+                # 使用当前表格中的数据
                 try:
-                    restaurant_data = self.xlsx_viewer.model._data.copy()
+                    # 数据深拷贝，避免引用问题
+                    restaurant_data = copy.deepcopy(self.xlsx_viewer.model._data)
                     LOGGER.info(f"从当前表格中获取 {len(restaurant_data)} 条餐厅记录")
-                    
-                    # 保存到临时文件
-                    temp_dir = tempfile.gettempdir()
-                    timestamp = time.strftime("%Y%m%d_%H%M%S")
-                    input_file = os.path.join(temp_dir, f"restaurant_data_{timestamp}.xlsx")
-                    restaurant_data.to_excel(input_file, index=False)
-                    LOGGER.info(f"已将餐厅数据保存到临时文件: {input_file}")
-                    
-                    # 记录临时文件以便清理
-                    self.temp_files.append(input_file)
-                    
                 except Exception as e:
                     LOGGER.error(f"复制当前表格数据时出错: {str(e)}")
                     QMessageBox.critical(self, "数据错误", f"无法处理当前表格数据: {str(e)}")
@@ -1777,256 +1769,100 @@ class Tab2(QWidget):
             cp_location = None
             if hasattr(self, 'current_cp') and self.current_cp:
                 cp_location = self.current_cp.get('cp_location', None)
+                if cp_location:
+                    # 创建副本，避免直接引用
+                    cp_location = copy.deepcopy(cp_location)
                 LOGGER.info(f"使用CP位置: {cp_location}")
             
-            # 创建输出目录
-            output_dir = tempfile.gettempdir()
-            
-            # 生成任务ID
-            task_id = str(uuid.uuid4())
-            
-            # 创建日志文件路径
-            log_file = os.path.join(output_dir, f"log_{task_id}.txt")
-            
-            # 设置任务状态
-            self.complete_task_running = True
-            self.cancel_complete_task = False
-            
-            # 存储当前任务信息
-            self.current_task = {
-                'task_id': task_id,
-                'output_dir': output_dir,
-                'log_file': log_file,
-                'start_time': datetime.now().isoformat()
-            }
-            
-            # 构建命令行参数
-            script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
-                                     'services', 'scripts', 'complete_restaurants_info.py')
-            
-            cmd = [
-                sys.executable,  # Python解释器
-                script_path,
-                f"--input_file={input_file}",
-                f"--output_dir={output_dir}",
-                f"--task_id={task_id}",
-                f"--num_workers=3",  # 使用3个工作线程
-                f"--batch_size=20",   # 批次大小为20
-                f"--log_file={log_file}"  # 指定日志文件
-            ]
-            
-            # 如果有CP位置，添加到命令行
-            if cp_location:
-                cmd.append(f"--cp_location={cp_location}")
-            
-            # 状态文件路径
-            status_file = os.path.join(output_dir, f"status_{task_id}.json")
-            result_file = os.path.join(output_dir, f"result_{task_id}.xlsx")
-            
-            # 记录到临时文件列表
-            self.temp_files.append(status_file)
-            self.temp_files.append(result_file)
-            self.temp_files.append(log_file)
-            
-            # 添加查看日志按钮（如果不存在）
-            if not hasattr(self, 'view_log_button'):
-                self.view_log_button = QPushButton("查看日志")
-                self.view_log_button.setStyleSheet("margin-left: 10px;")
-                self.view_log_button.clicked.connect(self.view_current_log)
-                # 添加到合适的布局中，根据您的UI结构调整
-                if hasattr(self, 'complete_button_layout') and self.complete_button_layout:
-                    self.complete_button_layout.addWidget(self.view_log_button)
-                else:
-                    # 尝试创建一个水平布局放置在现有进度标签下方
-                    if not hasattr(self, 'log_layout'):
-                        self.log_layout = QHBoxLayout()
-                        self.layout.addLayout(self.log_layout)
-                    self.log_layout.addWidget(self.view_log_button)
-            
-            # 显示日志按钮
-            self.view_log_button.setVisible(True)
-            
-            # 启动进程
-            LOGGER.info(f"启动补全脚本: {' '.join(cmd)}")
+            # 创建并启动工作线程
             try:
-                self.update_progress("正在启动补全进程...")
+                # 防止内存泄漏，确保之前的worker已被清理
+                if hasattr(self, 'complete_worker') and self.complete_worker is not None:
+                    try:
+                        if self.complete_worker.isRunning():
+                            self.complete_worker.stop()
+                            self.complete_worker.wait(1000)  # 等待最多1秒
+                        
+                        self.complete_worker.disconnect()
+                        self.complete_worker = None
+                        
+                        # 强制进行垃圾回收
+                        gc.collect()
+                    except Exception as e:
+                        LOGGER.error(f"清理旧工作线程时出错: {str(e)}")
                 
-                # 使用subprocess.Popen启动进程，不阻塞UI
-                process = subprocess.Popen(
-                    cmd, 
-                    stdout=subprocess.PIPE, 
-                    stderr=subprocess.PIPE,
-                    creationflags=subprocess.CREATE_NO_WINDOW  # 在Windows上不显示窗口
-                )
+                # 确保创建RestaurantCompleteWorker前先释放其他引用
+                # 这有助于避免双重引用或内存泄漏
+                gc.collect()
                 
-                # 保存进程对象供后续使用
-                self.complete_process = process
+                # 创建新的工作线程，不需要指定线程数，让其自动计算
+                self.update_progress("正在创建工作线程...")
                 
-                # 设置轮询计时器，检查任务状态
-                if not hasattr(self, 'monitor_timer'):
-                    self.monitor_timer = QTimer(self)
-                    self.monitor_timer.timeout.connect(self.check_complete_status)
+                # 使用数据的完整深拷贝，确保安全
+                restaurant_data_copy = restaurant_data.copy(deep=True)
                 
-                # 启动计时器，每1秒检查一次
-                self.monitor_timer.start(1000)
+                # 创建工作线程，使用数据副本
+                self.complete_worker = RestaurantCompleteWorker(restaurant_data_copy, cp_location)
                 
-                # 设置超时机制，避免脚本运行过久
-                self.complete_start_time = time.time()
-                self.complete_timeout = 3600  # 1小时超时
+                # 清除原始数据的引用，帮助垃圾回收
+                restaurant_data_copy = None
+                restaurant_data = None
                 
-                LOGGER.info(f"补全进程已启动，任务ID: {task_id}")
+                # 强制一次垃圾回收
+                gc.collect()
                 
-                # 显示日志文件路径信息
-                self.update_progress(f"处理中... 日志文件: {log_file}")
+                # 连接信号
+                self.complete_worker.finished.connect(self.on_complete_finished)
+                self.complete_worker.error.connect(self.on_complete_error)
+                self.complete_worker.progress.connect(self.update_progress)
+                
+                LOGGER.info(f"开始补全餐厅信息，数据大小: {len(self.complete_worker.restaurant_data)} 条记录")
+                self.complete_worker.start()
                 
             except Exception as e:
-                LOGGER.error(f"启动补全脚本失败: {str(e)}")
-                QMessageBox.critical(self, "启动失败", f"启动补全脚本失败: {str(e)}")
+                LOGGER.error(f"创建工作线程时出错: {str(e)}")
                 self.complete_info_button.setText("补全餐厅信息")
-                self.complete_task_running = False
                 if hasattr(self, 'progress_label'):
                     self.progress_label.setVisible(False)
-                if hasattr(self, 'view_log_button'):
-                    self.view_log_button.setVisible(False)
-                
+                QMessageBox.critical(self, "操作失败", f"创建工作线程时出错: {str(e)}")
+        
         except Exception as e:
             LOGGER.error(f"启动餐厅信息补全时出错: {str(e)}")
             QMessageBox.critical(self, "操作失败", f"启动餐厅信息补全时出错: {str(e)}")
             self.complete_info_button.setText("补全餐厅信息")
-            self.complete_task_running = False
             if hasattr(self, 'progress_label'):
                 self.progress_label.setVisible(False)
-            if hasattr(self, 'view_log_button'):
-                self.view_log_button.setVisible(False)
+                
+            # 确保清理所有资源
+            try:
+                if hasattr(self, 'complete_worker') and self.complete_worker is not None:
+                    self.complete_worker.disconnect()
+                    self.complete_worker = None
+                gc.collect()
+            except:
+                pass
     
-    def check_complete_status(self):
-        """检查补全任务状态"""
+    def on_complete_finished(self, updated_data, file_path, completed_count, total_restaurants):
+        """餐厅信息补全完成的回调函数"""
         try:
-            # 如果取消标志被设置，停止轮询
-            if hasattr(self, 'cancel_complete_task') and self.cancel_complete_task:
-                if hasattr(self, 'monitor_timer'):
-                    self.monitor_timer.stop()
-                
-                # 终止进程
-                if hasattr(self, 'complete_process') and self.complete_process:
-                    try:
-                        self.complete_process.terminate()
-                    except:
-                        pass
-                
-                self.complete_task_running = False
-                self.complete_info_button.setText("补全餐厅信息")
-                if hasattr(self, 'progress_label'):
-                    self.progress_label.setText("操作已取消")
-                    self.progress_label.setVisible(False)
-                
-                LOGGER.info("补全任务已取消")
-                return
+            # 更新状态
+            self.update_progress("数据补全完成，正在更新界面...")
             
-            # 检查进程是否仍在运行
-            if hasattr(self, 'complete_process') and self.complete_process:
-                returncode = self.complete_process.poll()
-                
-                # 检查状态文件
-                output_dir = tempfile.gettempdir()
-                if hasattr(self, 'complete_start_time'):
-                    # 检查是否超时
-                    elapsed_time = time.time() - self.complete_start_time
-                    if elapsed_time > self.complete_timeout:
-                        LOGGER.warning("补全任务超时")
-                        self.monitor_timer.stop()
-                        self.complete_process.terminate()
-                        self.complete_task_running = False
-                        self.complete_info_button.setText("补全餐厅信息")
-                        if hasattr(self, 'progress_label'):
-                            self.progress_label.setText("操作已超时")
-                            self.progress_label.setVisible(False)
-                        QMessageBox.warning(self, "任务超时", "补全餐厅信息任务运行时间过长，已自动终止")
-                        return
-                
-                # 查找状态文件
-                status_files = [f for f in os.listdir(output_dir) if f.startswith("status_") and f.endswith(".json")]
-                
-                if status_files:
-                    # 找到最新的状态文件
-                    status_file = os.path.join(output_dir, sorted(status_files)[-1])
-                    
-                    try:
-                        with open(status_file, 'r', encoding='utf-8') as f:
-                            status_data = json.load(f)
-                            
-                            # 更新进度
-                            if 'message' in status_data:
-                                self.update_progress(status_data['message'])
-                            
-                            # 检查任务是否完成
-                            if 'status' in status_data:
-                                if status_data['status'] == 'completed':
-                                    # 任务成功完成
-                                    self.on_complete_process_finished(status_data)
-                                    return
-                                elif status_data['status'] == 'failed':
-                                    # 任务失败
-                                    error_msg = status_data.get('error', '未知错误')
-                                    self.on_complete_process_error(error_msg)
-                                    return
-                    except Exception as e:
-                        LOGGER.error(f"读取状态文件失败: {e}")
-                
-                # 如果进程已结束但未找到状态文件或状态不是成功/失败
-                if returncode is not None:
-                    if returncode == 0:
-                        # 进程正常结束，但可能没有状态文件
-                        # 尝试查找结果文件
-                        result_files = [f for f in os.listdir(output_dir) if f.startswith("result_") and f.endswith(".xlsx")]
-                        if result_files:
-                            result_file = os.path.join(output_dir, sorted(result_files)[-1])
-                            status_data = {
-                                "status": "completed",
-                                "result_file": result_file,
-                                "message": "处理完成",
-                                "progress": 100
-                            }
-                            self.on_complete_process_finished(status_data)
-                        else:
-                            # 没有找到结果文件，认为失败
-                            self.on_complete_process_error("处理完成，但未找到结果文件")
-                    else:
-                        # 进程异常结束
-                        stderr_output = self.complete_process.stderr.read().decode('utf-8', errors='ignore') if self.complete_process.stderr else "未知错误"
-                        self.on_complete_process_error(f"进程异常结束，返回码: {returncode}\n{stderr_output[:500]}")
-                    
-                    # 停止计时器
-                    self.monitor_timer.stop()
-                    return
-            else:
-                # 没有进程对象，停止计时器
-                self.monitor_timer.stop()
-                self.complete_task_running = False
-                self.complete_info_button.setText("补全餐厅信息")
-                if hasattr(self, 'progress_label'):
-                    self.progress_label.setVisible(False)
-                
-        except Exception as e:
-            LOGGER.error(f"检查补全任务状态时出错: {str(e)}")
-            # 出错时停止计时器
-            if hasattr(self, 'monitor_timer'):
-                self.monitor_timer.stop()
+            # 记录临时文件
+            if file_path not in self.temp_files:
+                self.temp_files.append(file_path)
+            # 同时记录为最后查询文件，方便再次使用
+            self.last_query_file = file_path
             
-            self.complete_task_running = False
-            self.complete_info_button.setText("补全餐厅信息")
-            if hasattr(self, 'progress_label'):
-                self.progress_label.setVisible(False)
-    
-    def on_complete_process_finished(self, status_data):
-        """补全进程成功完成"""
-        try:
-            # 停止计时器
-            if hasattr(self, 'monitor_timer'):
-                self.monitor_timer.stop()
-            
-            # 清理标志
-            self.complete_task_running = False
+            # 首先安全地断开线程连接，避免多次回调或资源访问冲突
+            if hasattr(self, 'complete_worker') and self.complete_worker is not None:
+                try:
+                    # 断开信号连接，避免重复触发
+                    self.complete_worker.finished.disconnect()
+                    self.complete_worker.error.disconnect()
+                    self.complete_worker.progress.disconnect()
+                except Exception as e:
+                    LOGGER.error(f"断开线程信号时出错: {str(e)}")
             
             # 恢复按钮文本
             self.complete_info_button.setText("补全餐厅信息")
@@ -2035,148 +1871,192 @@ class Tab2(QWidget):
             if hasattr(self, 'progress_label'):
                 self.progress_label.setVisible(False)
             
-            # 获取结果文件路径
-            result_file = status_data.get('result_file')
-            if not result_file and 'task_id' in status_data:
-                # 尝试构造结果文件路径
-                result_file = os.path.join(tempfile.gettempdir(), f"result_{status_data['task_id']}.xlsx")
-            
-            # 保存为最后一次查询的文件
-            if result_file and os.path.exists(result_file):
-                self.last_query_file = result_file
-                
-                # 尝试加载结果
+            # 使用QTimer延迟更新UI，确保在主线程的事件循环中执行
+            # 关键是把updated_data参数变成本地副本，防止在多个地方引用同一个对象
+            def update_ui():
                 try:
-                    # 从文件加载数据
-                    result_data = pd.read_excel(result_file)
-                    
-                    # 更新UI
-                    if len(result_data) > 0:
-                        # 限制显示行数
-                        max_display_rows = 10
-                        if len(result_data) > max_display_rows:
-                            display_data = result_data.head(max_display_rows).copy()
-                            display_message = f"数据量过大，只显示前 {max_display_rows} 行"
-                        else:
-                            display_data = result_data.copy()
-                            display_message = None
+                    # 创建一个本地的数据副本，与线程传递的数据分离
+                    local_updated_data = None
+                    try:
+                        if updated_data is not None and len(updated_data) > 0:
+                            # 使用copy方法创建一个新的DataFrame对象
+                            local_updated_data = updated_data.copy(deep=True)
+                    except Exception as e:
+                        LOGGER.error(f"创建数据副本时出错: {str(e)}")
                         
-                        # 更新表格
-                        self.xlsx_viewer.load_data(data=display_data)
-                        
-                        # 显示成功消息
-                        completed = status_data.get('completed', '未知')
-                        total = status_data.get('total', '未知')
-                        total_time = status_data.get('total_process_time', '未知')
-                        
-                        message = f"已补全 {completed}/{total} 家餐厅的信息。\n"
-                        if total_time != '未知':
-                            message += f"总耗时: {total_time}\n\n"
-                        else:
-                            message += "\n"
-                            
-                        if display_message:
-                            message += display_message + "\n\n"
-                        message += f"补全后的数据已保存到文件：\n{result_file}"
-                        
-                        # 创建带"打开文件"按钮的消息框
-                        msg_box = QMessageBox(self)
-                        msg_box.setWindowTitle("补全完成")
-                        msg_box.setText(message)
-                        msg_box.setIcon(QMessageBox.Information)
-                        
-                        # 添加打开文件按钮
-                        open_button = msg_box.addButton("打开完整数据", QMessageBox.ActionRole)
-                        view_log_button = msg_box.addButton("查看处理日志", QMessageBox.ActionRole)
-                        close_button = msg_box.addButton("关闭", QMessageBox.RejectRole)
-                        
-                        # 显示消息框并处理响应
-                        msg_box.exec_()
-                        
-                        # 处理按钮点击
-                        clicked_button = msg_box.clickedButton()
-                        if clicked_button == open_button:
-                            self.open_file_external(result_file)
-                        elif clicked_button == view_log_button:
-                            # 查看日志文件
-                            log_file = status_data.get('log_file')
-                            if log_file and os.path.exists(log_file):
-                                self.open_file_external(log_file)
+                    # 安全地更新UI
+                    if local_updated_data is not None:
+                        try:
+                            # 限制显示行数，避免UI卡顿
+                            max_display_rows = 10
+                            if len(local_updated_data) > max_display_rows:
+                                display_data = local_updated_data.head(max_display_rows).copy(deep=True)
+                                LOGGER.info(f"数据量过大，只显示前 {max_display_rows} 行")
                             else:
-                                QMessageBox.warning(self, "日志不存在", "未找到处理日志文件")
-                                self.view_current_log()  # 尝试查找其他日志文件
+                                display_data = local_updated_data.copy(deep=True)
+                            
+                            # 安全地更新表格数据
+                            if hasattr(self.xlsx_viewer, 'model') and self.xlsx_viewer.model is not None:
+                                # 更新模型数据
+                                self.xlsx_viewer.model.setDataFrame(display_data)
+                                # 使用Qt的事件循环机制确保表格视图更新完成
+                                QApplication.processEvents()
+                                # 调整列宽
+                                self.xlsx_viewer.table_view.resizeColumnsToContents()
+                            
+                            # 安全地更新xlsx_viewer的数据引用
+                            self.xlsx_viewer.data = display_data  # 不使用原始数据
+                            
+                            # 清理不再需要的本地变量
+                            display_data = None
+                        except Exception as e:
+                            LOGGER.error(f"更新表格数据时出错: {str(e)}")
                     else:
-                        QMessageBox.warning(self, "补全结果为空", "补全操作完成，但结果为空")
+                        LOGGER.warning("接收到的补全数据为空或无法创建副本")
+                    
+                    # 创建消息提示
+                    message = f"已补全 {completed_count}/{total_restaurants} 家餐厅的信息。\n\n"
+                    if completed_count < total_restaurants:
+                        message += f"有 {total_restaurants - completed_count} 家餐厅信息已经完整，无需补全。\n\n"
+                    message += f"补全后的数据已保存到文件：\n{file_path}"
+                    
+                    # 创建带"打开文件"按钮的消息框
+                    msg_box = QMessageBox(self)
+                    msg_box.setWindowTitle("补全完成")
+                    msg_box.setText(message)
+                    msg_box.setIcon(QMessageBox.Information)
+                    
+                    # 添加打开文件按钮
+                    open_button = msg_box.addButton("打开完整数据", QMessageBox.ActionRole)
+                    close_button = msg_box.addButton("关闭", QMessageBox.RejectRole)
+                    
+                    # 显示消息框并处理响应
+                    msg_box.exec_()
+                    
+                    # 如果点击了打开文件按钮
+                    if msg_box.clickedButton() == open_button:
+                        self.open_file_external(file_path)
+                    
+                    # 清理local_updated_data
+                    local_updated_data = None
+                    
+                    # 强制执行垃圾回收
+                    import gc
+                    gc.collect()
+                    
+                    # 完成UI更新后，清理工作线程对象
+                    self._final_cleanup_worker()
                         
                 except Exception as e:
-                    LOGGER.error(f"加载补全结果时出错: {str(e)}")
-                    QMessageBox.warning(self, "加载结果失败", f"补全操作完成，但加载结果时出错: {str(e)}")
-            else:
-                QMessageBox.warning(self, "结果文件丢失", "补全操作完成，但找不到结果文件")
+                    LOGGER.error(f"更新UI时出错: {str(e)}")
+                    QMessageBox.critical(self, "更新失败", f"更新界面时出错: {str(e)}")
+                    # 即使出错也要尝试清理
+                    self._final_cleanup_worker()
             
-            # 清理进程
-            if hasattr(self, 'complete_process') and self.complete_process:
-                try:
-                    if self.complete_process.poll() is None:
-                        self.complete_process.terminate()
-                except:
-                    pass
-                
-                self.complete_process = None
-        
+            # 使用QTimer确保UI更新在主线程的下一个事件循环中执行
+            # 增加延迟时间，确保线程有更多时间完成清理
+            QTimer.singleShot(500, update_ui)
+            
         except Exception as e:
-            LOGGER.error(f"处理补全完成事件时出错: {str(e)}")
-            QMessageBox.critical(self, "处理错误", f"处理补全完成事件时出错: {str(e)}")
-    
-    def on_complete_process_error(self, error_msg):
-        """补全进程出错"""
-        try:
-            # 停止计时器
-            if hasattr(self, 'monitor_timer'):
-                self.monitor_timer.stop()
-            
-            # 清理标志
-            self.complete_task_running = False
-            
-            # 恢复按钮文本
+            LOGGER.error(f"处理餐厅信息补全结果时出错: {str(e)}")
+            QMessageBox.critical(self, "处理失败", f"处理餐厅信息补全结果时出错: {str(e)}")
             self.complete_info_button.setText("补全餐厅信息")
-            
-            # 隐藏进度标签
             if hasattr(self, 'progress_label'):
                 self.progress_label.setVisible(False)
-            
-            # 隐藏日志按钮
-            if hasattr(self, 'view_log_button'):
-                self.view_log_button.setVisible(False)
-            
-            # 显示错误信息和查看日志选项
-            error_box = QMessageBox(self)
-            error_box.setWindowTitle("补全失败")
-            error_box.setText(f"补全餐厅信息时出错: {error_msg}")
-            error_box.setIcon(QMessageBox.Critical)
-            
-            # 添加查看日志按钮
-            view_log_button = error_box.addButton("查看详细日志", QMessageBox.ActionRole)
-            close_button = error_box.addButton("关闭", QMessageBox.RejectRole)
-            
-            error_box.exec_()
-            
-            # 处理按钮点击
-            if error_box.clickedButton() == view_log_button:
-                self.view_current_log()
-            
-            # 清理进程
-            if hasattr(self, 'complete_process') and self.complete_process:
-                try:
-                    if self.complete_process.poll() is None:
-                        self.complete_process.terminate()
-                except:
-                    pass
+            # 确保在错误情况下也清理资源
+            self._final_cleanup_worker()
+    
+    def _final_cleanup_worker(self):
+        """安全地清理工作线程资源"""
+        try:
+            if hasattr(self, 'complete_worker') and self.complete_worker is not None:
+                # 获取对象引用但不保留在方法中
+                worker = self.complete_worker
                 
-                self.complete_process = None
+                # 立即将self.complete_worker设为None，避免多重引用
+                self.complete_worker = None
+                
+                try:
+                    # 确保线程已停止
+                    if worker.isRunning():
+                        worker.stop()
+                        worker.wait(1000)  # 等待最多1秒
+                except Exception as e:
+                    LOGGER.error(f"停止补全线程时出错: {str(e)}")
+                
+                try:
+                    # 清理worker内部资源
+                    if hasattr(worker, '_resources'):
+                        for key in worker._resources:
+                            worker._resources[key] = None
+                    
+                    # 清理DataFrame
+                    if hasattr(worker, 'restaurant_data'):
+                        worker.restaurant_data = None
+                except Exception as e:
+                    LOGGER.error(f"清理worker内部资源时出错: {str(e)}")
+                
+                # 断开所有可能的循环引用
+                worker.disconnect()
+                
+                # 删除引用
+                worker = None
+                
+                # 执行两次垃圾收集，确保循环引用被清理
+                import gc
+                gc.collect()
+                gc.collect()
+                
+                # 显示内存使用情况（如果启用调试）
+                if hasattr(self, 'memory_debug') and self.memory_debug:
+                    self._log_memory_usage()
+                
+                LOGGER.info("餐厅补全工作线程已清理")
+            else:
+                LOGGER.info("没有找到要清理的工作线程")
                 
         except Exception as e:
-            LOGGER.error(f"处理补全错误事件时出错: {str(e)}")
+            LOGGER.error(f"清理补全工作线程资源时出错: {str(e)}")
+            
+    def _log_memory_usage(self):
+        """记录当前内存使用情况（仅在调试模式下使用）"""
+        try:
+            import psutil
+            import os
+            
+            # 获取当前进程
+            process = psutil.Process(os.getpid())
+            
+            # 获取内存信息
+            memory_info = process.memory_info()
+            
+            # 日志记录内存使用
+            LOGGER.info(f"内存使用情况: RSS={memory_info.rss/(1024*1024):.2f}MB, VMS={memory_info.vms/(1024*1024):.2f}MB")
+            
+            # 额外的垃圾回收信息
+            import gc
+            counts = gc.get_count()
+            LOGGER.info(f"GC计数: {counts}")
+            
+            # 列出不可达但未收集的对象
+            if gc.garbage:
+                LOGGER.info(f"GC垃圾对象数量: {len(gc.garbage)}")
+        except ImportError:
+            LOGGER.warning("psutil模块未安装，无法记录内存使用情况")
+        except Exception as e:
+            LOGGER.error(f"记录内存使用时出错: {str(e)}")
+    
+    def on_complete_error(self, error_msg):
+        """餐厅信息补全出错的回调函数"""
+        QMessageBox.critical(self, "操作失败", f"补全餐厅信息时出错: {error_msg}")
+        self.complete_info_button.setText("补全餐厅信息")
+        if hasattr(self, 'progress_label'):
+            self.progress_label.setVisible(False)
+            
+        # 清理线程
+        if hasattr(self, 'complete_worker'):
+            self.complete_worker.disconnect()
+            self.complete_worker = None
     
     def verify_restaurant_status(self):
         """验证餐厅营业状态 (模拟功能)"""
@@ -2233,25 +2113,3 @@ class Tab2(QWidget):
                 self.progress_label.setVisible(False)
             LOGGER.error(f"验证餐厅营业状态时出错: {str(e)}")
             QMessageBox.critical(self, "操作失败", f"验证餐厅营业状态时出错: {str(e)}")
-    
-    def view_current_log(self):
-        """查看当前任务的日志文件"""
-        try:
-            # 检查是否有当前任务
-            if hasattr(self, 'current_task') and self.current_task and 'log_file' in self.current_task:
-                log_file = self.current_task['log_file']
-                if os.path.exists(log_file):
-                    self.open_file_external(log_file)
-                else:
-                    QMessageBox.warning(self, "日志不存在", "未找到日志文件")
-            else:
-                # 查找临时目录中的最新日志文件
-                log_files = [f for f in os.listdir(tempfile.gettempdir()) if f.startswith("log_") and f.endswith(".txt")]
-                if log_files:
-                    latest_log = os.path.join(tempfile.gettempdir(), sorted(log_files)[-1])
-                    self.open_file_external(latest_log)
-                else:
-                    QMessageBox.warning(self, "无日志文件", "未找到任何日志文件")
-        except Exception as e:
-            LOGGER.error(f"查看日志文件时出错: {str(e)}")
-            QMessageBox.warning(self, "打开日志失败", f"无法打开日志文件: {str(e)}")
