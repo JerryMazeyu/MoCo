@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                             QLabel, QFrame, QComboBox, QGroupBox, QGridLayout,
                             QFileDialog, QMessageBox, QLayout, QListWidget, QDialog, QLineEdit, 
                             QApplication, QCheckBox, QSpinBox, QRadioButton, QToolButton)
-from PyQt5.QtCore import Qt, QSize, QPoint, QRect, QThread, pyqtSignal, QEvent
+from PyQt5.QtCore import Qt, QSize, QPoint, QRect, QThread, pyqtSignal, QEvent, QTimer
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QPainter
 import pandas as pd
 import random
@@ -537,9 +537,16 @@ class RestaurantCompleteWorker(QThread):
                 LOGGER.info("线程被用户中断")
                 return
             
-            # 获取餐厅记录
-            restaurant_records = self.restaurant_data.to_dict('records')
-            total_restaurants = len(restaurant_records)
+            # 为了避免内存问题，创建一个本地副本
+            try:
+                restaurant_data_copy = self.restaurant_data.copy()
+                # 获取餐厅记录
+                restaurant_records = restaurant_data_copy.to_dict('records')
+                total_restaurants = len(restaurant_records)
+            except Exception as e:
+                LOGGER.error(f"准备数据时出错: {str(e)}")
+                self.error.emit(f"准备数据时出错: {str(e)}")
+                return
             
             # 创建餐厅实例列表
             self.progress.emit("正在创建餐厅实例...")
@@ -549,21 +556,41 @@ class RestaurantCompleteWorker(QThread):
             from app.services.functions.get_restaurant_service import GetRestaurantService
             
             restaurant_instances = []
-            for idx, restaurant_info in enumerate(restaurant_records):
-                if not self.running:
-                    LOGGER.info("线程被用户中断")
-                    return
-                
-                restaurant = Restaurant(restaurant_info, cp_location=self.cp_location)
-                restaurant_instances.append(restaurant)
-                
-                if idx % 50 == 0:  # 每处理50家餐厅更新一次进度
-                    self.progress.emit(f"正在准备餐厅数据... ({idx+1}/{total_restaurants})")
+            try:
+                for idx, restaurant_info in enumerate(restaurant_records):
+                    if not self.running:
+                        LOGGER.info("线程被用户中断")
+                        return
+                    
+                    restaurant = Restaurant(restaurant_info, cp_location=self.cp_location)
+                    restaurant_instances.append(restaurant)
+                    
+                    if idx % 50 == 0:  # 每处理50家餐厅更新一次进度
+                        self.progress.emit(f"正在准备餐厅数据... ({idx+1}/{total_restaurants})")
+                        # 强制垃圾回收以减少内存占用
+                        if idx > 500:  # 处理大量数据时更积极地回收
+                            import gc
+                            gc.collect()
+            except Exception as e:
+                LOGGER.error(f"创建餐厅实例时出错: {str(e)}")
+                self.error.emit(f"创建餐厅实例时出错: {str(e)}")
+                return
             
             # 创建餐厅组
-            restaurant_group = RestaurantsGroup(restaurant_instances)
+            try:
+                restaurant_group = RestaurantsGroup(restaurant_instances)
+                # 释放可能不再需要的内存
+                restaurant_records = None
+                restaurant_data_copy = None
+                import gc
+                gc.collect()
+            except Exception as e:
+                LOGGER.error(f"创建餐厅组时出错: {str(e)}")
+                self.error.emit(f"创建餐厅组时出错: {str(e)}")
+                return
             
             # 使用GetRestaurantService的gen_info方法进行多线程处理
+            completed_count = 0
             try:
                 self.progress.emit(f"使用 {self.num_workers} 个工作线程补全餐厅详细信息...")
                 
@@ -577,7 +604,7 @@ class RestaurantCompleteWorker(QThread):
             except Exception as e:
                 LOGGER.error(f"补全餐厅详细信息时出错: {str(e)}")
                 self.progress.emit(f"补全餐厅详细信息时出错，但会继续处理已获取的数据")
-                completed_count = 0
+                # 我们仍然继续处理，尽量恢复
             
             # 最后一次检查线程是否仍在运行
             if not self.running:
@@ -618,6 +645,13 @@ class RestaurantCompleteWorker(QThread):
         except Exception as e:
             LOGGER.error(f"补全餐厅信息时出错: {str(e)}")
             self.error.emit(str(e))
+        finally:
+            # 确保释放所有资源
+            try:
+                import gc
+                gc.collect()
+            except:
+                pass
 
 class Tab2(QWidget):
     """餐厅获取Tab，实现餐厅信息获取功能"""
@@ -645,7 +679,36 @@ class Tab2(QWidget):
     
     def __del__(self):
         """析构函数，清理资源"""
-        self.cleanup_temp_files()
+        try:
+            # 停止所有工作线程
+            if hasattr(self, 'worker') and self.worker is not None and self.worker.isRunning():
+                try:
+                    LOGGER.info("正在停止餐厅获取线程...")
+                    self.worker.stop()
+                    self.worker.wait(2000)  # 等待最多2秒
+                except Exception as e:
+                    LOGGER.error(f"停止餐厅获取线程时出错: {str(e)}")
+            
+            if hasattr(self, 'complete_worker') and self.complete_worker is not None and self.complete_worker.isRunning():
+                try:
+                    LOGGER.info("正在停止餐厅信息补全线程...")
+                    self.complete_worker.stop()
+                    self.complete_worker.wait(2000)  # 等待最多2秒
+                except Exception as e:
+                    LOGGER.error(f"停止餐厅信息补全线程时出错: {str(e)}")
+            
+            # 清理临时文件
+            self.cleanup_temp_files()
+            
+            # 强制垃圾回收
+            try:
+                import gc
+                gc.collect()
+            except Exception as e:
+                LOGGER.error(f"垃圾回收时出错: {str(e)}")
+            
+        except Exception as e:
+            LOGGER.error(f"Tab2析构时出错: {str(e)}")
         
     def cleanup_temp_files(self):
         """清理临时文件"""
@@ -1231,8 +1294,31 @@ class Tab2(QWidget):
     
     def update_progress(self, message):
         """更新进度信息"""
-        if hasattr(self, 'progress_label'):
-            self.progress_label.setText(message)
+        try:
+            # 防止在非主线程中更新UI
+            if QApplication.instance().thread() != QThread.currentThread():
+                # 使用QTimer在主线程中安排更新
+                QTimer.singleShot(0, lambda msg=message: self.update_progress_safe(msg))
+                return
+            
+            if hasattr(self, 'progress_label'):
+                self.progress_label.setText(message)
+                self.progress_label.setVisible(True)
+                # 确保UI更新
+                QApplication.processEvents()
+        except Exception as e:
+            LOGGER.error(f"更新进度信息时出错: {str(e)}")
+        
+    def update_progress_safe(self, message):
+        """在主线程中安全地更新进度信息"""
+        try:
+            if hasattr(self, 'progress_label'):
+                self.progress_label.setText(message)
+                self.progress_label.setVisible(True)
+                # 确保UI更新
+                QApplication.processEvents()
+        except Exception as e:
+            LOGGER.error(f"安全更新进度信息时出错: {str(e)}")
     
     def on_restaurant_search_finished(self, restaurant_data, file_path):
         """餐厅搜索完成的回调函数"""
@@ -1425,27 +1511,55 @@ class Tab2(QWidget):
                 self.progress_label.setText("正在准备补全餐厅信息...")
                 self.progress_label.setVisible(True)
             
+            # 确保UI更新
+            QApplication.processEvents()
+            
             # 获取当前CP的位置信息用于计算距离
             cp_location = None
             if hasattr(self, 'current_cp') and self.current_cp:
                 cp_location = self.current_cp.get('cp_location', None)
             
             # 从xlsx_viewer获取数据
-            restaurant_data = self.xlsx_viewer.model._data.copy()
+            # 使用deepcopy避免引用问题
+            import copy
+            try:
+                restaurant_data = copy.deepcopy(self.xlsx_viewer.model._data)
+            except Exception as e:
+                LOGGER.error(f"复制数据时出错: {str(e)}")
+                restaurant_data = self.xlsx_viewer.model._data.copy()
             
             # 更改按钮文本
             self.complete_info_button.setText("取消补全")
             
             # 创建并启动工作线程
-            self.complete_worker = RestaurantCompleteWorker(restaurant_data, cp_location)
-            
-            # 连接信号
-            self.complete_worker.finished.connect(self.on_complete_finished)
-            self.complete_worker.error.connect(self.on_complete_error)
-            self.complete_worker.progress.connect(self.update_progress)
-            
-            LOGGER.info("开始补全餐厅信息...")
-            self.complete_worker.start()
+            try:
+                # 防止内存泄漏，确保之前的worker已被清理
+                if hasattr(self, 'complete_worker') and self.complete_worker is not None:
+                    try:
+                        self.complete_worker.disconnect()
+                        self.complete_worker = None
+                        # 强制进行垃圾回收
+                        import gc
+                        gc.collect()
+                    except Exception as e:
+                        LOGGER.error(f"清理旧工作线程时出错: {str(e)}")
+                
+                # 创建新的工作线程
+                self.complete_worker = RestaurantCompleteWorker(restaurant_data, cp_location)
+                
+                # 连接信号
+                self.complete_worker.finished.connect(self.on_complete_finished)
+                self.complete_worker.error.connect(self.on_complete_error)
+                self.complete_worker.progress.connect(self.update_progress)
+                
+                LOGGER.info("开始补全餐厅信息...")
+                self.complete_worker.start()
+            except Exception as e:
+                LOGGER.error(f"创建工作线程时出错: {str(e)}")
+                self.complete_info_button.setText("补全餐厅信息")
+                if hasattr(self, 'progress_label'):
+                    self.progress_label.setVisible(False)
+                QMessageBox.critical(self, "操作失败", f"创建工作线程时出错: {str(e)}")
             
         except Exception as e:
             LOGGER.error(f"启动餐厅信息补全时出错: {str(e)}")
@@ -1460,9 +1574,46 @@ class Tab2(QWidget):
             # 记录临时文件
             self.temp_files.append(file_path)
             
-            # 更新xlsx_viewer显示的数据
-            self.xlsx_viewer.data = updated_data
-            self.xlsx_viewer.update_table()
+            # 使用QTimer延迟更新UI，确保在主线程的事件循环中执行
+            # 这样可以避免在线程回调中直接操作UI导致的绘图状态问题
+            def update_ui():
+                try:
+                    # 更新xlsx_viewer显示的数据
+                    self.xlsx_viewer.model.setDataFrame(updated_data)
+                    # 使用Qt的事件循环机制确保表格视图更新完成
+                    QApplication.processEvents()
+                    # 调整列宽
+                    self.xlsx_viewer.table_view.resizeColumnsToContents()
+                    # 标记数据
+                    self.xlsx_viewer.data = updated_data
+                    
+                    # 创建消息提示
+                    message = f"已补全 {completed_count}/{total_restaurants} 家餐厅的信息。\n\n"
+                    if completed_count < total_restaurants:
+                        message += f"有 {total_restaurants - completed_count} 家餐厅信息已经完整，无需补全。\n\n"
+                    message += f"补全后的数据已保存到文件：\n{file_path}"
+                    
+                    # 创建带"打开文件"按钮的消息框
+                    msg_box = QMessageBox(self)
+                    msg_box.setWindowTitle("补全完成")
+                    msg_box.setText(message)
+                    msg_box.setIcon(QMessageBox.Information)
+                    
+                    # 添加打开文件按钮
+                    open_button = msg_box.addButton("打开完整数据", QMessageBox.ActionRole)
+                    close_button = msg_box.addButton("关闭", QMessageBox.RejectRole)
+                    
+                    # 显示消息框并处理响应
+                    msg_box.exec_()
+                    
+                    # 如果点击了打开文件按钮
+                    if msg_box.clickedButton() == open_button:
+                        self.open_file_external(file_path)
+                except Exception as e:
+                    LOGGER.error(f"更新UI时出错: {str(e)}")
+            
+            # 使用QTimer确保UI更新在主线程的下一个事件循环中执行
+            QTimer.singleShot(100, update_ui)
             
             # 恢复按钮文本
             self.complete_info_button.setText("补全餐厅信息")
@@ -1470,29 +1621,6 @@ class Tab2(QWidget):
             # 隐藏进度标签
             if hasattr(self, 'progress_label'):
                 self.progress_label.setVisible(False)
-            
-            # 显示成功消息
-            message = f"已补全 {completed_count}/{total_restaurants} 家餐厅的信息。\n\n"
-            if completed_count < total_restaurants:
-                message += f"有 {total_restaurants - completed_count} 家餐厅信息已经完整，无需补全。\n\n"
-            message += f"补全后的数据已保存到文件：\n{file_path}"
-            
-            # 创建带"打开文件"按钮的消息框
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle("补全完成")
-            msg_box.setText(message)
-            msg_box.setIcon(QMessageBox.Information)
-            
-            # 添加打开文件按钮
-            open_button = msg_box.addButton("打开完整数据", QMessageBox.ActionRole)
-            close_button = msg_box.addButton("关闭", QMessageBox.RejectRole)
-            
-            # 显示消息框并处理响应
-            msg_box.exec_()
-            
-            # 如果点击了打开文件按钮
-            if msg_box.clickedButton() == open_button:
-                self.open_file_external(file_path)
             
             # 清理线程
             if hasattr(self, 'complete_worker'):
