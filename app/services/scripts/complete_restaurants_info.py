@@ -41,7 +41,7 @@ sys.path.insert(0, project_root)
 try:
     from app.services.instances.restaurant import Restaurant, RestaurantsGroup
     from app.services.functions.get_restaurant_service import GetRestaurantService
-    from app.utils.logger import setup_logger
+    from app.utils.logger import setup_logger, get_batch_logger, write_batch_completion_file, count_completed_batches
 except ImportError as e:
     print(f"导入模块失败: {e}")
     sys.exit(1)
@@ -118,33 +118,34 @@ class RestaurantCompleter:
     
     def _setup_logger(self):
         """设置日志记录器"""
-        self.logger = logging.getLogger(f"restaurant_completer_{self.task_id}")
-        self.logger.setLevel(logging.DEBUG)
+        self.logger = setup_logger(self.log_file)
+        # self.logger = logging.getLogger(f"restaurant_completer_{self.task_id}")
+        # self.logger.setLevel(logging.DEBUG)
         
-        # 确保之前的处理器被移除（避免重复日志）
-        if self.logger.handlers:
-            for handler in self.logger.handlers:
-                self.logger.removeHandler(handler)
+        # # 确保之前的处理器被移除（避免重复日志）
+        # if self.logger.handlers:
+        #     for handler in self.logger.handlers:
+        #         self.logger.removeHandler(handler)
         
-        # 文件处理器 - 设置立即刷新
-        file_handler = logging.FileHandler(self.log_file, encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)
+        # # 文件处理器 - 设置立即刷新
+        # file_handler = logging.FileHandler(self.log_file, encoding='utf-8')
+        # file_handler.setLevel(logging.DEBUG)
         
-        # 控制台处理器
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
+        # # 控制台处理器
+        # console_handler = logging.StreamHandler()
+        # console_handler.setLevel(logging.INFO)
         
-        # 格式化器
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        file_handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
+        # # 格式化器
+        # formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        # file_handler.setFormatter(formatter)
+        # console_handler.setFormatter(formatter)
         
-        # 添加处理器
-        self.logger.addHandler(file_handler)
-        self.logger.addHandler(console_handler)
+        # # 添加处理器
+        # self.logger.addHandler(file_handler)
+        # self.logger.addHandler(console_handler)
         
-        # 存储文件处理器的引用，以便在需要时手动刷新
-        self.file_handler = file_handler
+        # # 存储文件处理器的引用，以便在需要时手动刷新
+        # self.file_handler = file_handler
     
     def _flush_log(self):
         """手动刷新日志到磁盘"""
@@ -235,7 +236,7 @@ class RestaurantCompleter:
             self._flush_log()
             
             # 2. 分批处理数据
-            result = self._process_data(restaurant_data)
+            result = self._process_data(restaurant_data, self.logger)
             
             if result:
                 self._update_status(
@@ -298,7 +299,7 @@ class RestaurantCompleter:
             self._flush_log()
             return None
     
-    def _process_data(self, restaurant_data):
+    def _process_data(self, restaurant_data, logger):
         """处理数据"""
         try:
             total_restaurants = len(restaurant_data)
@@ -347,33 +348,33 @@ class RestaurantCompleter:
                     self._flush_log()
                     batch_data = restaurant_data.iloc[start_idx:end_idx].copy()
                     
+                    # 获取批次专用日志
+                    batch_id = f"{batch_idx+1}"
+                    batch_logger = get_batch_logger(batch_id, self.task_dir)
+                    batch_logger.info(f"开始处理批次 {batch_idx+1}/{total_batches} ({start_idx+1}-{end_idx})")
+                    
                     # 转换为记录
                     batch_records = batch_data.to_dict('records')
-                    self.logger.debug(f"批次数据转换为记录，数量: {len(batch_records)}")
-                    self._flush_log()
+                    batch_logger.debug(f"批次数据转换为记录，数量: {len(batch_records)}")
                     
                     # 创建餐厅实例
                     restaurant_instances = []
                     success_count = 0
-                    self.logger.info(f"开始创建餐厅实例...")
-                    self._flush_log()
+                    batch_logger.info(f"开始创建餐厅实例...")
                     
                     for idx, restaurant_info in enumerate(batch_records):
                         try:
-                            restaurant = Restaurant(restaurant_info, cp_location=self.cp_location)
+                            restaurant = Restaurant(restaurant_info, cp_location=self.cp_location, logger=batch_logger)
                             restaurant_instances.append(restaurant)
                             success_count += 1
                             # 每创建5个实例更新一次进度
                             if idx % 5 == 4 or idx == len(batch_records) - 1:
-                                self.logger.debug(f"已创建 {idx+1}/{len(batch_records)} 个餐厅实例")
-                                self._flush_log()
+                                batch_logger.debug(f"已创建 {idx+1}/{len(batch_records)} 个餐厅实例")
                         except Exception as e:
-                            self.logger.error(f"创建餐厅实例 {idx} 失败: {e}")
-                            self._flush_log()
+                            batch_logger.error(f"创建餐厅实例 {idx} 失败: {e}")
                             continue
                     
-                    self.logger.info(f"成功创建 {success_count}/{len(batch_records)} 个餐厅实例")
-                    self._flush_log()
+                    batch_logger.info(f"成功创建 {success_count}/{len(batch_records)} 个餐厅实例")
                     
                     # 释放批次数据
                     batch_data = None
@@ -383,44 +384,28 @@ class RestaurantCompleter:
                     # 创建餐厅组并生成信息
                     if restaurant_instances:
                         # 创建餐厅组
-                        self.logger.info(f"创建餐厅组，成员数: {len(restaurant_instances)}")
-                        self._flush_log()
+                        batch_logger.info(f"创建餐厅组，成员数: {len(restaurant_instances)}")
                         restaurant_group = RestaurantsGroup(restaurant_instances)
                         restaurant_instances = None
                         
                         # 使用GetRestaurantService补全信息
                         try:
-                            self.logger.info(f"开始补全餐厅信息，使用 {num_workers} 个工作线程")
-                            self._flush_log()
-                            
-                            # 记录生成进度的函数 - 不直接传递给gen_info，而是在日志中手动更新
-                            def log_progress(current, total):
-                                msg = f"正在补全 {current}/{total} 项信息 ({(current/total*100):.1f}%)"
-                                self.logger.info(msg)
-                                self._flush_log()
-                                self._update_status(message=f"批次 {batch_idx+1}/{total_batches}: {msg}")
-                            
-                            # 在生成过程中定期调用progress_log
-                            total_members = len(restaurant_group.members)
-                            log_interval = max(1, total_members // 5)  # 每完成20%记录一次
+                            batch_logger.info(f"开始补全餐厅信息，使用 {num_workers} 个工作线程")
                             
                             # 调用服务补全信息
-                            self.logger.info(f"开始生成餐厅信息，总计 {total_members} 个餐厅")
-                            self._flush_log()
+                            batch_logger.info(f"开始生成餐厅信息，总计 {len(restaurant_group.members)} 个餐厅")
                             
-                            # 调用服务补全信息，使用新的gen_info_v2方法
+                            # 调用服务补全信息，使用batch_logger
                             processed_group = service.gen_info_v2(
                                 restaurant_group, 
                                 num_workers=1,
-                                logger_file=self.log_file  # 传递日志文件路径，实现日志共享
+                                logger_file=os.path.join(self.task_dir, f"batch_{batch_id}.log")  # 传递批处理日志文件路径
                             )
                             
-                            self.logger.info(f"补全信息完成")
-                            self._flush_log()
+                            batch_logger.info(f"补全信息完成")
                         except Exception as e:
-                            self.logger.error(f"补全信息失败: {e}")
-                            self.logger.exception("详细错误信息:")
-                            self._flush_log()
+                            batch_logger.error(f"补全信息失败: {e}")
+                            batch_logger.exception("详细错误信息:")
                             processed_group = restaurant_group
                         
                         restaurant_group = None
@@ -428,8 +413,7 @@ class RestaurantCompleter:
                         # 提取结果
                         batch_processed_records = []
                         batch_completed = 0
-                        self.logger.info(f"开始提取处理结果...")
-                        self._flush_log()
+                        batch_logger.info(f"开始提取处理结果...")
                         
                         for idx, restaurant in enumerate(processed_group.members):
                             if hasattr(restaurant, 'inst') and restaurant.inst:
@@ -440,19 +424,20 @@ class RestaurantCompleter:
                                     
                                     # 每处理5个餐厅记录一次日志
                                     if idx % 5 == 4 or idx == len(processed_group.members) - 1:
-                                        self.logger.debug(f"已提取 {idx+1}/{len(processed_group.members)} 个餐厅数据")
-                                        self._flush_log()
+                                        batch_logger.debug(f"已提取 {idx+1}/{len(processed_group.members)} 个餐厅数据")
                                 except Exception as e:
-                                    self.logger.error(f"提取餐厅数据失败: {e}")
-                                    self._flush_log()
+                                    batch_logger.error(f"提取餐厅数据失败: {e}")
                         
                         # 更新计数
                         completed_count += batch_completed
-                        self.logger.info(f"本批次成功处理 {batch_completed} 条记录")
-                        self._flush_log()
+                        batch_logger.info(f"本批次成功处理 {batch_completed} 条记录")
                         
                         # 添加到总结果
                         all_processed_records.extend(batch_processed_records)
+                        
+                        # 写入批次完成标记文件
+                        completion_file = write_batch_completion_file(batch_id, self.task_dir)
+                        batch_logger.info(f"已创建批次完成标记文件: {completion_file}")
                         
                         # 更新状态文件中的已完成数量
                         self._update_status(
@@ -467,8 +452,7 @@ class RestaurantCompleter:
                         
                         # 每个批次都保存中间结果，增加实时性
                         # 保存中间结果
-                        self.logger.info(f"保存中间结果...")
-                        self._flush_log()
+                        batch_logger.info(f"保存中间结果...")
                         
                         if all_processed_records:
                             try:
@@ -477,15 +461,17 @@ class RestaurantCompleter:
                                 self._save_to_both_locations(interim_df, "保存中间结果")
                                 interim_df = None
                             except Exception as e:
-                                self.logger.error(f"保存中间结果失败: {e}")
-                                self.logger.exception("详细错误信息:")
-                                self._flush_log()
+                                batch_logger.error(f"保存中间结果失败: {e}")
+                                batch_logger.exception("详细错误信息:")
                         
                         # 更新状态
+                        completed_batches = count_completed_batches(self.task_dir)
+                        progress_percentage = int((completed_batches / total_batches) * 100)
+                        
                         self._update_status(
                             completed=completed_count,
-                            progress=progress,
-                            message=f"已完成 {completed_count}/{total_restaurants} 条记录，保存中间结果"
+                            progress=progress_percentage,
+                            message=f"已完成 {completed_batches}/{total_batches} 批次，共 {completed_count}/{total_restaurants} 条记录"
                         )
                         
                         # 主动调用垃圾回收
@@ -493,20 +479,17 @@ class RestaurantCompleter:
                     
                     # 计算批次处理时间
                     batch_time = time.time() - batch_start_time
-                    self.logger.info(f"批次 {batch_idx+1} 处理完成，耗时: {batch_time:.2f}秒")
-                    self._flush_log()
+                    batch_logger.info(f"批次 {batch_idx+1} 处理完成，耗时: {batch_time:.2f}秒")
                     
                     # 计算平均每条记录处理时间
                     avg_time_per_record = batch_time / (end_idx - start_idx) if end_idx > start_idx else 0
-                    self.logger.info(f"平均每条记录处理时间: {avg_time_per_record:.2f}秒")
-                    self._flush_log()
+                    batch_logger.info(f"平均每条记录处理时间: {avg_time_per_record:.2f}秒")
                     
                     # 预估剩余时间
                     if batch_idx < total_batches - 1:
                         remaining_records = total_restaurants - end_idx
                         estimated_time = remaining_records * avg_time_per_record
-                        self.logger.info(f"预估剩余时间: {estimated_time:.2f}秒 (约 {estimated_time/60:.2f}分钟)")
-                        self._flush_log()
+                        batch_logger.info(f"预估剩余时间: {estimated_time:.2f}秒 (约 {estimated_time/60:.2f}分钟)")
                         
                         # 更新状态文件添加剩余时间估计
                         self._update_status(
@@ -515,8 +498,7 @@ class RestaurantCompleter:
                     
                     # 处理完一批次后暂停一下，让系统喘息
                     if batch_idx % 3 == 2:
-                        self.logger.info("批次间暂停0.5秒...")
-                        self._flush_log()
+                        batch_logger.info("批次间暂停0.5秒...")
                         time.sleep(0.5)
                         
                 except Exception as e:

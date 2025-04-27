@@ -20,7 +20,7 @@ def robust_query(query_func: Callable, keys: List[str], max_retries: int = 1,
     :return: 查询结果或None(如果所有尝试都失败)
     """
     if not keys:
-        LOGGER.error("未提供任何API密钥")
+        # LOGGER.error("未提供任何API密钥")
         return None
         
     for key in keys:
