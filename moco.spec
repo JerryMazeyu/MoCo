@@ -42,7 +42,10 @@ a = Analysis(
         'requests',
         'translate',
         'xlrd',
-        'xlwt'
+        'xlwt',
+        'PyYAML',
+        'PyQt5_sip',
+        'psutil',
     ],
     hookspath=[],
     hooksconfig={},
