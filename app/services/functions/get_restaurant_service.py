@@ -15,6 +15,9 @@ from app.config.config import CONF
 from app.utils.query import robust_query
 import re
 import math
+import logging
+import queue
+import traceback
 from app.utils.oss import oss_get_json_file
 # 设置日志
 LOGGER = setup_logger("moco.log")
@@ -397,6 +400,319 @@ class GetRestaurantService:
         LOGGER.info(f"已将 {len(self.info)} 条餐厅信息转换为餐厅实体")
     
 
+    def gen_info_v2(self, restaurants_group: RestaurantsGroup, num_workers: int = 4, logger_file: str = None) -> RestaurantsGroup:
+        """
+        并行生成餐厅信息(改进版)，支持日志到文件，保证主线程能够返回
+        
+        :param restaurants_group: 餐厅组合
+        :param num_workers: 并行工作线程数，当为1时不使用多线程
+        :param logger_file: 日志文件路径，如果提供则将日志写入该文件
+        :return: 处理后的餐厅组合
+        """
+        # 创建心跳文件路径（用于监控进程是否活跃）
+        heartbeat_file = None
+        status_file = None
+        if logger_file:
+            # 根据日志文件创建心跳文件和状态文件路径
+            heartbeat_file = logger_file.replace('.txt', '_heartbeat.txt')
+            status_file = logger_file.replace('.txt', '_status.json')
+            
+            # 创建初始心跳文件
+            with open(heartbeat_file, 'w', encoding='utf-8') as f:
+                f.write(f"{time.time()}")
+            
+            # 创建初始状态文件
+            initial_status = {
+                "total": len(restaurants_group.members),
+                "processed": 0,
+                "success": 0,
+                "failed": 0,
+                "progress": 0.0,
+                "message": "初始化中...",
+                "last_update": time.time(),
+                "active": True
+            }
+            with open(status_file, 'w', encoding='utf-8') as f:
+                json.dump(initial_status, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+        
+        # 创建或获取日志记录器
+        if logger_file:
+            # 创建独立的文件日志记录器
+            file_logger = logging.getLogger(f"restaurant_generator_{int(time.time())}")
+            file_logger.setLevel(logging.INFO)
+            
+            # 确保是一个新的日志记录器（清除可能存在的处理器）
+            if file_logger.handlers:
+                for handler in file_logger.handlers:
+                    file_logger.removeHandler(handler)
+            
+            # 创建文件处理器
+            file_handler = logging.FileHandler(logger_file, encoding='utf-8', mode='a')
+            file_handler.setLevel(logging.INFO)
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            file_handler.setFormatter(formatter)
+            file_logger.addHandler(file_handler)
+            
+            # 禁用传播到根日志记录器，避免日志重复
+            file_logger.propagate = False
+        else:
+            file_logger = LOGGER
+        
+        # 定义状态更新函数
+        def update_status(processed=None, success=None, failed=None, message=None):
+            if not status_file:
+                return
+            
+            try:
+                # 读取当前状态
+                with open(status_file, 'r', encoding='utf-8') as f:
+                    status = json.load(f)
+                
+                # 更新状态
+                if processed is not None:
+                    status["processed"] = processed
+                if success is not None:
+                    status["success"] = success
+                if failed is not None:
+                    status["failed"] = failed
+                if message is not None:
+                    status["message"] = message
+                
+                # 计算进度
+                if status["total"] > 0:
+                    status["progress"] = (status["processed"] / status["total"]) * 100
+                
+                status["last_update"] = time.time()
+                status["active"] = True
+                
+                # 写入状态文件
+                with open(status_file, 'w', encoding='utf-8') as f:
+                    json.dump(status, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+            except Exception as e:
+                file_logger.error(f"更新状态文件失败: {e}")
+        
+        # 定义心跳更新函数
+        def update_heartbeat():
+            if not heartbeat_file:
+                return
+            
+            try:
+                with open(heartbeat_file, 'w', encoding='utf-8') as f:
+                    f.write(f"{time.time()}")
+                    f.flush()
+                    os.fsync(f.fileno())
+            except Exception as e:
+                file_logger.error(f"更新心跳文件失败: {e}")
+        
+        # 启动心跳线程（每5秒更新一次）
+        stop_heartbeat = threading.Event()
+        
+        def heartbeat_thread():
+            while not stop_heartbeat.is_set():
+                update_heartbeat()
+                time.sleep(5)  # 5秒更新一次心跳
+        
+        # 只有在提供了日志文件的情况下才启动心跳线程
+        heartbeat_thread_obj = None
+        if heartbeat_file:
+            heartbeat_thread_obj = threading.Thread(target=heartbeat_thread, daemon=True)
+            heartbeat_thread_obj.start()
+        
+        # 记录开始信息
+        start_msg = f"开始生成餐厅信息，使用 {num_workers} 个工作线程，日志文件: {logger_file if logger_file else '使用默认日志'}"
+        file_logger.info(start_msg)
+        LOGGER.info(f"开始生成餐厅信息，使用 {num_workers} 个工作线程")
+        update_status(message=start_msg)
+        
+        # 获取餐厅列表
+        restaurants = restaurants_group.members
+        total_count = len(restaurants)
+        processed_count = 0
+        success_count = 0
+        failed_count = 0
+        
+        if not restaurants:
+            file_logger.warning("餐厅列表为空，无需生成信息")
+            update_status(message="餐厅列表为空，无需生成信息")
+            # 停止心跳线程
+            if heartbeat_thread_obj:
+                stop_heartbeat.set()
+                heartbeat_thread_obj.join(timeout=1)
+            return restaurants_group
+        
+        # 处理单个餐厅的函数
+        def process_restaurant(restaurant, idx):
+            nonlocal processed_count, success_count, failed_count
+            
+            # 线程级别的日志同步锁
+            log_lock = threading.Lock()
+            
+            start_time = time.time()
+            try:
+                # 使用锁保护日志写入
+                with log_lock:
+                    restaurant_name = restaurant.inst.rest_chinese_name if hasattr(restaurant, 'inst') and hasattr(restaurant.inst, 'rest_chinese_name') else f"餐厅_{idx}"
+                    file_logger.info(f"[{idx+1}/{total_count}] 开始处理餐厅: {restaurant_name}")
+                    # 确保日志立即写入
+                    if logger_file and hasattr(file_logger, 'handlers'):
+                        for handler in file_logger.handlers:
+                            handler.flush()
+                
+                # 生成餐厅信息
+                restaurant.generate()
+                
+                # 使用锁保护日志写入和计数器更新
+                with log_lock:
+                    success_count += 1
+                    elapsed = time.time() - start_time
+                    file_logger.info(f"[{idx+1}/{total_count}] 完成处理餐厅: {restaurant_name}，耗时: {elapsed:.2f}秒")
+                    # 确保日志立即写入
+                    if logger_file and hasattr(file_logger, 'handlers'):
+                        for handler in file_logger.handlers:
+                            handler.flush()
+                
+                return (idx, restaurant, None)
+            except Exception as e:
+                # 使用锁保护日志写入和计数器更新
+                with log_lock:
+                    failed_count += 1
+                    error_msg = str(e)
+                    tb_str = traceback.format_exc()
+                    file_logger.error(f"[{idx+1}/{total_count}] 处理餐厅 {restaurant_name if 'restaurant_name' in locals() else f'餐厅_{idx}'} 时出错: {error_msg}\n{tb_str}")
+                    # 确保日志立即写入
+                    if logger_file and hasattr(file_logger, 'handlers'):
+                        for handler in file_logger.handlers:
+                            handler.flush()
+                
+                return (idx, restaurant, error_msg)
+        
+        try:
+            # 根据num_workers决定使用单线程还是多线程处理
+            if num_workers <= 1:
+                # 单线程顺序处理
+                file_logger.info("使用单线程顺序处理")
+                update_status(message="使用单线程顺序处理")
+                
+                processed_restaurants = []
+                for idx, restaurant in enumerate(restaurants):
+                    idx, result, error = process_restaurant(restaurant, idx)
+                    processed_restaurants.append(result)
+                    processed_count += 1
+                    
+                    # 更新状态
+                    if processed_count % 1 == 0 or processed_count == total_count:  # 每处理1个餐厅更新一次
+                        progress_pct = (processed_count / total_count) * 100
+                        progress_msg = f"进度: {processed_count}/{total_count} ({progress_pct:.1f}%)"
+                        file_logger.info(progress_msg)
+                        update_status(
+                            processed=processed_count,
+                            success=success_count,
+                            failed=failed_count,
+                            message=progress_msg
+                        )
+                        update_heartbeat()
+            else:
+                # 使用线程池而非直接创建线程，更容易管理
+                file_logger.info(f"使用多线程并行处理，线程数: {num_workers}")
+                update_status(message=f"使用多线程并行处理，线程数: {num_workers}")
+                
+                # 预先分配结果列表
+                processed_restaurants = [None] * total_count
+                results = [None] * total_count
+                
+                # 使用线程池执行任务
+                with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
+                    # 提交所有任务
+                    futures = []
+                    for idx, restaurant in enumerate(restaurants):
+                        futures.append((idx, executor.submit(process_restaurant, restaurant, idx)))
+                    
+                    # 处理完成的任务
+                    for idx, future in futures:
+                        try:
+                            result_idx, result, error = future.result()
+                            processed_count += 1
+                            results[idx] = (result_idx, result, error)
+                            
+                            # 更新日志和状态
+                            if processed_count % 1 == 0 or processed_count == total_count:  # 每处理1个餐厅更新一次
+                                progress_pct = (processed_count / total_count) * 100
+                                progress_msg = f"进度: {processed_count}/{total_count} ({progress_pct:.1f}%)"
+                                file_logger.info(progress_msg)
+                                update_status(
+                                    processed=processed_count,
+                                    success=success_count,
+                                    failed=failed_count,
+                                    message=progress_msg
+                                )
+                                update_heartbeat()
+                        except Exception as e:
+                            processed_count += 1
+                            failed_count += 1
+                            error_msg = str(e)
+                            tb_str = traceback.format_exc()
+                            file_logger.error(f"处理餐厅 {idx} 时发生未捕获异常: {error_msg}\n{tb_str}")
+                            results[idx] = (idx, restaurants[idx], error_msg)
+                
+                # 处理所有结果
+                for idx, result_tuple in enumerate(results):
+                    if result_tuple is not None:
+                        _, result, _ = result_tuple
+                        processed_restaurants[idx] = result
+                    else:
+                        # 如果结果为None，使用原始餐厅
+                        file_logger.warning(f"餐厅 {idx} 的处理结果丢失，使用原始餐厅对象")
+                        processed_restaurants[idx] = restaurants[idx]
+            
+            # 确保所有处理过的餐厅都是有效对象
+            processed_restaurants = [r for r in processed_restaurants if r is not None]
+            
+            # 创建新的餐厅组合并返回
+            result_group = RestaurantsGroup(processed_restaurants, group_type=restaurants_group.group_type)
+            completion_msg = f"餐厅信息生成完成，共处理 {len(processed_restaurants)}/{total_count} 个餐厅，成功: {success_count}，失败: {failed_count}"
+            file_logger.info(completion_msg)
+            update_status(
+                processed=total_count,
+                success=success_count,
+                failed=failed_count,
+                message=completion_msg
+            )
+            
+            # 确保所有日志都写入
+            if logger_file and hasattr(file_logger, 'handlers'):
+                for handler in file_logger.handlers:
+                    handler.flush()
+            
+            # 停止心跳线程
+            if heartbeat_thread_obj:
+                stop_heartbeat.set()
+                heartbeat_thread_obj.join(timeout=1)
+            
+            return result_group
+        except Exception as e:
+            error_msg = str(e)
+            tb_str = traceback.format_exc()
+            file_logger.error(f"生成餐厅信息过程中发生严重错误: {error_msg}\n{tb_str}")
+            update_status(message=f"发生严重错误: {error_msg}")
+            
+            # 确保所有日志都写入
+            if logger_file and hasattr(file_logger, 'handlers'):
+                for handler in file_logger.handlers:
+                    handler.flush()
+            
+            # 停止心跳线程
+            if heartbeat_thread_obj:
+                stop_heartbeat.set()
+                heartbeat_thread_obj.join(timeout=1)
+            
+            # 出现错误时返回原始组合，确保不中断程序执行
+            return restaurants_group
+    
+
     def gen_info(self, restaurants_group: RestaurantsGroup, num_workers: int = 4) -> RestaurantsGroup:
         """
         并行生成餐厅信息
@@ -449,7 +765,6 @@ class GetRestaurantService:
             LOGGER.error(f"生成餐厅信息过程中发生严重错误: {e}")
             # 出现错误时返回原始组合，确保不中断程序执行
             return restaurants_group
-
     
     def get_restaurants_group(self, group_type='all') -> RestaurantsGroup:
         """

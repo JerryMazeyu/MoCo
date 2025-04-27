@@ -904,6 +904,8 @@ class Tab2(QWidget):
         # 高级配置默认值
         self.search_radius = 50  # 默认搜索半径
         self.strict_mode = False  # 默认非严格模式
+
+        self.timestamp = time.strftime("%Y%m%d_%H%M%S")
         
         self.initUI()
     
@@ -1688,6 +1690,7 @@ class Tab2(QWidget):
         except Exception as e:
             LOGGER.error(f"导入餐厅数据时出错: {str(e)}")
             QMessageBox.critical(self, "导入失败", f"导入餐厅数据时出错: {str(e)}")    
+    
     def complete_restaurant_info(self):
         """补全餐厅信息"""
         try:
@@ -1757,8 +1760,9 @@ class Tab2(QWidget):
                     
                     # 保存到临时文件
                     temp_dir = tempfile.gettempdir()
-                    timestamp = time.strftime("%Y%m%d_%H%M%S")
-                    input_file = os.path.join(temp_dir, f"restaurant_data_{timestamp}.xlsx")
+                    temp_dir = os.path.join(temp_dir, self.timestamp)
+                    os.makedirs(temp_dir, exist_ok=True)
+                    input_file = os.path.join(temp_dir, f"restaurant_data_{self.timestamp}.xlsx")
                     restaurant_data.to_excel(input_file, index=False)
                     LOGGER.info(f"已将餐厅数据保存到临时文件: {input_file}")
                     
@@ -1780,10 +1784,14 @@ class Tab2(QWidget):
                 LOGGER.info(f"使用CP位置: {cp_location}")
             
             # 创建输出目录
-            output_dir = tempfile.gettempdir()
-            
+            try:
+                output_dir = temp_dir
+            except Exception as e:
+                temp_dir = tempfile.gettempdir()
+                output_dir = os.path.join(temp_dir, self.timestamp)
+
             # 生成任务ID
-            task_id = str(uuid.uuid4())
+            task_id = str(uuid.uuid4()) + "_" + self.timestamp
             
             # 创建日志文件路径
             log_file = os.path.join(output_dir, f"log_{task_id}.txt")
@@ -1856,7 +1864,7 @@ class Tab2(QWidget):
                     cmd, 
                     stdout=subprocess.PIPE, 
                     stderr=subprocess.PIPE,
-                    creationflags=subprocess.CREATE_NO_WINDOW  # 在Windows上不显示窗口
+                    # creationflags=subprocess.CREATE_NO_WINDOW  # 在Windows上不显示窗口
                 )
                 
                 # 保存进程对象供后续使用
@@ -1929,6 +1937,7 @@ class Tab2(QWidget):
                 
                 # 检查状态文件
                 output_dir = tempfile.gettempdir()
+                output_dir = os.path.join(output_dir, self.timestamp)
                 if hasattr(self, 'complete_start_time'):
                     # 检查是否超时
                     elapsed_time = time.time() - self.complete_start_time
