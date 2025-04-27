@@ -415,7 +415,7 @@ class GetRestaurantService:
         :return: 处理后的餐厅组合
         """
         # 创建心跳文件路径（用于监控进程是否活跃）
-        heartbeat_file = None
+        # heartbeat_file = None
         status_file = None
         
         # 定义直接写入主日志的函数
@@ -431,110 +431,47 @@ class GetRestaurantService:
                 return
                 
             try:
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                log_line = f"{timestamp} - {level} - {message}\n"
-                with open(logger_file, 'a', encoding='utf-8') as f:
-                    f.write(log_line)
-                    f.flush()
-                    try:
-                        os.fsync(f.fileno())  # 确保写入磁盘
-                    except:
-                        pass
+                # 使用跨平台方案实现超时功能
+                import threading
+                
+                # 设置超时标志
+                write_timeout = False
+                
+                # 定义超时处理函数
+                def timeout_callback():
+                    nonlocal write_timeout
+                    write_timeout = True
+                
+                # 创建定时器，1秒后触发超时
+                timer = threading.Timer(1.0, timeout_callback)
+                timer.start()
+                
+                try:
+                    # 记录起始时间
+                    start_time = time.time()
+                    
+                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                    log_line = f"{timestamp} - {level} - {message}\n"
+                    with open(logger_file, 'a', encoding='utf-8') as f:
+                        f.write(log_line)
+                        f.flush()
+                        # 只有ERROR级别的日志才强制fsync，减少磁盘I/O
+                        if level == "ERROR" and not write_timeout and (time.time() - start_time) < 0.5:
+                            try:
+                                os.fsync(f.fileno())  # 确保写入磁盘
+                            except:
+                                pass
+                finally:
+                    # 取消定时器
+                    timer.cancel()
+                    
+                # 检查是否超时
+                if write_timeout:
+                    print(f"WARNING: 写入日志超时: {message[:50]}...")
             except Exception as e:
-                LOGGER.error(f"写入日志文件失败: {e}")
+                # 如果写入日志失败，尝试记录到控制台
+                print(f"写入日志文件失败: {e}")
         
-        if logger_file:
-            # 根据日志文件创建心跳文件和状态文件路径
-            heartbeat_file = logger_file.replace('.log', '_heartbeat.txt')
-            status_file = logger_file.replace('.log', '_status.json')
-            
-            # 创建初始心跳文件
-            with open(heartbeat_file, 'w', encoding='utf-8') as f:
-                f.write(f"{time.time()}")
-            
-            # 创建初始状态文件
-            initial_status = {
-                "total": len(restaurants_group.members),
-                "processed": 0,
-                "success": 0,
-                "failed": 0,
-                "progress": 0.0,
-                "message": "初始化中...",
-                "last_update": time.time(),
-                "active": True
-            }
-            with open(status_file, 'w', encoding='utf-8') as f:
-                json.dump(initial_status, f, ensure_ascii=False, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-        
-        # 定义状态更新函数
-        def update_status(processed=None, success=None, failed=None, message=None):
-            if not status_file:
-                return
-            
-            try:
-                # 读取当前状态
-                with open(status_file, 'r', encoding='utf-8') as f:
-                    status = json.load(f)
-                
-                # 更新状态
-                if processed is not None:
-                    status["processed"] = processed
-                if success is not None:
-                    status["success"] = success
-                if failed is not None:
-                    status["failed"] = failed
-                if message is not None:
-                    status["message"] = message
-                
-                # 计算进度
-                if status["total"] > 0:
-                    status["progress"] = (status["processed"] / status["total"]) * 100
-                
-                status["last_update"] = time.time()
-                status["active"] = True
-                
-                # 写入状态文件
-                with open(status_file, 'w', encoding='utf-8') as f:
-                    json.dump(status, f, ensure_ascii=False, indent=2)
-                    f.flush()
-                    os.fsync(f.fileno())
-            except Exception as e:
-                write_log("ERROR", f"更新状态文件失败: {e}")
-        
-        # 定义心跳更新函数
-        def update_heartbeat():
-            if not heartbeat_file:
-                return
-            
-            try:
-                with open(heartbeat_file, 'w', encoding='utf-8') as f:
-                    f.write(f"{time.time()}")
-                    f.flush()
-                    os.fsync(f.fileno())
-            except Exception as e:
-                write_log("ERROR", f"更新心跳文件失败: {e}")
-        
-        # 启动心跳线程（每5秒更新一次）
-        stop_heartbeat = threading.Event()
-        
-        def heartbeat_thread():
-            while not stop_heartbeat.is_set():
-                update_heartbeat()
-                time.sleep(5)  # 5秒更新一次心跳
-        
-        # 只有在提供了日志文件的情况下才启动心跳线程
-        heartbeat_thread_obj = None
-        if heartbeat_file:
-            heartbeat_thread_obj = threading.Thread(target=heartbeat_thread, daemon=True)
-            heartbeat_thread_obj.start()
-        
-        # 记录开始信息
-        start_msg = f"开始生成餐厅信息，使用 {num_workers} 个工作线程，日志文件: {logger_file if logger_file else '使用默认日志'}"
-        write_log("INFO", start_msg)
-        LOGGER.info(f"开始生成餐厅信息，使用 {num_workers} 个工作线程")
-        update_status(message=start_msg)
         
         # 获取餐厅列表
         restaurants = restaurants_group.members
@@ -545,11 +482,6 @@ class GetRestaurantService:
         
         if not restaurants:
             write_log("WARNING", "餐厅列表为空，无需生成信息")
-            update_status(message="餐厅列表为空，无需生成信息")
-            # 停止心跳线程
-            if heartbeat_thread_obj:
-                stop_heartbeat.set()
-                heartbeat_thread_obj.join(timeout=1)
             return restaurants_group
         
         # 处理单个餐厅的函数
@@ -577,75 +509,62 @@ class GetRestaurantService:
             # 线程级别的日志同步锁
             log_lock = threading.Lock()
             
-            # 创建线程级日志文件和主日志文件的写入函数
-            thread_log_file = None
-            if logger_file:
+            # 定义带超时功能的文件写入函数
+            def write_file_with_timeout(log_line, is_error=False):
                 try:
-                    thread_log_file = f"{logger_file}.thread_{idx}"
+                    # 使用跨平台方案实现超时功能
+                    import threading
+                    
+                    # 设置超时标志
+                    write_timeout = False
+                    
+                    # 定义超时处理函数
+                    def timeout_callback():
+                        nonlocal write_timeout
+                        write_timeout = True
+                    
+                    # 创建定时器，1秒后触发超时
+                    timer = threading.Timer(1.0, timeout_callback)
+                    timer.start()
+                    
+                    try:
+                        # 记录起始时间
+                        start_time = time.time()
+                        
+                        with open(logger_file, 'a', encoding='utf-8') as f:
+                            f.write(log_line)
+                            f.flush()
+                            # 错误日志尝试fsync，但有超时保护
+                            if is_error and not write_timeout and (time.time() - start_time) < 0.5:
+                                try:
+                                    os.fsync(f.fileno())
+                                except:
+                                    pass
+                    finally:
+                        # 取消定时器
+                        timer.cancel()
+                        
+                    # 检查是否超时
+                    return not write_timeout
                 except Exception:
-                    thread_log_file = None
+                    return False
             
-            # 定义直接写入线程日志的函数
-            def write_thread_log(level, message):
-                if not thread_log_file:
-                    return
-                try:
-                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                    thread_name = threading.current_thread().name
-                    log_line = f"{timestamp} - {level} - [Thread-{thread_name}] - {message}\n"
-                    with open(thread_log_file, 'a', encoding='utf-8') as f:
-                        f.write(log_line)
-                        f.flush()
-                        try:
-                            os.fsync(f.fileno())  # 确保写入磁盘
-                        except:
-                            pass
-                except Exception:
-                    pass
-            
-            # 记录当前内存使用情况
-            try:
-                mem_before = 0
-                if 'psutil' in sys.modules:
-                    process = psutil.Process()
-                    mem_before = process.memory_info().rss / 1024 / 1024
-                    write_thread_log("INFO", f"处理前内存使用: {mem_before:.2f} MB")
-                    # 打印可用内存
-                    available_mem = psutil.virtual_memory().available / 1024 / 1024
-                    write_thread_log("INFO", f"系统可用内存: {available_mem:.2f} MB")
-            except Exception as e:
-                write_thread_log("WARNING", f"无法获取内存使用信息: {str(e)}")
-                mem_before = 0
-                
             start_time = time.time()
             restaurant_name = ""
             
             try:
-                # 使用临时变量避免持有过多对象引用
-                rest_info = {}
-                
                 # 获取餐厅名称
                 restaurant_name = restaurant.inst.rest_chinese_name if hasattr(restaurant, 'inst') and hasattr(restaurant.inst, 'rest_chinese_name') else f"餐厅_{idx}"
                 
                 # 使用锁保护日志写入和计数器更新
                 with log_lock:
                     # 直接写入文件而不是使用logger
-                    with open(logger_file, 'a', encoding='utf-8') as f:
-                        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                        log_line = f"{timestamp} - INFO - [{idx+1}/{total_count}] 开始处理餐厅: {restaurant_name}\n"
-                        f.write(log_line)
-                        f.flush()
-                        try:
-                            os.fsync(f.fileno())
-                        except:
-                            pass
+                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                    log_line = f"{timestamp} - INFO - [{idx+1}/{total_count}] 开始处理餐厅: {restaurant_name}\n"
+                    write_file_with_timeout(log_line)
+                    
                     # 更新处理计数
                     processed_count += 1
-                
-                write_thread_log("INFO", f"开始处理餐厅: {restaurant_name}")
-                
-                # 手动关闭和设置为None所有无用的对象引用
-                rest_info = None
                 
                 # 生成餐厅信息，增加额外的错误处理
                 try:
@@ -653,7 +572,6 @@ class GetRestaurantService:
                     gc_start = time.time()
                     gc.collect()
                     gc_time = time.time() - gc_start
-                    write_thread_log("INFO", f"生成前垃圾回收耗时: {gc_time:.2f}秒")
                     
                     # 生成餐厅信息
                     restaurant.generate()
@@ -662,10 +580,9 @@ class GetRestaurantService:
                     gc_start = time.time()
                     gc.collect()
                     gc_time = time.time() - gc_start
-                    write_thread_log("INFO", f"生成后垃圾回收耗时: {gc_time:.2f}秒")
                 except MemoryError:
                     # 特殊处理内存错误
-                    write_thread_log("ERROR", f"处理餐厅 {restaurant_name} 时内存不足")
+                    # write_thread_log("ERROR", f"处理餐厅 {restaurant_name} 时内存不足")
                     # 尝试紧急释放内存
                     gc.collect()
                     raise
@@ -675,47 +592,15 @@ class GetRestaurantService:
                     success_count += 1
                     elapsed = time.time() - start_time
                     # 直接写入文件而不是使用logger
-                    with open(logger_file, 'a', encoding='utf-8') as f:
-                        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                        log_line = f"{timestamp} - INFO - [{idx+1}/{total_count}] 完成处理餐厅: {restaurant_name}，耗时: {elapsed:.2f}秒\n"
-                        f.write(log_line)
-                        f.flush()
-                        try:
-                            os.fsync(f.fileno())
-                        except:
-                            pass
-                
-                write_thread_log("INFO", f"完成处理餐厅: {restaurant_name}，耗时: {elapsed:.2f}秒")
-                
-                # 记录处理后内存使用
-                try:
-                    if 'psutil' in sys.modules:
-                        mem_after = process.memory_info().rss / 1024 / 1024
-                        mem_diff = mem_after - mem_before
-                        write_thread_log("INFO", f"处理后内存使用: {mem_after:.2f} MB (变化: {mem_diff:+.2f} MB)")
-                        
-                        # 如果内存增长超过阈值，主动尝试释放
-                        memory_threshold = 50  # 降低阈值到50MB
-                        if mem_diff > memory_threshold:
-                            write_thread_log("WARNING", f"内存增长超过{memory_threshold}MB，尝试释放")
-                            # 调用垃圾回收多次以处理可能的循环引用
-                            for _ in range(3):
-                                gc.collect()
-                            mem_after_gc = process.memory_info().rss / 1024 / 1024
-                            write_thread_log("INFO", f"GC后内存使用: {mem_after_gc:.2f} MB (收回: {mem_after-mem_after_gc:.2f} MB)")
-                            
-                            # 检查是否还有大量内存未释放
-                            if mem_after_gc - mem_before > memory_threshold:
-                                write_thread_log("WARNING", f"GC后内存仍超过阈值，可能存在内存泄漏")
-                except Exception as e:
-                    write_thread_log("WARNING", f"检查内存使用时出错: {str(e)}")
+                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                    log_line = f"{timestamp} - INFO - [{idx+1}/{total_count}] 完成处理餐厅: {restaurant_name}，耗时: {elapsed:.2f}秒\n"
+                    write_file_with_timeout(log_line)
                 
                 # 再次进行垃圾回收，确保内存被释放
                 gc.collect()
                 
                 # 显式释放不再需要的对象
                 log_lock = None
-                thread_log_file = None
                 
                 return (idx, restaurant, None)
             except Exception as e:
@@ -725,25 +610,11 @@ class GetRestaurantService:
                     error_msg = str(e)
                     tb_str = traceback.format_exc()
                     # 直接写入文件而不是使用logger
-                    with open(logger_file, 'a', encoding='utf-8') as f:
-                        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                        log_line = f"{timestamp} - ERROR - [{idx+1}/{total_count}] 处理餐厅 {restaurant_name if restaurant_name else f'餐厅_{idx}'} 时出错: {error_msg}\n{tb_str}\n"
-                        f.write(log_line)
-                        f.flush()
-                        try:
-                            os.fsync(f.fileno())
-                        except:
-                            pass
-                
-                write_thread_log("ERROR", f"处理餐厅 {restaurant_name} 时出错: {error_msg}\n{tb_str}")
-                
-                # 记录处理后内存使用
-                try:
-                    if 'psutil' in sys.modules:
-                        mem_after = process.memory_info().rss / 1024 / 1024
-                        write_thread_log("INFO", f"错误后内存使用: {mem_after:.2f} MB (变化: {mem_after-mem_before:+.2f} MB)")
-                except Exception:
-                    pass
+                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                    log_line = f"{timestamp} - ERROR - [{idx+1}/{total_count}] 处理餐厅 {restaurant_name if restaurant_name else f'餐厅_{idx}'} 时出错: {error_msg}\n{tb_str}\n"
+                    if not write_file_with_timeout(log_line, is_error=True):
+                        # 写入超时或失败，尝试输出到控制台
+                        print(f"ERROR - 处理餐厅 {restaurant_name if restaurant_name else f'餐厅_{idx}'} 时出错: {error_msg}")
                 
                 # 主动进行多次垃圾回收
                 for _ in range(3):
@@ -753,7 +624,6 @@ class GetRestaurantService:
                 log_lock = None
                 error_msg = None
                 tb_str = None
-                thread_log_file = None
                 
                 return (idx, restaurant, error_msg)
         
@@ -762,7 +632,7 @@ class GetRestaurantService:
             if num_workers <= 1:
                 # 单线程顺序处理
                 write_log("INFO", "使用单线程顺序处理")
-                update_status(message="使用单线程顺序处理")
+
                 
                 processed_restaurants = []
                 for idx, restaurant in enumerate(restaurants):
@@ -776,18 +646,12 @@ class GetRestaurantService:
                     if processed_count % 1 == 0 or processed_count == total_count:  # 每处理1个餐厅更新一次
                         progress_pct = (processed_count / 2 / total_count) * 100
                         progress_msg = f"进度: {int(processed_count/2)}/{total_count} ({progress_pct:.1f}%)"
-                        # write_log("INFO", progress_msg)
-                        update_status(
-                            processed=processed_count,
-                            success=success_count,
-                            failed=failed_count,
-                            message=progress_msg
-                        )
-                        update_heartbeat()
+                        write_log("INFO", progress_msg)
+
             else:
                 # 使用线程池而非直接创建线程，更容易管理
                 write_log("INFO", f"使用多线程并行处理，线程数: {num_workers}")
-                update_status(message=f"使用多线程并行处理，线程数: {num_workers}")
+                # update_status(message=f"使用多线程并行处理，线程数: {num_workers}")
                 
                 # 预先分配结果列表
                 processed_restaurants = [None] * total_count
@@ -812,13 +676,7 @@ class GetRestaurantService:
                                 progress_pct = (processed_count / 2 / total_count) * 100
                                 progress_msg = f"进度: {int(processed_count/2)}/{total_count} ({progress_pct:.1f}%)"
                                 write_log("INFO", progress_msg)
-                                update_status(
-                                    processed=processed_count,
-                                    success=success_count,
-                                    failed=failed_count,
-                                    message=progress_msg
-                                )
-                                update_heartbeat()
+
                         except Exception as e:
                             processed_count += 1
                             failed_count += 1
@@ -844,31 +702,14 @@ class GetRestaurantService:
             result_group = RestaurantsGroup(processed_restaurants, group_type=restaurants_group.group_type)
             completion_msg = f"餐厅信息生成完成，共处理 {len(processed_restaurants)}/{total_count} 个餐厅，成功: {success_count}，失败: {failed_count}"
             write_log("INFO", completion_msg)
-            update_status(
-                processed=total_count,
-                success=success_count,
-                failed=failed_count,
-                message=completion_msg
-            )
-            
-            # 停止心跳线程
-            if heartbeat_thread_obj:
-                stop_heartbeat.set()
-                heartbeat_thread_obj.join(timeout=1)
+
             
             return result_group
         except Exception as e:
             error_msg = str(e)
             tb_str = traceback.format_exc()
             write_log("ERROR", f"生成餐厅信息过程中发生严重错误: {error_msg}\n{tb_str}")
-            update_status(message=f"发生严重错误: {error_msg}")
-            
-            # 停止心跳线程
-            if heartbeat_thread_obj:
-                stop_heartbeat.set()
-                heartbeat_thread_obj.join(timeout=1)
-            
-            # 出现错误时返回原始组合，确保不中断程序执行
+
             return restaurants_group
     
 

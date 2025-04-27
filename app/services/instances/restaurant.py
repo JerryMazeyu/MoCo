@@ -674,46 +674,51 @@ class Restaurant(BaseInstance):
                             # self.logger.info(f"已直接通过餐厅名为餐厅 '{self.inst.rest_chinese_name}' 推断类型: {self.inst.rest_type}")
                             return True
                     
-                    # 如果通过名称未能推断类型，尝试使用KIMI API
-                    # self.logger.info(f"未从餐厅名称推断出类型，尝试使用KIMI API分析")
-                    if self.conf and hasattr(self.conf, 'KEYS') and hasattr(self.conf.KEYS, 'kimi_keys'):
-                        # 准备餐厅信息
-                        rest_info = {
-                            'name': self.inst.rest_chinese_name,
-                            'address': getattr(self.inst, 'rest_chinese_address', ''),
-                            'rest_type_gaode': getattr(self.inst, 'rest_type_gaode', ''),
-                            'candidate_types': "\n".join(candidate_types)
-                        }
-                        # 调用KIMI API分析餐厅类型
-                        def analyze_func(key):
-                            return kimi_restaurant_type_analysis(rest_info, key)
-                        
-                        # 使用robust_query进行健壮性调用
-                        rest_type_ans = robust_query(analyze_func, self.conf.KEYS.kimi_keys)
-                        
-                        if rest_type_ans:
-                            # 从KIMI的回答中找出最匹配的类型
-                            matched_type = None
-                            for candidate_type in candidate_types:
-                                if candidate_type in rest_type_ans:
-                                    matched_type = candidate_type
-                                    break
+                    if hasattr(self.conf, 'runtime') and hasattr(self.conf.runtime, 'USE_LLM') and self.conf.runtime.USE_LLM:
+                        # 如果通过名称未能推断类型，尝试使用KIMI API
+                        # self.logger.info(f"未从餐厅名称推断出类型，尝试使用KIMI API分析")
+                        if self.conf and hasattr(self.conf, 'KEYS') and hasattr(self.conf.KEYS, 'kimi_keys'):
+                            # 准备餐厅信息
+                            rest_info = {
+                                'name': self.inst.rest_chinese_name,
+                                'address': getattr(self.inst, 'rest_chinese_address', ''),
+                                'rest_type_gaode': getattr(self.inst, 'rest_type_gaode', ''),
+                                'candidate_types': "\n".join(candidate_types)
+                            }
+                            # 调用KIMI API分析餐厅类型
+                            def analyze_func(key):
+                                return kimi_restaurant_type_analysis(rest_info, key)
                             
-                            if matched_type: # TODO
-                                for candidate_type_lst in candidate_types_merged:
-                                    if matched_type in candidate_type_lst:
-                                        self.inst.rest_type = candidate_type_lst
-                                        # self.logger.info(f"已通过LLM为餐厅 '{self.inst.rest_chinese_name}' 分析类型: {matched_type}")
-                                        return True
-                            else:  # 如果没有匹配的类型，使用默认类型
+                            # 使用robust_query进行健壮性调用
+                            rest_type_ans = robust_query(analyze_func, self.conf.KEYS.kimi_keys)
+                            
+                            if rest_type_ans:
+                                # 从KIMI的回答中找出最匹配的类型
+                                matched_type = None
+                                for candidate_type in candidate_types:
+                                    if candidate_type in rest_type_ans:
+                                        matched_type = candidate_type
+                                        break
+                                
+                                if matched_type: # TODO
+                                    for candidate_type_lst in candidate_types_merged:
+                                        if matched_type in candidate_type_lst:
+                                            self.inst.rest_type = candidate_type_lst
+                                            # self.logger.info(f"已通过LLM为餐厅 '{self.inst.rest_chinese_name}' 分析类型: {matched_type}")
+                                            return True
+                                else:  # 如果没有匹配的类型，使用默认类型
+                                    self.inst.rest_type = "小食/小吃/美食/饮食/私房菜"
+                                    # self.logger.warning(f"无法确定餐厅类型，使用默认餐厅类型: {self.inst.rest_type}")
+                                    return False
+                            else:  # 如果KIMI分析失败，使用默认类型
                                 self.inst.rest_type = "小食/小吃/美食/饮食/私房菜"
                                 # self.logger.warning(f"无法确定餐厅类型，使用默认餐厅类型: {self.inst.rest_type}")
                                 return False
-                        else:  # 如果KIMI分析失败，使用默认类型
+                        else:  # 如果没有KIMI Keys 则使用默认类型
                             self.inst.rest_type = "小食/小吃/美食/饮食/私房菜"
                             # self.logger.warning(f"无法确定餐厅类型，使用默认餐厅类型: {self.inst.rest_type}")
                             return False
-                    else:  # 如果没有KIMI Keys 则使用默认类型
+                    else:
                         self.inst.rest_type = "小食/小吃/美食/饮食/私房菜"
                         # self.logger.warning(f"无法确定餐厅类型，使用默认餐厅类型: {self.inst.rest_type}")
                         return False
@@ -789,7 +794,7 @@ class Restaurant(BaseInstance):
                 if hasattr(self.conf.runtime, 'CP'):
                     cp_location = self.conf.runtime.CP['cp_location']
                     res_lon, res_lat = map(float, restaurant_location.split(','))  # 假设坐标格式为 "经度,纬度"
-                    cp_lon, cp_lat = map(float, cp_location.split(','))  # 假设坐标格式为 "经度,纬度"
+                    cp_lat, cp_lon = map(float, cp_location.split(','))  # 假设坐标格式为 "经度,纬度"
                     factory_lat_lon = (cp_lat, cp_lon)
                     distance = self._haversine((res_lat, res_lon), factory_lat_lon)  # 计算距离(维度,经度),(维度,经度)
                     self.inst.rest_distance = distance  

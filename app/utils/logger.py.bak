@@ -3,6 +3,9 @@ from logging.handlers import RotatingFileHandler
 from app.utils import rp
 import os
 import threading
+import datetime
+import traceback
+import sys
 
 # 全局日志对象
 GLOBAL_LOGGER = None
@@ -10,6 +13,75 @@ GLOBAL_LOGGER = None
 BATCH_LOGGERS = {}
 # 线程锁，防止多线程同时创建日志对象
 LOGGER_LOCK = threading.RLock()
+
+class DirectFileLogger:
+    """直接写入文件的日志类，不依赖标准logging模块"""
+    
+    def __init__(self, log_file, console_output=True):
+        self.log_file = log_file
+        self.console_output = console_output
+        self.file_lock = threading.Lock()
+        
+        # 确保日志目录存在
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        
+        # 尝试打开日志文件以验证权限
+        try:
+            with open(self.log_file, 'a', encoding='utf-8') as f:
+                pass
+        except Exception as e:
+            print(f"无法打开日志文件 {log_file}: {e}")
+            # 如果无法写入指定位置，使用临时目录
+            import tempfile
+            self.log_file = os.path.join(tempfile.gettempdir(), os.path.basename(log_file))
+            print(f"改用临时日志文件: {self.log_file}")
+    
+    def _write_log(self, level, message):
+        """写入日志到文件并可能输出到控制台"""
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_entry = f"{timestamp} - {level} - {message}\n"
+        
+        # 写入文件
+        with self.file_lock:
+            try:
+                with open(self.log_file, 'a', encoding='utf-8') as f:
+                    f.write(log_entry)
+                    f.flush()
+                    os.fsync(f.fileno())  # 确保写入磁盘
+            except Exception as e:
+                if self.console_output:
+                    print(f"写入日志文件失败: {e}")
+        
+        # 输出到控制台
+        if self.console_output:
+            print(log_entry.strip())
+    
+    def info(self, message):
+        """记录信息级别的日志"""
+        self._write_log("INFO", message)
+    
+    def warning(self, message):
+        """记录警告级别的日志"""
+        self._write_log("WARNING", message)
+    
+    def error(self, message):
+        """记录错误级别的日志"""
+        self._write_log("ERROR", message)
+    
+    def debug(self, message):
+        """记录调试级别的日志"""
+        self._write_log("DEBUG", message)
+    
+    def exception(self, message=""):
+        """记录异常信息，包括堆栈跟踪"""
+        exc_info = traceback.format_exc()
+        error_message = f"{message}\n{exc_info}" if message else exc_info
+        self._write_log("ERROR", error_message)
+    
+    def flush(self):
+        """刷新日志"""
+        # DirectFileLogger在每次写入后就刷新，此方法保留API兼容性
+        pass
 
 class MessageLogHandler(logging.Handler):
     """自定义日志处理器，将日志消息转发到MessageManager"""
@@ -74,40 +146,9 @@ def setup_logger(log_file="moco.log", max_size=5 * 1024 * 1024, backup_count=3):
             return GLOBAL_LOGGER
         
         log_file = rp(log_file, folder=["var", "log"])
-        # 确保日志目录存在
-        os.makedirs(os.path.dirname(log_file), exist_ok=True)
         
-        # 创建 logger
-        logger = logging.getLogger("moco.main")
-        logger.setLevel(logging.INFO)
-        
-        if not logger.handlers:
-            # 配置日志轮转机制，使用实时写入版本
-            handler = RealTimeRotatingFileHandler(
-                log_file, 
-                maxBytes=max_size,
-                backupCount=backup_count,
-                encoding="utf-8"
-            )
-            
-            # 配置控制台输出
-            console_handler = logging.StreamHandler()
-            console_handler.setLevel(logging.INFO)
-            
-            # 创建消息中继处理器
-            message_handler = MessageLogHandler()
-            message_handler.setLevel(logging.INFO)
-            
-            # 设置日志格式
-            formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-            handler.setFormatter(formatter)
-            console_handler.setFormatter(formatter)
-            message_handler.setFormatter(formatter)
-            
-            # 将处理器添加到 logger
-            logger.addHandler(handler)
-            logger.addHandler(console_handler)
-            logger.addHandler(message_handler)
+        # 创建直接文件日志器
+        logger = DirectFileLogger(log_file, console_output=True)
         
         # 保存为全局对象
         GLOBAL_LOGGER = logger
@@ -142,36 +183,8 @@ def setup_batch_logger(batch_id, log_dir=None, log_prefix="batch_", max_size=5 *
             temp_dir = tempfile.gettempdir()
             log_file = os.path.join(temp_dir, f"{log_prefix}{batch_id}.log")
         
-        # 创建 logger
-        logger = logging.getLogger(f"moco.batch.{batch_id}")
-        logger.setLevel(logging.INFO)
-        
-        # 清除已有的处理器，防止重复添加
-        if logger.handlers:
-            for handler in logger.handlers[:]:
-                logger.removeHandler(handler)
-        
-        # 配置日志轮转机制，使用实时写入版本
-        handler = RealTimeRotatingFileHandler(
-            log_file, 
-            maxBytes=max_size,
-            backupCount=backup_count,
-            encoding="utf-8"
-        )
-        
-        # 配置控制台输出
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        
-        # 设置日志格式
-        formatter = logging.Formatter("%(asctime)s - %(levelname)s - [Batch-%(batch_id)s] - %(message)s",
-                                      defaults={'batch_id': batch_id})
-        handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
-        
-        # 将处理器添加到 logger
-        logger.addHandler(handler)
-        logger.addHandler(console_handler)
+        # 创建直接文件日志器
+        logger = DirectFileLogger(log_file, console_output=True)
         
         # 保存到批处理日志字典
         BATCH_LOGGERS[logger_key] = logger
@@ -244,21 +257,8 @@ def shutdown_logger():
     with LOGGER_LOCK:
         # 关闭全局日志处理器
         if GLOBAL_LOGGER:
-            for handler in GLOBAL_LOGGER.handlers:
-                try:
-                    handler.close()
-                    GLOBAL_LOGGER.removeHandler(handler)
-                except:
-                    pass
+            # 对于DirectFileLogger，不需要特殊的关闭操作
             GLOBAL_LOGGER = None
         
-        # 关闭所有批处理日志处理器
-        for logger_key, logger in BATCH_LOGGERS.items():
-            for handler in logger.handlers:
-                try:
-                    handler.close()
-                    logger.removeHandler(handler)
-                except:
-                    pass
-        
+        # 清理批处理日志器
         BATCH_LOGGERS.clear()

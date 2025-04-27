@@ -1471,6 +1471,7 @@ class Tab2(QWidget):
             
             # 获取是否使用大模型
             use_llm = self.use_llm_checkbox.isChecked()
+            self.conf.runtime.USE_LLM = use_llm
             LOGGER.info(f"用户选择{'使用' if use_llm else '不使用'}大模型生成餐厅类型")
             
             # 检查API连通性
@@ -1812,6 +1813,31 @@ class Tab2(QWidget):
             script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
                                      'services', 'scripts', 'complete_restaurants_info.py')
             
+            # 创建临时配置文件，保存当前runtime配置
+            runtime_config_file = os.path.join(output_dir, f"runtime_config_{task_id}.json")
+            try:
+                # 提取runtime配置
+                runtime_config = {}
+                if hasattr(self.conf, 'runtime'):
+                    # 将runtime对象的所有非私有属性保存到字典
+                    for attr in dir(self.conf.runtime):
+                        if not attr.startswith('_'):  # 跳过私有属性
+                            value = getattr(self.conf.runtime, attr)
+                            # # 跳过复杂对象和方法
+                            # if not callable(value) and not attr == 'geoinfo' and not isinstance(value, (dict, list, set)) or isinstance(value, (int, float, bool, str)):
+                            runtime_config[attr] = value
+                            
+                # 保存到临时文件
+                with open(runtime_config_file, 'w', encoding='utf-8') as f:
+                    json.dump(runtime_config, f, ensure_ascii=False, indent=2)
+                LOGGER.info(f"已将运行时配置保存到临时文件: {runtime_config_file}")
+                
+                # 记录临时文件以便清理
+                self.temp_files.append(runtime_config_file)
+            except Exception as e:
+                LOGGER.error(f"保存运行时配置失败: {e}")
+                runtime_config_file = None
+            
             cmd = [
                 sys.executable,  # Python解释器
                 script_path,
@@ -1822,6 +1848,10 @@ class Tab2(QWidget):
                 f"--batch_size=20",   # 批次大小为20
                 f"--log_file={log_file}"  # 指定日志文件
             ]
+            
+            # 添加运行时配置文件参数
+            if runtime_config_file and os.path.exists(runtime_config_file):
+                cmd.append(f"--config_file={runtime_config_file}")
             
             # 如果有CP位置，添加到命令行
             if cp_location:
@@ -1838,7 +1868,7 @@ class Tab2(QWidget):
             
             # 添加查看日志按钮（如果不存在）
             if not hasattr(self, 'view_log_button'):
-                self.view_log_button = QPushButton("查看日志")
+                self.view_log_button = QPushButton("打开文件目录")
                 self.view_log_button.setStyleSheet("margin-left: 10px;")
                 self.view_log_button.clicked.connect(self.view_current_log)
                 # 添加到合适的布局中，根据您的UI结构调整
@@ -1853,50 +1883,37 @@ class Tab2(QWidget):
             
             # 显示日志按钮
             self.view_log_button.setVisible(True)
+
+            # DEBUG: 用于debug
+            # import subprocess
+            # process = subprocess.Popen(
+            #         cmd, 
+            #         stdout=subprocess.PIPE, 
+            #         stderr=subprocess.PIPE,
+            #         # creationflags=subprocess.CREATE_NO_WINDOW  # 在Windows上不显示窗口
+            #     )
             
-            # 启动进程
-            LOGGER.info(f"启动补全脚本: {' '.join(cmd)}")
-            try:
-                self.update_progress("正在启动补全进程...")
-                
-                # 使用subprocess.Popen启动进程，不阻塞UI
-                process = subprocess.Popen(
-                    cmd, 
-                    stdout=subprocess.PIPE, 
-                    stderr=subprocess.PIPE,
-                    # creationflags=subprocess.CREATE_NO_WINDOW  # 在Windows上不显示窗口
-                )
-                
-                # 保存进程对象供后续使用
-                self.complete_process = process
-                
-                # 设置轮询计时器，检查任务状态
-                if not hasattr(self, 'monitor_timer'):
-                    self.monitor_timer = QTimer(self)
-                    self.monitor_timer.timeout.connect(self.check_complete_status)
-                
-                # 启动计时器，每1秒检查一次
-                self.monitor_timer.start(1000)
-                
-                # 设置超时机制，避免脚本运行过久
-                self.complete_start_time = time.time()
-                self.complete_timeout = 3600  # 1小时超时
-                
-                LOGGER.info(f"补全进程已启动，任务ID: {task_id}")
-                
-                # 显示日志文件路径信息
-                self.update_progress(f"处理中... 日志文件: {log_file}")
-                
-            except Exception as e:
-                LOGGER.error(f"启动补全脚本失败: {str(e)}")
-                QMessageBox.critical(self, "启动失败", f"启动补全脚本失败: {str(e)}")
-                self.complete_info_button.setText("补全餐厅信息")
-                self.complete_task_running = False
-                if hasattr(self, 'progress_label'):
-                    self.progress_label.setVisible(False)
-                if hasattr(self, 'view_log_button'):
-                    self.view_log_button.setVisible(False)
-                
+            # 不使用subprocess，直接启动CMD窗口运行命令
+            # os模块已在文件顶部导入，这里不需要再次导入
+            
+            # 将命令转换为字符串
+            cmd_str = ' '.join(cmd)
+            
+            # 在Windows上使用start命令打开新的CMD窗口
+            start_cmd = f'start cmd /k "{cmd_str}"'
+            
+            # 执行命令，不等待结果
+            os.system(start_cmd)
+            
+            # 不再需要保存进程对象
+            self.complete_process = None
+            
+            # 记录日志
+            LOGGER.info(f"已在新窗口启动命令: {cmd_str}")
+            
+            # 标记任务正在运行
+            self.complete_task_running = True
+            
         except Exception as e:
             LOGGER.error(f"启动餐厅信息补全时出错: {str(e)}")
             QMessageBox.critical(self, "操作失败", f"启动餐厅信息补全时出错: {str(e)}")
@@ -2096,7 +2113,7 @@ class Tab2(QWidget):
                         
                         # 添加打开文件按钮
                         open_button = msg_box.addButton("打开完整数据", QMessageBox.ActionRole)
-                        view_log_button = msg_box.addButton("查看处理日志", QMessageBox.ActionRole)
+                        view_log_button = msg_box.addButton("打开输出目录", QMessageBox.ActionRole)
                         close_button = msg_box.addButton("关闭", QMessageBox.RejectRole)
                         
                         # 显示消息框并处理响应
@@ -2165,7 +2182,7 @@ class Tab2(QWidget):
             error_box.setIcon(QMessageBox.Critical)
             
             # 添加查看日志按钮
-            view_log_button = error_box.addButton("查看详细日志", QMessageBox.ActionRole)
+            view_log_button = error_box.addButton("打开输出目录", QMessageBox.ActionRole)
             close_button = error_box.addButton("关闭", QMessageBox.RejectRole)
             
             error_box.exec_()
@@ -2244,23 +2261,27 @@ class Tab2(QWidget):
             QMessageBox.critical(self, "操作失败", f"验证餐厅营业状态时出错: {str(e)}")
     
     def view_current_log(self):
-        """查看当前任务的日志文件"""
+        """打开当前任务的输出目录"""
         try:
             # 检查是否有当前任务
-            if hasattr(self, 'current_task') and self.current_task and 'log_file' in self.current_task:
-                log_file = self.current_task['log_file']
-                if os.path.exists(log_file):
-                    self.open_file_external(log_file)
+            if hasattr(self, 'current_task') and self.current_task and 'output_dir' in self.current_task:
+                output_dir = self.current_task['output_dir']
+                if os.path.exists(output_dir):
+                    # 使用系统文件浏览器打开目录
+                    self.open_file_external(output_dir)
                 else:
-                    QMessageBox.warning(self, "日志不存在", "未找到日志文件")
+                    QMessageBox.warning(self, "目录不存在", "任务输出目录不存在")
             else:
-                # 查找临时目录中的最新日志文件
-                log_files = [f for f in os.listdir(tempfile.gettempdir()) if f.startswith("log_") and f.endswith(".txt")]
-                if log_files:
-                    latest_log = os.path.join(tempfile.gettempdir(), sorted(log_files)[-1])
-                    self.open_file_external(latest_log)
+                # 使用时间戳目录
+                if hasattr(self, 'timestamp'):
+                    temp_dir = os.path.join(tempfile.gettempdir(), self.timestamp)
+                    if os.path.exists(temp_dir):
+                        self.open_file_external(temp_dir)
+                    else:
+                        QMessageBox.warning(self, "目录不存在", "临时输出目录不存在")
                 else:
-                    QMessageBox.warning(self, "无日志文件", "未找到任何日志文件")
+                    # 尝试打开临时目录
+                    self.open_file_external(tempfile.gettempdir())
         except Exception as e:
-            LOGGER.error(f"查看日志文件时出错: {str(e)}")
-            QMessageBox.warning(self, "打开日志失败", f"无法打开日志文件: {str(e)}")
+            LOGGER.error(f"打开任务输出目录时出错: {str(e)}")
+            QMessageBox.warning(self, "打开目录失败", f"无法打开输出目录: {str(e)}")

@@ -115,37 +115,26 @@ class RestaurantCompleter:
         self.logger.info(f"1. 工作目录内: {self.task_result_file}")
         self.logger.info(f"2. 主目录: {self.result_file}")
         self.logger.info(f"状态文件位置: {self.status_file}")
+        
+        # 记录当前已加载的运行时配置
+        try:
+            from app.config.config import CONF
+            if hasattr(CONF, 'runtime'):
+                runtime_attrs = {}
+                for attr in dir(CONF.runtime):
+                    if not attr.startswith('_') and not callable(getattr(CONF.runtime, attr)):
+                        runtime_attrs[attr] = getattr(CONF.runtime, attr)
+                
+                if runtime_attrs:
+                    self.logger.info(f"当前运行时配置: {json.dumps(runtime_attrs, ensure_ascii=False)}")
+                else:
+                    self.logger.info("当前无运行时配置")
+        except Exception as e:
+            self.logger.warning(f"获取运行时配置信息失败: {e}")
     
     def _setup_logger(self):
         """设置日志记录器"""
         self.logger = setup_logger(self.log_file)
-        # self.logger = logging.getLogger(f"restaurant_completer_{self.task_id}")
-        # self.logger.setLevel(logging.DEBUG)
-        
-        # # 确保之前的处理器被移除（避免重复日志）
-        # if self.logger.handlers:
-        #     for handler in self.logger.handlers:
-        #         self.logger.removeHandler(handler)
-        
-        # # 文件处理器 - 设置立即刷新
-        # file_handler = logging.FileHandler(self.log_file, encoding='utf-8')
-        # file_handler.setLevel(logging.DEBUG)
-        
-        # # 控制台处理器
-        # console_handler = logging.StreamHandler()
-        # console_handler.setLevel(logging.INFO)
-        
-        # # 格式化器
-        # formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        # file_handler.setFormatter(formatter)
-        # console_handler.setFormatter(formatter)
-        
-        # # 添加处理器
-        # self.logger.addHandler(file_handler)
-        # self.logger.addHandler(console_handler)
-        
-        # # 存储文件处理器的引用，以便在需要时手动刷新
-        # self.file_handler = file_handler
     
     def _flush_log(self):
         """手动刷新日志到磁盘"""
@@ -211,6 +200,29 @@ class RestaurantCompleter:
         try:
             self._update_status(status="running", message="开始处理数据...")
             self._flush_log()
+            
+            # 检查并输出运行时配置信息
+            try:
+                from app.config.config import CONF
+                if hasattr(CONF, 'runtime'):
+                    runtime_attrs = {}
+                    for attr in dir(CONF.runtime):
+                        if not attr.startswith('_') and not callable(getattr(CONF.runtime, attr)):
+                            value = getattr(CONF.runtime, attr)
+                            # 仅记录简单类型
+                            if isinstance(value, (int, float, bool, str)) or value is None:
+                                runtime_attrs[attr] = value
+                    
+                    if runtime_attrs:
+                        self.logger.info(f"运行时配置详情: {json.dumps(runtime_attrs, ensure_ascii=False)}")
+                        
+                        # 特别记录重要配置项
+                        if hasattr(CONF.runtime, 'STRICT_MODE'):
+                            self.logger.info(f"严格模式: {CONF.runtime.STRICT_MODE}")
+                        if hasattr(CONF.runtime, 'SEARCH_RADIUS'):
+                            self.logger.info(f"搜索半径: {CONF.runtime.SEARCH_RADIUS}")
+            except Exception as e:
+                self.logger.warning(f"记录运行时配置时出错: {e}")
             
             # 1. 加载数据
             self._log_progress("正在加载餐厅数据...")
@@ -368,8 +380,8 @@ class RestaurantCompleter:
                             restaurant_instances.append(restaurant)
                             success_count += 1
                             # 每创建5个实例更新一次进度
-                            if idx % 5 == 4 or idx == len(batch_records) - 1:
-                                batch_logger.debug(f"已创建 {idx+1}/{len(batch_records)} 个餐厅实例")
+                            # if idx % 5 == 4 or idx == len(batch_records) - 1:
+                            #     batch_logger.debug(f"已创建 {idx+1}/{len(batch_records)} 个餐厅实例")
                         except Exception as e:
                             batch_logger.error(f"创建餐厅实例 {idx} 失败: {e}")
                             continue
@@ -398,7 +410,7 @@ class RestaurantCompleter:
                             # 调用服务补全信息，使用batch_logger
                             processed_group = service.gen_info_v2(
                                 restaurant_group, 
-                                num_workers=1,
+                                num_workers=num_workers,  # DEBUG
                                 logger_file=os.path.join(self.task_dir, f"batch_{batch_id}.log")  # 传递批处理日志文件路径
                             )
                             
@@ -580,7 +592,7 @@ class RestaurantCompleter:
                     self.progress_label.setText("操作已取消")
                     self.progress_label.setVisible(False)
                 
-                LOGGER.info("补全任务已取消")
+                self.logger.info("补全任务已取消")
                 return
             
             # 检查进程是否仍在运行
@@ -607,10 +619,10 @@ class RestaurantCompleter:
                                 heartbeat_time = float(f.read().strip())
                                 current_time = time.time()
                                 if current_time - heartbeat_time > 30:  # 30秒无更新认为进程卡住
-                                    LOGGER.warning(f"心跳文件 {heartbeat_file} 超过30秒未更新，进程可能卡住")
+                                    self.logger.warning(f"心跳文件 {heartbeat_file} 超过30秒未更新，进程可能卡住")
                                     # 但不立即终止，继续检查其他状态
                         except Exception as e:
-                            LOGGER.error(f"读取心跳文件失败: {e}")
+                            self.logger.error(f"读取心跳文件失败: {e}")
                     
                     # 检查状态文件
                     if os.path.exists(status_file):
@@ -645,16 +657,16 @@ class RestaurantCompleter:
                                 last_update = status_data.get('last_update', 0)
                                 current_time = time.time()
                                 if current_time - last_update > 60:  # 1分钟无更新认为进程卡住
-                                    LOGGER.warning(f"状态文件 {status_file} 超过1分钟未更新，进程可能卡住")
+                                    self.logger.warning(f"状态文件 {status_file} 超过1分钟未更新，进程可能卡住")
                                     # 在这里可以考虑是否要终止进程
                         except Exception as e:
-                            LOGGER.error(f"读取状态文件失败: {e}")
+                            self.logger.error(f"读取状态文件失败: {e}")
                 
                 if hasattr(self, 'complete_start_time'):
                     # 检查是否超时
                     elapsed_time = time.time() - self.complete_start_time
                     if elapsed_time > self.complete_timeout:
-                        LOGGER.warning("补全任务超时")
+                        self.logger.warning("补全任务超时")
                         self.monitor_timer.stop()
                         self.complete_process.terminate()
                         self.complete_task_running = False
@@ -692,7 +704,7 @@ class RestaurantCompleter:
                                     self.on_complete_process_error(error_msg)
                                     return
                     except Exception as e:
-                        LOGGER.error(f"读取状态文件失败: {e}")
+                        self.logger.error(f"读取状态文件失败: {e}")
                 
                 # 如果进程已结束但未找到状态文件或状态不是成功/失败
                 if returncode is not None:
@@ -729,7 +741,7 @@ class RestaurantCompleter:
                     self.progress_label.setVisible(False)
                 
         except Exception as e:
-            LOGGER.error(f"检查补全任务状态时出错: {str(e)}")
+            self.logger.error(f"检查补全任务状态时出错: {str(e)}")
             # 出错时停止计时器
             if hasattr(self, 'monitor_timer'):
                 self.monitor_timer.stop()
@@ -749,12 +761,35 @@ def parse_args():
     parser.add_argument('--num_workers', default=2, type=int, help='工作线程数')
     parser.add_argument('--batch_size', default=20, type=int, help='批次大小')
     parser.add_argument('--log_file', help='日志文件路径')
+    parser.add_argument('--config_file', help='运行时配置文件路径，JSON格式')
     return parser.parse_args()
 
 def main():
     """主函数"""
     # 解析命令行参数
     args = parse_args()
+    
+    # 如果提供了配置文件，加载运行时配置
+    if args.config_file and os.path.exists(args.config_file):
+        try:
+            from app.config.config import CONF
+            
+            # 加载配置文件
+            with open(args.config_file, 'r', encoding='utf-8') as f:
+                runtime_config = json.load(f)
+            
+            # 将配置应用到CONF.runtime
+            for key, value in runtime_config.items():
+                # 确保runtime属性存在
+                if not hasattr(CONF, 'runtime'):
+                    setattr(CONF, 'runtime', type('RuntimeConfig', (), {}))
+                
+                # 设置属性
+                setattr(CONF.runtime, key, value)
+            
+            # print(f"已加载运行时配置")
+        except Exception as e:
+            pass
     
     # 创建补全器
     completer = RestaurantCompleter(
