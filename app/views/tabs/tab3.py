@@ -38,6 +38,14 @@ class TransportDialog(QDialog):
         self.month_year_combo.addItems(self.generate_month_year_options())
         layout.addWidget(QLabel("选择年月:"))
         layout.addWidget(self.month_year_combo)
+
+        # 180KG桶占比
+        self.bucket_ratio_input = QLineEdit(self)
+        self.bucket_ratio_input.setText("1")  # 设置默认值为1
+        self.bucket_ratio_input.setPlaceholderText("请输入180KG桶占比（0-1）")
+        self.bucket_ratio_input.setEnabled(False)  # 暂时禁用输入
+        layout.addWidget(QLabel("180KG桶占比:"))
+        layout.addWidget(self.bucket_ratio_input)
         
         # 确认和取消按钮
         button_layout = QHBoxLayout()
@@ -63,7 +71,7 @@ class TransportDialog(QDialog):
 
     def get_input_data(self):
         """获取输入的数据"""
-        return self.days_input.text(), self.month_year_combo.currentText()
+        return self.days_input.text(), self.month_year_combo.currentText(), self.bucket_ratio_input.text()
 
 class Tab3(QWidget):
     """收油表生成Tab，实现餐厅和车辆信息的加载与收油表生成"""
@@ -424,7 +432,7 @@ class Tab3(QWidget):
         # 弹出运输信息对话框
         dialog = TransportDialog(self)
         if dialog.exec_() == QDialog.Accepted:
-            days_input, month_year = dialog.get_input_data()
+            days_input, month_year, bucket_ratio = dialog.get_input_data()
             year, month = month_year.split('-')
             CONF.runtime.dates_to_trans = f'{year}-{month}-{days_input}'
             # 验证天数输入
