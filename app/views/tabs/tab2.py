@@ -912,22 +912,24 @@ class Tab2(QWidget):
     def __del__(self):
         """析构函数，清理资源"""
         try:
+            # 检查Python是否正在关闭
+            if sys.meta_path is None:
+                return
+                
             # 停止所有工作线程
             if hasattr(self, 'worker') and self.worker is not None and self.worker.isRunning():
                 try:
-                    LOGGER.info("正在停止餐厅获取线程...")
                     self.worker.stop()
                     self.worker.wait(2000)  # 等待最多2秒
-                except Exception as e:
-                    LOGGER.error(f"停止餐厅获取线程时出错: {str(e)}")
+                except Exception:
+                    pass
             
             if hasattr(self, 'complete_worker') and self.complete_worker is not None and self.complete_worker.isRunning():
                 try:
-                    LOGGER.info("正在停止餐厅信息补全线程...")
                     self.complete_worker.stop()
                     self.complete_worker.wait(2000)  # 等待最多2秒
-                except Exception as e:
-                    LOGGER.error(f"停止餐厅信息补全线程时出错: {str(e)}")
+                except Exception:
+                    pass
             
             # 清理临时文件
             self.cleanup_temp_files()
@@ -936,12 +938,13 @@ class Tab2(QWidget):
             try:
                 import gc
                 gc.collect()
-            except Exception as e:
-                LOGGER.error(f"垃圾回收时出错: {str(e)}")
+            except Exception:
+                pass
             
-        except Exception as e:
-            LOGGER.error(f"Tab2析构时出错: {str(e)}")
-        
+        except Exception:
+            # 在析构函数中不记录错误，因为日志系统可能已经关闭
+            pass
+    
     def cleanup_temp_files(self):
         """清理临时文件"""
         

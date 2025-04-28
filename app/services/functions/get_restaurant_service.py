@@ -179,7 +179,7 @@ class GetRestaurantService:
 
                 url = 'https://restapi.amap.com/v3/place/text?key={}&&keywords={}' \
                     '&types={}&city={}&citylimit=true&output={}&offset=20&page={}' \
-                    '&extensions=base&show_fields=business'.format(self.gaode_token, self.gaode_keywords, self.gaode_type,
+                    '&extensions=all&show_fields=business'.format(self.gaode_token, self.gaode_keywords, self.gaode_type,
                                                                     self.gaode_address,
                                                                     'JSON', i)
                 urls.append(url)
@@ -193,7 +193,7 @@ class GetRestaurantService:
 
                 url = 'https://restapi.amap.com/v3/place/around?key={}' \
                     '&radius={}&keywords={}&types={}&location={}&offset=20&page={' \
-                    '}&extensions=base&show_fields=business'.format(
+                    '}&extensions=all&show_fields=business'.format(
                     self.gaode_token, self.gaode_radius,self.gaode_keywords, self.gaode_type, self.gaode_address, i)
                 urls.append(url)
             return urls
@@ -216,10 +216,11 @@ class GetRestaurantService:
                             'rest_chinese_address': i.get('address') if i.get('address') is not None else '',
                             'rest_contact_phone': i.get('tel') if i.get('tel') is not None else '',
                             'rest_location': i.get('location') if i.get('location') is not None else '',
-                            'adname': i.get('adname') if i.get('adname') is not None else '',
+                            'rest_district': i.get('adname') if i.get('adname') is not None else '',
                             'rest_type_gaode': i.get('type') if i.get('type') is not None else '',
                             'distance': i.get('distance') if i.get('distance') is not None else '',
                             'rest_city': i.get('cityname') if i.get('cityname') is not None else '',
+                            'rest_type': self.gaode_keywords if self.gaode_keywords is not None else '',
                         }
                         # 注意：不再在这里设置rest_type字段，而是在run方法中根据use_llm参数决定是否设置
                         datalist.append(dict1)

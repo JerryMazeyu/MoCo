@@ -232,7 +232,7 @@ class GetReceiveRecordService:
         return result 
 
     # 分配车辆号码
-    def _oil_assign_vehicle_numbers(self,df_restaurants: pd.DataFrame, df_vehicles: pd.DataFrame, total_barrels: int, min_barrel_per_car: int=35) -> pd.DataFrame:
+    def _oil_assign_vehicle_numbers(self,df_restaurants: pd.DataFrame, df_vehicles: pd.DataFrame, total_barrels: int, min_barrel_per_car: int=35,max_barrel_per_car:int = 44) -> pd.DataFrame:
         """
         根据收油数分配车辆号码，并将结果与原DataFrame合并
         
@@ -245,14 +245,17 @@ class GetReceiveRecordService:
          # 首先检查总收油数是否达到最小要求
         total_oil = df_restaurants['rr_amount'].sum()
         if total_oil < min_barrel_per_car:
-            raise ValueError(f"当前收油总桶数为 {total_oil} 桶，未达到最小要求（35桶），无法生成收油表")
+            raise ValueError(f"当前收油总桶数为 {total_oil} 桶，未达到最小要求（{min_barrel_per_car}桶），无法生成收油表")
         # 初始化变量
+        ##首先初始化每辆车的收油数
+        random_barrel_per_car = random.randint(min_barrel_per_car, max_barrel_per_car)
         ## 乱序排列车牌号
         vehicle_sorted_df = df_vehicles.sample(frac=1, replace=False)
         result_rows = []
         
         total_accumulated = 0  # 所有车辆的累计收油数
         should_break = False  # 控制外层循环的标志
+        
         
 
         # 按区域分组
@@ -268,7 +271,7 @@ class GetReceiveRecordService:
                 accumulated_sum += row['rr_amount']
                 
                 # 如果累计值达到在35-44之间，则分配车牌号并重置累计值
-                if accumulated_sum >= min_barrel_per_car:
+                if accumulated_sum >= random_barrel_per_car:
                     # 检查添加这组数据是否会超过总桶数限制
                     print(f"当前累计桶数: {total_accumulated}, 目标桶数: {total_barrels}")
                     if total_accumulated > total_barrels:
@@ -302,6 +305,8 @@ class GetReceiveRecordService:
                     current_vehicle_index += 1    
                     accumulated_sum = 0
                     temp_group = []
+                    ## 每次收油完后重新随机每辆车的收油数
+                    random_barrel_per_car = random.randint(min_barrel_per_car, max_barrel_per_car)
             
             # 如果外层循环需要跳出，则不处理剩余数据
             if should_break:
@@ -497,13 +502,12 @@ class GetReceiveRecordService:
             try:
                 min_barrel_per_car, max_barrel_per_car = self.conf.BUSINESS.REST2CP.每车收购量范围[0], self.conf.BUSINESS.REST2CP.每车收购量范围[1]
                 assert min_barrel_per_car <= max_barrel_per_car, "每车收购量范围配置错误，最小值大于最大值"
-                random_barrel_per_car = random.randint(min_barrel_per_car, max_barrel_per_car)
             except:
                 LOGGER.error("每车收购量范围配置错误，使用默认值35-44")
                 min_barrel_per_car, max_barrel_per_car = 35, 44
                 random_barrel_per_car = random.randint(min_barrel_per_car, max_barrel_per_car)
-            if total_oil < random_barrel_per_car:
-                raise ValueError(f"当前收油总桶数为 {total_oil:.1f} 桶，未达到最小要求（{random_barrel_per_car}桶），无法生成收油表")
+            if total_oil < min_barrel_per_car:
+                raise ValueError(f"当前收油总桶数为 {total_oil:.1f} 桶，未达到最小要求（{min_barrel_per_car}桶），无法生成收油表")
 
             # 检查可用车辆数量
             if cp_vehicle_df.empty:
@@ -511,7 +515,7 @@ class GetReceiveRecordService:
 
             # 分配车辆号码
             try:
-                result_df = self._oil_assign_vehicle_numbers(cp_restaurants_df_sorted, cp_vehicle_df, total_barrels, random_barrel_per_car)
+                result_df = self._oil_assign_vehicle_numbers(cp_restaurants_df_sorted, cp_vehicle_df, total_barrels, min_barrel_per_car,max_barrel_per_car)
                 if result_df.empty:
                     raise ValueError("无法完成车辆分配，请确保每个区域的收油量达到要求（35-44桶）")
             except Exception as e:

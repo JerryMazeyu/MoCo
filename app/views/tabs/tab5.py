@@ -16,6 +16,7 @@ from app.config.config import CONF
 from app.utils import oss_get_excel_file, oss_put_excel_file
 import os
 import datetime
+import sys
 
 # 获取全局日志对象
 LOGGER = get_logger()
@@ -156,7 +157,24 @@ class Tab5(QWidget):
     
     def __del__(self):
         """析构函数，清理资源"""
-        self.cleanup_temp_files()
+        try:
+            # 检查Python是否正在关闭
+            if sys.meta_path is None:
+                return
+                
+            # 清理临时文件
+            self.cleanup_temp_files()
+            
+            # 强制垃圾回收
+            try:
+                import gc
+                gc.collect()
+            except Exception:
+                pass
+            
+        except Exception:
+            # 在析构函数中不记录错误，因为日志系统可能已经关闭
+            pass
     
     def cleanup_temp_files(self):
         """清理临时文件"""
