@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QFrame, QComboBox, QGroupBox, QFileDialog, 
-                             QMessageBox, QDialog, QTabWidget,QLineEdit)
+                             QMessageBox, QDialog, QTabWidget,QLineEdit, QButtonGroup, QRadioButton)
 from PyQt5.QtGui import QPixmap
 from app.utils.logger import get_logger
 from app.services.instances.restaurant import Restaurant, RestaurantsGroup
@@ -29,7 +29,7 @@ class TransportDialog(QDialog):
         
         # 天数输入框
         self.days_input = QLineEdit(self)
-        self.days_input.setPlaceholderText("请输入运输天数（1-31）")
+        self.days_input.setPlaceholderText("请输入收油天数（1-31）")
         layout.addWidget(QLabel("运输天数:"))
         layout.addWidget(self.days_input)
         
@@ -73,6 +73,91 @@ class TransportDialog(QDialog):
         """获取输入的数据"""
         return self.days_input.text(), self.month_year_combo.currentText(), self.bucket_ratio_input.text()
 
+class SalesDaysDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("销售运输天数")
+        self.balance_total = None
+        
+        # 布局
+        layout = QVBoxLayout()
+        
+        # 天数输入框
+        self.days_input = QLineEdit(self)
+        self.days_input.setPlaceholderText("请输入销售运输天数（1-31）")
+        layout.addWidget(QLabel("销售运输天数:"))
+        layout.addWidget(self.days_input)
+        
+        # 上传平衡表总表选项
+        layout.addWidget(QLabel("是否上传已有平衡表总表:"))
+        
+        # 创建单选按钮组
+        self.upload_group = QButtonGroup(self)
+        self.upload_yes = QRadioButton("是", self)
+        self.upload_no = QRadioButton("否", self)
+        self.upload_no.setChecked(True)  # 默认选择"否"
+        
+        # 将单选按钮添加到组中
+        self.upload_group.addButton(self.upload_yes)
+        self.upload_group.addButton(self.upload_no)
+        
+        # 创建水平布局放置单选按钮
+        radio_layout = QHBoxLayout()
+        radio_layout.addWidget(self.upload_yes)
+        radio_layout.addWidget(self.upload_no)
+        layout.addLayout(radio_layout)
+        
+        # 文件上传按钮（初始隐藏）
+        self.file_button = QPushButton("选择平衡表总表文件", self)
+        self.file_button.clicked.connect(self.select_file)
+        self.file_button.setVisible(False)
+        layout.addWidget(self.file_button)
+        
+        # 连接单选按钮信号
+        self.upload_yes.toggled.connect(self.toggle_file_button)
+        
+        # 确认和取消按钮
+        button_layout = QHBoxLayout()
+        self.confirm_button = QPushButton("确认", self)
+        self.confirm_button.clicked.connect(self.accept)
+        self.cancel_button = QPushButton("取消", self)
+        self.cancel_button.clicked.connect(self.reject)
+        
+        button_layout.addWidget(self.confirm_button)
+        button_layout.addWidget(self.cancel_button)
+        
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+    def toggle_file_button(self, checked):
+        """切换文件上传按钮的可见性"""
+        self.file_button.setVisible(checked)
+
+    def select_file(self):
+        """选择并读取Excel文件"""
+        options = QFileDialog.Options()
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择平衡表总表文件",
+            "",
+            "Excel Files (*.xlsx);;All Files (*)",
+            options=options
+        )
+        
+        if file_name:
+            try:
+                self.balance_total = pd.read_excel(file_name)
+                self.file_button.setText(f"已选择: {file_name.split('/')[-1]}")
+            except Exception as e:
+                QMessageBox.critical(self, "读取失败", f"读取文件失败: {str(e)}")
+                self.balance_total = None
+                self.file_button.setText("选择平衡表总表文件")
+
+    def get_input_data(self):
+        """获取输入的数据"""
+        return self.days_input.text(), self.balance_total
+
 class Tab3(QWidget):
     """收油表生成Tab，实现餐厅和车辆信息的加载与收油表生成"""
     
@@ -83,6 +168,7 @@ class Tab3(QWidget):
         self.restaurants = []
         self.vehicles = []
         self.xlsx_viewer = None  # 初始化为 None
+        self.step_status_dict = {1: 'unfinish', 2: 'unfinish', 3: 'unfinish', 4: 'unfinish'}
         self.initUI()
     
     def initUI(self):
@@ -98,12 +184,14 @@ class Tab3(QWidget):
         # CP选择按钮
         self.cp_button = QPushButton("未选择CP")
         self.cp_button.clicked.connect(self.select_cp)
-        self.cp_button.setFixedWidth(200)
+        self.cp_button.setMinimumWidth(200)
+        self.cp_button.setStyleSheet("font-size: 15px; font-weight: bold;")
         
         # 清空按钮
         self.clear_button = QPushButton("清空页面")
         self.clear_button.clicked.connect(self.clear_page)
-        self.clear_button.setFixedWidth(100)
+        self.clear_button.setMinimumWidth(120)
+        self.clear_button.setStyleSheet("font-size: 15px; font-weight: bold;")
         
         top_layout.addStretch(1)
         top_layout.addWidget(self.cp_button)
@@ -114,49 +202,92 @@ class Tab3(QWidget):
         # 创建步骤状态布局和按钮布局的容器
         steps_and_buttons_layout = QHBoxLayout()
         
-        # 创建左侧的垂直布局，用于放置第一步的状态和按钮
+        # 步骤按钮样式（白色字体，圆角，带边框）
+        self.button_style_tpl = """
+        QPushButton {{
+            background-color: {bg};
+            color: white;
+            border: 1.5px solid {border_color};
+            border-radius: 20px;
+            padding: 10px 32px;
+            font-weight: bold;
+            min-width: 160px;
+            font-size: 18px;
+        }}
+        QPushButton:disabled {{
+            background-color: {bg};
+            color: white;
+            border: 1.5px solid {border_color};
+            opacity: 1;
+        }}
+        """
+        # 箭头样式
+        arrow_style = """
+        QLabel {{
+            color: #2196F3;
+            font-size: 32px;
+            font-weight: bold;
+            padding-left: 16px;
+            padding-right: 16px;
+        }}
+        """
+        # 创建左侧的垂直布局，用于放置第一步的按钮
         step1_layout = QVBoxLayout()
-        self.step1_status = QLabel()
-        self.set_step_image(self.step1_status, "unfinish.png")
-        step1_layout.addWidget(self.step1_status, alignment=Qt.AlignCenter)
         self.load_restaurants_button = QPushButton("上传餐厅信息")
         self.load_restaurants_button.clicked.connect(self.upload_restaurant_file)
         self.load_restaurants_button.setEnabled(False)
-        self.load_restaurants_button.setFixedWidth(100)
+        self.load_restaurants_button.setMinimumWidth(160)
+        self.load_restaurants_button.setSizePolicy(self.load_restaurants_button.sizePolicy().Expanding, self.load_restaurants_button.sizePolicy().Preferred)
         step1_layout.addWidget(self.load_restaurants_button, alignment=Qt.AlignCenter)
         steps_and_buttons_layout.addLayout(step1_layout)
+        steps_and_buttons_layout.addSpacing(20)
         
-        # 添加箭头1
         arrow1 = QLabel("→")
+        arrow1.setStyleSheet(arrow_style)
         steps_and_buttons_layout.addWidget(arrow1, alignment=Qt.AlignCenter)
+        steps_and_buttons_layout.addSpacing(20)
         
-        # 创建中间的垂直布局，用于放置第二步的状态和按钮
+        # 创建中间的垂直布局，用于放置第二步的按钮
         step2_layout = QVBoxLayout()
-        self.step2_status = QLabel()
-        self.set_step_image(self.step2_status, "unfinish.png")
-        step2_layout.addWidget(self.step2_status, alignment=Qt.AlignCenter)
         self.load_vehicles_button = QPushButton("载入车辆信息")
         self.load_vehicles_button.clicked.connect(self.load_vehicles)
         self.load_vehicles_button.setEnabled(False)
-        self.load_vehicles_button.setFixedWidth(100)
+        self.load_vehicles_button.setMinimumWidth(160)
+        self.load_vehicles_button.setSizePolicy(self.load_vehicles_button.sizePolicy().Expanding, self.load_vehicles_button.sizePolicy().Preferred)
         step2_layout.addWidget(self.load_vehicles_button, alignment=Qt.AlignCenter)
         steps_and_buttons_layout.addLayout(step2_layout)
+        steps_and_buttons_layout.addSpacing(20)
         
-        # 添加箭头2
         arrow2 = QLabel("→")
+        arrow2.setStyleSheet(arrow_style)
         steps_and_buttons_layout.addWidget(arrow2, alignment=Qt.AlignCenter)
+        steps_and_buttons_layout.addSpacing(20)
         
-        # 创建右侧的垂直布局，用于放置第三步的状态和按钮
+        # 创建右侧的垂直布局，用于放置第三步的按钮
         step3_layout = QVBoxLayout()
-        self.step3_status = QLabel()
-        self.set_step_image(self.step3_status, "unfinish.png")
-        step3_layout.addWidget(self.step3_status, alignment=Qt.AlignCenter)
         self.generate_report_button = QPushButton("生成收油表和平衡表")
         self.generate_report_button.clicked.connect(self.generate_report)
         self.generate_report_button.setEnabled(False)
-        self.generate_report_button.setFixedWidth(150)
+        self.generate_report_button.setMinimumWidth(180)
+        self.generate_report_button.setSizePolicy(self.generate_report_button.sizePolicy().Expanding, self.generate_report_button.sizePolicy().Preferred)
         step3_layout.addWidget(self.generate_report_button, alignment=Qt.AlignCenter)
         steps_and_buttons_layout.addLayout(step3_layout)
+        steps_and_buttons_layout.addSpacing(20)
+        
+        arrow3 = QLabel("→")
+        arrow3.setStyleSheet(arrow_style)
+        steps_and_buttons_layout.addWidget(arrow3, alignment=Qt.AlignCenter)
+        steps_and_buttons_layout.addSpacing(20)
+        
+        # 创建第四步的垂直布局
+        step4_layout = QVBoxLayout()
+        self.generate_total_button = QPushButton("生成总表和收货确认书")
+        self.generate_total_button.clicked.connect(self.generate_total)
+        self.generate_total_button.setEnabled(False)
+        self.generate_total_button.setMinimumWidth(180)
+        self.generate_total_button.setSizePolicy(self.generate_total_button.sizePolicy().Expanding, self.generate_total_button.sizePolicy().Preferred)
+        step4_layout.addWidget(self.generate_total_button, alignment=Qt.AlignCenter)
+        steps_and_buttons_layout.addLayout(step4_layout)
         
         # 添加弹性空间
         steps_and_buttons_layout.addStretch()
@@ -172,13 +303,16 @@ class Tab3(QWidget):
         self.vehicle_viewer = None
         self.report_viewer = None
         self.balance_view = None
+        self.total_view = None
+        self.check_view = None
         
         self.layout.addWidget(self.tab_widget)
             # 在添加 tab_widget 之后，添加保存所有按钮的布局
         bottom_layout = QHBoxLayout()
         self.save_all_button = QPushButton("保存所有信息")
         self.save_all_button.clicked.connect(self.save_all_data)
-        self.save_all_button.setFixedWidth(120)  # 设置按钮宽度
+        self.save_all_button.setMinimumWidth(140)
+        self.save_all_button.setStyleSheet("font-size: 15px; font-weight: bold;")
         bottom_layout.addStretch()  # 添加弹性空间，使按钮靠右
         bottom_layout.addWidget(self.save_all_button)
         
@@ -186,6 +320,10 @@ class Tab3(QWidget):
         self.layout.addLayout(bottom_layout)
         # 获取全局日志对象
         self.logger = get_logger()
+        # 初始化按钮状态颜色（全部灰色且不可点击）
+        for btn in [self.load_restaurants_button, self.load_vehicles_button, self.generate_report_button, self.generate_total_button]:
+            btn.setEnabled(False)
+            btn.setStyleSheet(self.button_style_tpl.format(bg='#BDBDBD', border_color='#E0E0E0'))
     
     def select_cp(self):
         """选择/切换CP"""
@@ -248,16 +386,24 @@ class Tab3(QWidget):
                     self.vehicle_file = f"CPs/{cp_data['cp_id']}/vehicle/vehicles.xlsx"
                     self.receive_record_file = f"CPs/{cp_data['cp_id']}/receive_record/receive_records.xlsx"
                     self.balance_record_file = f"CPs/{cp_data['cp_id']}/balance_record/balance_record.xlsx"
+                    self.total_file = f"CPs/{cp_data['cp_id']}/total/total.xlsx"
+                    self.check_file = f"CPs/{cp_data['cp_id']}/check/check.xlsx"
+                    
                     # 在选择CP后创建XlsxViewerWidget实例
                     self.restaurant_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.restaurant_file,show_open=False,show_save=False)
                     self.vehicle_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.vehicle_file,show_open=False,show_save=False)
                     self.report_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.receive_record_file,show_open=False,show_save=False)
-                    self.balance_view =  XlsxViewerWidget(use_oss=True, oss_path=self.balance_record_file,show_open=False,show_save=False)
+                    self.balance_view = XlsxViewerWidget(use_oss=True, oss_path=self.balance_record_file,show_open=False,show_save=False)
+                    self.total_view = XlsxViewerWidget(use_oss=True, oss_path=self.total_file,show_open=False,show_save=False)
+                    self.check_view = XlsxViewerWidget(use_oss=True, oss_path=self.check_file,show_open=False,show_save=False)
+                    
                     # 将XlsxViewerWidget实例添加到tab_widget
                     self.tab_widget.addTab(self.restaurant_viewer, "餐厅信息")
                     self.tab_widget.addTab(self.vehicle_viewer, "车辆信息")
                     self.tab_widget.addTab(self.report_viewer, "收油表")
-                    self.tab_widget.addTab(self.balance_view,'平衡表')
+                    self.tab_widget.addTab(self.balance_view, "平衡表")
+                    self.tab_widget.addTab(self.total_view, "总表")
+                    self.tab_widget.addTab(self.check_view, "收货确认书")
                     
                     # 更新CP按钮文本
                     self.cp_button.setText(f"已选择CP为：{cp_data['cp_name']}")
@@ -270,64 +416,57 @@ class Tab3(QWidget):
                     self.load_restaurants_button.setEnabled(True)
                     self.load_vehicles_button.setEnabled(False)
                     self.generate_report_button.setEnabled(False)
-                    
-                    # 重置所有步骤状态
+                    # 只调用一次，第一步为蓝色，其余为灰色
                     self.update_step_status(1, 'unfinish')
-                    self.update_step_status(2, 'unfinish')
-                    self.update_step_status(3, 'unfinish')
                 
         except Exception as e:
             LOGGER.error(f"选择CP时出错: {str(e)}")
             LOGGER.error(f"CONF.BUSINESS.CP的内容: {getattr(CONF.BUSINESS, 'CP', None)}")
             QMessageBox.critical(self, "选择CP失败", f"选择CP时出错: {str(e)}")
     
-    def set_step_image(self, label, image_name):
-        """设置步骤状态图片"""
-        try:
-            import sys
-            import os
-            
-            # 获取正确的资源路径
-            if getattr(sys, 'frozen', False):
-                # 如果是打包后的 exe
-                base_path = sys._MEIPASS
-                image_path = os.path.join(base_path, 'app', 'resources', 'icons', image_name)
-            else:
-                # 如果是直接运行 Python 脚本
-                image_path = os.path.join('app', 'resources', 'icons', image_name)
-            
-            # 检查文件是否存在
-            if not os.path.exists(image_path):
-                LOGGER.error(f"图标文件不存在: {image_path}")
-                return
-            
-            pixmap = QPixmap(image_path)
-            scaled_pixmap = pixmap.scaled(24, 24)  # 设置图片大小
-            label.setPixmap(scaled_pixmap)
-        except Exception as e:
-            LOGGER.error(f"设置步骤图标时出错: {str(e)}")
-
     def update_step_status(self, step, status):
-        """更新步骤状态
-        step: 1, 2, 3 表示哪一步
-        status: 'dealing', 'finish', 'error', 'unfinish'
-        """
-        status_label = getattr(self, f"step{step}_status")
-        self.set_step_image(status_label, f"{status}.png")
-        
-        # 更新按钮状态
-        if status == 'finish':
-            if step == 1:
-                self.load_vehicles_button.setEnabled(True)
-            elif step == 2:
-                self.generate_report_button.setEnabled(True)
-        elif status == 'error':
-            # 如果当前步骤失败，禁用后续步骤
-            if step == 1:
-                self.load_vehicles_button.setEnabled(False)
-                self.generate_report_button.setEnabled(False)
-            elif step == 2:
-                self.generate_report_button.setEnabled(False)
+        self.step_status_dict[step] = status
+        button_map = {
+            1: self.load_restaurants_button,
+            2: self.load_vehicles_button,
+            3: self.generate_report_button,
+            4: self.generate_total_button,
+        }
+        color_map = {
+            'finish':   ('#4CAF50', '#4CAF50'),   # 绿色
+            'error':    ('#F44336', '#F44336'),   # 红色
+            'dealing':  ('#FFB300', '#FFB300'),   # 黄色
+            'unfinish': ('#BDBDBD', '#E0E0E0'),   # 灰色
+            'blue':     ('#2196F3', '#2196F3'),   # 蓝色
+        }
+        # 找到下一个未完成的步骤
+        next_step = None
+        for i in range(1, 5):
+            if self.step_status_dict[i] != 'finish':
+                next_step = i
+                break
+        for i in range(1, 5):
+            btn = button_map[i]
+            st = self.step_status_dict[i]
+            if st == 'finish':
+                btn.setEnabled(True)
+                btn.setStyleSheet(self.button_style_tpl.format(bg=color_map['finish'][0], border_color=color_map['finish'][1]))
+            elif i == step:
+                if status == 'dealing':
+                    btn.setEnabled(False)
+                    btn.setStyleSheet(self.button_style_tpl.format(bg=color_map['dealing'][0], border_color=color_map['dealing'][1]))
+                elif status == 'error':
+                    btn.setEnabled(True)
+                    btn.setStyleSheet(self.button_style_tpl.format(bg=color_map['error'][0], border_color=color_map['error'][1]))
+                else:
+                    btn.setEnabled(True)
+                    btn.setStyleSheet(self.button_style_tpl.format(bg=color_map['blue'][0], border_color=color_map['blue'][1]))
+            elif i == next_step:
+                btn.setEnabled(True)
+                btn.setStyleSheet(self.button_style_tpl.format(bg=color_map['blue'][0], border_color=color_map['blue'][1]))
+            else:
+                btn.setEnabled(False)
+                btn.setStyleSheet(self.button_style_tpl.format(bg=color_map['unfinish'][0], border_color=color_map['unfinish'][1]))
 
     ## 从oss载入餐厅
     def load_restaurants(self):
@@ -473,6 +612,8 @@ class Tab3(QWidget):
                 self.logger.error(f"生成收油表、平衡表时出错: {str(e)}")
                 QMessageBox.critical(self, "生成失败", f"生成收油表时出错: {str(e)}")
                 self.update_step_status(3, 'error')
+        else:
+            self.update_step_status(3, 'unfinish')
     
     def upload_restaurant_file(self):
         """上传餐厅信息文件"""
@@ -520,22 +661,18 @@ class Tab3(QWidget):
         self.current_cp = None
         self.restaurants = []
         self.vehicles = []
-        
         self.cp_button.setText("未选择CP")
         self.load_restaurants_button.setEnabled(False)
         self.load_vehicles_button.setEnabled(False)
         self.generate_report_button.setEnabled(False)
-        
-        self.step1_status.clear()
-        self.step2_status.clear()
-        self.step3_status.clear()
-        
+        self.generate_total_button.setEnabled(False)
         self.tab_widget.clear()  # 清空所有页签内容
 
-        # 其他必要的重置操作
-        self.update_step_status(1, 'unfinish')
-        self.update_step_status(2, 'unfinish')
-        self.update_step_status(3, 'unfinish')
+        # 重置所有步骤状态
+        self.step_status_dict = {1: 'unfinish', 2: 'unfinish', 3: 'unfinish', 4: 'unfinish'}
+        for btn in [self.load_restaurants_button, self.load_vehicles_button, self.generate_report_button, self.generate_total_button]:
+            btn.setEnabled(False)
+            btn.setStyleSheet(self.button_style_tpl.format(bg='#BDBDBD', border_color='#E0E0E0'))
 
     """保存所有信息（车辆信息、收油表、平衡表）"""
     def save_all_data(self):
@@ -605,3 +742,75 @@ class Tab3(QWidget):
                 "保存错误",
                 f"保存过程中发生错误：{str(e)}"
             )
+
+    def generate_total(self):
+        """生成总表和收货确认书"""
+        self.update_step_status(4, 'dealing')
+        try:
+            # 获取车辆信息
+            vehicle_df = self.vehicle_viewer.get_data()
+            if vehicle_df is None or vehicle_df.empty:
+                QMessageBox.warning(self, "数据不完整", "车辆信息为空，请先载入车辆数据。")
+                self.update_step_status(4, 'error')
+                return
+
+            # 获取收油表数据
+            oil_records_df = self.report_viewer.get_data()
+            if oil_records_df is None or oil_records_df.empty:
+                QMessageBox.warning(self, "数据不完整", "收油表为空，请先生成收油表。")
+                self.update_step_status(4, 'error')
+                return
+
+            # 获取平衡表数据
+            balance_df = self.balance_view.get_data()
+            if balance_df is None or balance_df.empty:
+                QMessageBox.warning(self, "数据不完整", "平衡表为空，请先生成平衡表。")
+                self.update_step_status(4, 'error')
+                return
+
+            # 弹出销售运输天数输入对话框
+            dialog = SalesDaysDialog(self)
+            if dialog.exec_() == QDialog.Accepted:
+                days_input, balance_total = dialog.get_input_data()
+                
+                # 验证天数输入
+                if not days_input.isdigit() or not (1 <= int(days_input) <= 31):
+                    QMessageBox.warning(self, "输入错误", "销售运输天数必须为1到31之间的数字。")
+                    self.update_step_status(4, 'error')
+                    return
+                
+                # 调用服务生成总表和收货确认书
+                service = GetReceiveRecordService(model=ReceiveRecordModel, conf=CONF)
+                total_df = service.process_dataframe_with_new_columns(balance_df,balance_total)
+                check_df = service.generate_df_check(int(days_input), balance_df, vehicle_df)
+                total_df = service.process_check_to_sum(check_df, total_df)
+                
+                # 处理合同分配
+                # 获取转化系数
+                coeff_number = CONF.BUSINESS.REST2CP.比率
+                # 从平衡表中获取日期
+                current_date = balance_df['balance_date'].min().strftime('%Y-%m')
+                
+                # 调用合同分配处理函数
+                total_df, balance_last_month, balance_current_month = service.process_balance_sum_contract(
+                    total_df, check_df, None, balance_df, coeff_number, current_date
+                )
+                oil_records_df = service.copy_balance_to_oil_dataframes(oil_records_df, balance_current_month)
+
+                # 更新总表和收货确认书、收油表、平衡表视图
+                self.total_view.load_data(data=total_df)
+                self.check_view.load_data(data=check_df)
+                self.report_viewer.load_data(data=oil_records_df)
+                self.balance_view.load_data(data=balance_current_month)
+
+                # 切换到总表页签
+                self.tab_widget.setCurrentIndex(4)
+
+                self.logger.info("总表和收货确认书生成成功")
+                self.update_step_status(4, 'finish')
+            else:
+                self.update_step_status(4, 'unfinish')
+        except Exception as e:
+            self.logger.error(f"生成总表和收货确认书时出错: {str(e)}")
+            QMessageBox.critical(self, "生成失败", f"生成总表和收货确认书时出错: {str(e)}")
+            self.update_step_status(4, 'error')

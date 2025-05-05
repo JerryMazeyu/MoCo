@@ -2,6 +2,7 @@
 收油记录服务模块
 """
 import datetime
+from datetime import timedelta
 from typing import Dict, List, Optional, Any, Union
 import sys 
 import os
@@ -13,7 +14,7 @@ from app.services.instances.restaurant import Restaurant,RestaurantsGroup
 from app.services.instances.vehicle import Vehicle,VehicleGroup
 import numpy as np
 import pandas as pd
-from app.models.receive_record import ReceiveRecordModel,RestaurantBalanceModel
+from app.models.receive_record import ReceiveRecordModel,RestaurantBalanceModel,RestaurantTotalModel,BuyerConfirmationModel
 from app.models.vehicle_model import VehicleModel
 import random
 import math
@@ -710,6 +711,440 @@ class GetReceiveRecordService:
 
         return oil_records_df_final, restaurant_balance_final
 
+####################################################################################
+    """
+    总表：生成毛油库存 期末库存、辅助列、转化系数、产出重量、售出数量、加工量
+    传入平衡表_5月表
+    售出数量需要修改，规则没确定
+    步骤1：复制日期、车牌号、榜单净重、榜单编号、收集城市;
+    步骤2：新增一列加工量，如果当前日期为相同日期的最后一行，则加工量等于每个日期的榜单净重和，否则等于0 ；
+        新增一列毛油库存，公式为当前行的榜单净重+上一行的毛油库存-当前行的加工量；
+        新增一列辅助列，值为当前日期如果等于下一行的日期，则为空值，否则为1；
+    新增1列转化系数，值为=RANDBETWEEN(900,930)/1；
+    新增1列产出重量，值为round(加工量*转化系数/100,2);
+    新增1列售出数量，值为0
+    """
+    def process_dataframe_with_new_columns(self, balance_df: pd.DataFrame, total_df: pd.DataFrame = None) -> pd.DataFrame:
+        """
+        处理DataFrame并与总表合并
+        
+        :param balance_df: 当月平衡表，输入的DataFrame，至少包含'日期', '车牌号', '榜单净重', '榜单编号', '收集城市'字段
+        :param total_df: 总表DataFrame，如果为None则创建新的DataFrame
+        :return: 处理后的DataFrame
+        """
+        # 步骤1：新建一个dataframe,从dataframe复制日期、车牌号、榜单净重、榜单编号、收集城市
+        new_df = balance_df[['balance_date', 'balance_vehicle_license_plate', 'balance_weight_of_order', 'balance_order_number', 'balance_district']].copy()
+        new_df.rename(columns={'balance_date':'total_supplied_date','balance_vehicle_license_plate':'total_delivery_trucks_vehicle_registration_no','balance_weight_of_order':'total_supplied_weight_of_order','balance_order_number':'total_weighbridge_ticket_number','balance_district':'total_collection_city'},inplace=True)
+        
+        # 创建RestaurantTotalModel对象列表
+        total_records = []
+        for _, row in new_df.iterrows():
+            # 创建基础记录
+            record_dict = {
+                'total_supplied_date': row['total_supplied_date'],
+                'total_delivery_trucks_vehicle_registration_no': row['total_delivery_trucks_vehicle_registration_no'],
+                'total_supplied_weight_of_order': row['total_supplied_weight_of_order'],
+                'total_weighbridge_ticket_number': row['total_weighbridge_ticket_number'],
+                'total_collection_city': row['total_collection_city'],
+                'total_processing_quantity': 0.0,
+                'total_iol_mt': 0.0,
+                'total_conversion_coefficient': round(np.random.randint(900, 931)/10,2),
+                'total_output_quantity': 0.0,
+                'total_quantities_sold': 0,
+                'total_ending_inventory': 0.0,
+                'total_cp': None,  # 添加其他可能需要的字段
+                'total_sale_number_detail': None,
+                'total_volume_per_trucks': None,
+                'total_customer': None,
+                'total_sale_number': None,
+                'total_delivery_time': None,
+                'total_delivery_address': None
+            }
+            record = RestaurantTotalModel(**record_dict)
+            total_records.append(record)
+        
+        # 将模型对象列表转换回DataFrame
+        new_df = pd.DataFrame([record.dict() for record in total_records])
+        
+        # 步骤2：计算加工量和毛油库存
+        for date in new_df['total_supplied_date'].unique():
+            mask = new_df['total_supplied_date'] == date
+            if mask.sum() > 0:  # 确保有数据
+                total_weight = new_df.loc[mask, 'total_supplied_weight_of_order'].sum()
+                last_index = new_df[mask].index[-1]
+                new_df.at[last_index, 'total_processing_quantity'] = round(total_weight,2)
+                
+                # 更新毛油库存
+                running_total = 0.0
+                for idx in new_df[mask].index:
+                    current_weight = new_df.at[idx, 'total_supplied_weight_of_order']
+                    previous_inventory = running_total if idx != new_df[mask].index[0] else 0
+                    processing_amount = new_df.at[idx, 'total_processing_quantity']
+                    new_df.at[idx, 'total_iol_mt'] = round(current_weight + previous_inventory - processing_amount,2)
+                    running_total = new_df.at[idx, 'total_iol_mt']
+                    
+        # 计算产出重量
+        new_df['total_output_quantity'] = round(new_df['total_processing_quantity'] * new_df['total_conversion_coefficient'] / 100, 2)
+        
+        # 计算辅助列
+        new_df['辅助列'] = new_df['total_supplied_date'].ne(new_df['total_supplied_date'].shift(-1)).astype(int)
+        new_df['辅助列'] = new_df['辅助列'].replace({1: 1, 0: None})
+        
+        # 计算期末库存
+        previous_end_stock = 0.0 #第一行的期末库存前一行默认0
+        for index, row in new_df.iterrows():
+            current_output = row['total_output_quantity']
+            current_sale = row['total_quantities_sold']
+            new_df.at[index, 'total_ending_inventory'] = round(current_output + previous_end_stock - current_sale,2)
+            previous_end_stock = new_df.at[index, 'total_ending_inventory']
+
+        # 如果提供了总表，则合并数据
+        if total_df is not None:
+            # 使用concat合并两个DataFrame
+            result_df = pd.concat([total_df, new_df], ignore_index=True)
+            return result_df
+        
+        return new_df
+    """
+    收货确认书:传入收油表、销售车牌信息、收油重量、收货确认天数
+    """
+    def generate_df_check(self, days: int, df_balance: pd.DataFrame, df_car: pd.DataFrame) -> pd.DataFrame:
+        """
+        生成检查数据表
+        
+        :param days: 天数
+        :param df_balance: 当月平衡表DataFrame
+        :param df_car: 销售车牌表DataFrame
+        :return: 生成的检查数据表DataFrame
+        """
+        def random_weight():
+            """生成随机重量（吨）"""
+            return np.random.randint(3050, 3496) / 100
+        
+        def get_difference_value():
+            """查表获取差值"""
+            lookup_keys = [0,3,6,10,15,30,60,90,150,200,300,350,480,550,700,800,850,900,940,970,990,995,1001]
+            lookup_values = [-15,-14,-13,-12,-11,-7,-6,-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,11,12]
+            random_num = np.random.randint(1, 1001)
+            
+            # 找到对应区间
+            for i, key in enumerate(lookup_keys):
+                if random_num <= key:
+                    return lookup_values[i] / 100
+            return 0
+        
+        # 将DataFrame的每一行转换为字典，然后创建Vehicle对象
+        vehicles = [Vehicle(row.to_dict(), model=VehicleModel) for _, row in df_car.iterrows()]
+        vehicle_group = VehicleGroup(vehicles=vehicles)
+        
+        cp_vehicle_df = vehicle_group.filter_available()
+        cp_vehicle_df = cp_vehicle_df.filter_by_type(vehicle_type="to_sale")
+        cp_vehicle_df = cp_vehicle_df.to_dataframe()
+
+        oil_weight = self.conf.get("BUSINESS.REST2CP.收油重量（成品）")
+        
+        # 创建BuyerConfirmationModel对象列表
+        check_records = []
+        
+        # 步骤1：确定行数和重量
+        total_weight = 0
+        weights = []
+        while True:
+            weight = random_weight()
+            weights.append(weight)
+            total_weight = sum(weights)
+            if total_weight >= oil_weight:
+                lower_bound = oil_weight * 0.95
+                upper_bound = oil_weight * 1.05
+                if lower_bound <= total_weight <= upper_bound:
+                    break
+                else:
+                    weights = []
+                    total_weight = 0
+        rows_count = len(weights)
+    
+        # 步骤2：分配日期
+        start_date = pd.to_datetime(df_balance['balance_date'].min()) + timedelta(days=1)
+        base_cars_per_day = rows_count // days
+        remaining_total_cars = rows_count
+        dates = []
+
+        for day in range(days):
+            current_date = start_date + timedelta(days=day)
+            
+            if day == days - 1:  # 最后一天
+                # 将剩余所有车次分配到最后一天
+                day_cars = remaining_total_cars
+            else:
+                # 随机生成当天车次 (基础车次 ± 1)
+                day_cars = base_cars_per_day + np.random.choice([-1, 0, 1])
+                # 确保不会分配过多或过少
+                if remaining_total_cars - day_cars < (days - day - 1):  # 确保后面的天数至少每天能分配1辆车
+                    day_cars = remaining_total_cars - (days - day - 1)
+                elif remaining_total_cars - day_cars > (days - day - 1) * (base_cars_per_day + 1):  # 确保后面的天数不会超出最大可能车次
+                    day_cars = remaining_total_cars - (days - day - 1) * (base_cars_per_day + 1)
+            
+            # 确保当天车次不会小于0
+            day_cars = max(1, min(day_cars, remaining_total_cars))
+            remaining_total_cars -= day_cars
+            
+            # 添加当天的日期
+            dates.extend([current_date] * day_cars)
+        
+        # 步骤5：分配车辆信息
+        # 随机打乱车辆信息
+        df_car_shuffled = cp_vehicle_df.sample(frac=1).reset_index(drop=True)
+        car_info = df_car_shuffled.iloc[:(rows_count % len(df_car_shuffled) + 1)].copy()
+        while len(car_info) < rows_count:
+            car_info = pd.concat([car_info, df_car_shuffled])
+        car_info = car_info.iloc[:rows_count]
+        
+        # 创建检查记录
+        for i in range(rows_count):
+            current_date = dates[i]
+            current_date_str = current_date.strftime('%Y%m')
+            weight = weights[i]
+            car = car_info.iloc[i]
+            tare_weight = car['vehicle_tare_weight'] + np.random.randint(1, 14) * 10
+            net_weight = int(weight * 1000)
+            gross_weight = tare_weight + net_weight
+            difference = get_difference_value()
+            unload_weight = weight + difference
+            
+            # 创建完整的记录字典
+            record_dict = {
+                'check_date': current_date,
+                'check_name': "工业级混合油",
+                'check_truck_plate_no': car['vehicle_license_plate'],
+                'check_weight': weight,
+                'check_quantity': car['vehicle_driver_name'],
+                'check_weighbridge_ticket_number': f"BD{current_date_str}{str(i+1).zfill(3)}",
+                'check_gross_weight': gross_weight,
+                'check_tare_weight': tare_weight,
+                'check_net_weight': net_weight,
+                'check_unload_weight': unload_weight,
+                'check_difference': difference,
+                'check_belong_cp': None,  # 添加其他可能需要的字段
+                'check_description_of_material': None
+            }
+            
+            record = BuyerConfirmationModel(**record_dict)
+            check_records.append(record)
+        
+        # 将模型对象列表转换为DataFrame
+        df_check = pd.DataFrame([record.dict() for record in check_records])
+        
+        return df_check
+    
+    """
+    复制收货确认书的"数据透视表"的每日重量一列至物料平衡表-总表，对齐日期
+    传入收货确认书和平衡表-总表
+    """
+    def process_check_to_sum(self, df_generate_check: pd.DataFrame, df_generate_sum: pd.DataFrame) -> pd.DataFrame:
+        """
+        处理两个DataFrame并生成一个新的DataFrame。
+        
+        :param df_generate_check: 包含提货日期和重量的DataFrame,收货确认书
+        :param df_generate_sum: 包含供应日期和售出数量的DataFrame，物料平衡表-总表
+        :return: 处理后的DataFrame
+        """
+        # 步骤1：对df_generate_check表根据提货日期对重量进行求和汇总得到df_sum
+        df_sum = df_generate_check.groupby('check_date')['check_weight'].sum().reset_index()
+        df_sum.rename(columns={'check_weight': '汇总重量'}, inplace=True)
+        
+        # 确保日期列的类型一致
+        df_sum['check_date'] = pd.to_datetime(df_sum['check_date'])
+        df_generate_sum['total_supplied_date'] = pd.to_datetime(df_generate_sum['total_supplied_date'])
+        
+        # 步骤2：关联df_generate_sum和df_sum，根据df_generate_sum的供应日期和df_sum的提货日期，
+        # 将df_generate_sum中相同日期的最后一行的售出数量赋值为df_sum对应日期的汇总值
+        df_merged = pd.merge(df_generate_sum, df_sum, left_on='total_supplied_date', right_on='check_date', how='left')
+        
+        # 对于每个日期，找到最后一行并将售出数量设置为汇总重量
+        for date in df_merged['total_supplied_date'].unique():
+            mask = df_merged['total_supplied_date'] == date
+            if mask.sum() > 0:  # 确保有数据
+                last_index = df_merged[mask].index[-1]  # 获取相同日期中的最后一行索引
+                df_merged.at[last_index, 'total_quantities_sold'] = df_merged.loc[last_index, '汇总重量']
+        
+        # 删除不必要的列
+        df_final = df_merged.drop(columns=['check_date', '汇总重量'])
+        
+        return df_final
+    
+    """
+    复制流水号、交付时间和销售合同号
+    输入收油表和平衡表_5月表"""
+    def copy_balance_to_oil_dataframes(self,df_generate_oil: pd.DataFrame, df_generate_balance: pd.DataFrame) -> pd.DataFrame:
+        """
+        将df_generate_balance的信息合并到df_generate_oil中。
+        
+        :param df_generate_oil: 主表DataFrame，包含车牌号和累计收油数等信息
+        :param df_generate_balance: 包含流水号、交付时间、销售合同号等信息的DataFrame
+        :return: 合并后的df_generate_oil DataFrame
+        """
+        # 检查必要的列是否存在
+        required_oil_columns = ['rr_vehicle_license_plate', 'rr_amount_of_day', 'rr_date']
+        required_balance_columns = ['balance_vehicle_license_plate', 'balance_amount_of_day', 'balance_date']
+        
+        missing_oil_columns = [col for col in required_oil_columns if col not in df_generate_oil.columns]
+        missing_balance_columns = [col for col in required_balance_columns if col not in df_generate_balance.columns]
+        
+        if missing_oil_columns:
+            raise ValueError(f"df_generate_oil 缺少必要的列: {missing_oil_columns}")
+        if missing_balance_columns:
+            raise ValueError(f"df_generate_balance 缺少必要的列: {missing_balance_columns}")
+        
+        # 确保日期列的类型一致
+        df_generate_oil['rr_date'] = pd.to_datetime(df_generate_oil['rr_date'])
+        df_generate_balance['balance_date'] = pd.to_datetime(df_generate_balance['balance_date'])
+        
+        # 选择需要的列进行合并
+        balance_columns = [
+            'balance_vehicle_license_plate', 
+            'balance_amount_of_day', 
+            'balance_serial_number', 
+            'balance_date', 
+            'balance_sale_number'
+        ]
+        
+        # 打印调试信息
+        print("df_generate_oil columns:", df_generate_oil.columns.tolist())
+        print("df_generate_balance columns:", df_generate_balance.columns.tolist())
+        print("df_generate_oil shape:", df_generate_oil.shape)
+        print("df_generate_balance shape:", df_generate_balance.shape)
+        
+        # 执行合并
+        merged_df = pd.merge(
+            df_generate_oil,
+            df_generate_balance[balance_columns],
+            left_on=['rr_vehicle_license_plate', 'rr_amount_of_day', 'rr_date'],
+            right_on=['balance_vehicle_license_plate', 'balance_amount_of_day', 'balance_date'],
+            how='left'
+        )
+        
+        # 更新df_generate_oil的相应列
+        df_generate_oil['rr_sale_number'] = merged_df['balance_sale_number']
+        
+        return df_generate_oil
+
+    def process_balance_sum_contract(self, df_generate_sum: pd.DataFrame, df_generate_check: pd.DataFrame,
+                       df_generate_balance_last_month: pd.DataFrame, df_generate_balance_current_month: pd.DataFrame,
+                       coeff_number: float, current_date: str):
+        """
+        处理两个DataFrame并生成一个新的DataFrame。
+        
+        :param df_generate_sum: 包含供应日期、产出重量、期末库存等信息的DataFrame
+        :param df_generate_check: 包含重量列的DataFrame
+        :param df_generate_balance_last_month: 上月的平衡表DataFrame，可以为空
+        :param df_generate_balance_current_month: 当月的平衡表DataFrame
+        :param coeff_number: 浮点型数据，用于后续计算
+        :param current_date: 字符串格式的当前日期
+        :return: 处理后的DataFrame
+        """
+        # 检查必要参数是否为空
+        if df_generate_sum is None or df_generate_sum.empty:
+            raise ValueError("df_generate_sum不能为空")
+        if df_generate_check is None or df_generate_check.empty:
+            raise ValueError("df_generate_check不能为空")
+        if df_generate_balance_current_month is None or df_generate_balance_current_month.empty:
+            raise ValueError("df_generate_balance_current_month不能为空")
+        if coeff_number is None:
+            raise ValueError("coeff_number不能为空")
+        if current_date is None:
+            raise ValueError("current_date不能为空")
+
+        # 步骤1：sum_product=df_generate_check的重量列进的和
+        sum_product = df_generate_check['check_weight'].sum()
+        
+        # 步骤2：获取上一个日期
+        current_date = pd.to_datetime(current_date)
+        last_month = (current_date - timedelta(days=current_date.day)).replace(day=1)
+        
+        # 检查是否存在上个月的数据
+        last_month_mask = df_generate_sum['total_supplied_date'].dt.to_period('M') == last_month.to_period('M')
+        last_month_data = df_generate_sum[last_month_mask]
+        last_month_ending_inventory = 0  # 默认值为0
+        if not last_month_data.empty:
+            last_month_ending_inventory = last_month_data.iloc[-1]['total_ending_inventory']
+        
+        # 步骤3：当月的产出重量month_quantity = sum_product-last_month_ending_inventory 
+        month_quantity = sum_product - last_month_ending_inventory
+        
+        # 步骤4：取出df_generate_sum表中供应日期的月份等于current_date月份并且产出重量不为空值或者null值的供应日期和产出重量值，并去重，
+        # 循环去重后的供应日期和产出重量值，对产出重量值进行累加求和，当加到某一行的产出重量累加值<=month_quantity 并且下一行的产出重量累加值>month_quantity 时停止，
+        # 记录当前行的供应日期stop_date和累加值sum_quantity；
+        mask_current_month = (df_generate_sum['total_supplied_date'].dt.to_period('M') == current_date.to_period('M')) & (df_generate_sum['total_output_quantity'].notna())
+        filtered_df = df_generate_sum[mask_current_month][['total_supplied_date', 'total_output_quantity']].drop_duplicates()
+        
+        cumulative_sum = 0
+        stop_date = None
+        sum_quantity = 0
+        for index, row in filtered_df.iterrows():
+            cumulative_sum += row['total_output_quantity']
+            if cumulative_sum > month_quantity:
+                stop_date = row['total_supplied_date']
+                sum_quantity = cumulative_sum - row['total_output_quantity']
+                break
+            else:
+                stop_date = filtered_df.iloc[-1]['total_supplied_date']
+                sum_quantity = cumulative_sum
+        
+        # 步骤5：求出剩余的原料remaining_materia= （month_quantity  -sum_quantity）/coeff_number,
+        remaining_material = (month_quantity - sum_quantity) / coeff_number
+        
+        # 依次对df_generate_sum中供应日期大于stop_date的行的每车吨量累加求和，直到累加和>remaining_materia停止，记录对应的行索引stop_index
+        mask_after_stop_date = (df_generate_sum['total_supplied_date'] >= stop_date) #大于等于，因为stop_date上面是已经大于剩余量的日期
+        cumulative_weight = 0
+        stop_index = None
+        for idx, row in df_generate_sum[mask_after_stop_date].iterrows():
+            cumulative_weight += row['total_output_quantity']
+            if cumulative_weight > remaining_material:
+                stop_index = idx
+                break
+        
+        # 步骤6：填充df_generate_sum表中分配明细列，
+        # 填充规则为1：供应日期的月份=current_date减1个月的合同分配明细列为空的分配明细列；
+        # 2：供应日期的月份=current_date对应月份行索引<=stop_index的分配明细列。
+        # 填充值为BWD-JC开头，加current_date年份的后2位数字，加current_date月份的第一天，
+        # 例如current_date='2024-05-06'，则填充值为BWD-JC240501
+        fill_value = f"BWD-JC{str(current_date.year)[-2:]}{current_date.month:02d}01"
+        
+        # 规则1
+        mask_last_month = df_generate_sum['total_supplied_date'].dt.to_period('M') == last_month.to_period('M')
+        df_generate_sum.loc[mask_last_month & df_generate_sum['total_sale_number_detail'].isna(), 'total_sale_number_detail'] = fill_value
+        
+        # 规则2
+        mask_current_month = df_generate_sum['total_supplied_date'].dt.to_period('M') == current_date.to_period('M')
+        mask_until_stop_index = df_generate_sum.index <= stop_index
+        df_generate_sum.loc[mask_current_month & mask_until_stop_index & df_generate_sum['total_sale_number_detail'].isna(), 'total_sale_number_detail'] = fill_value
+
+        # 步骤7：如果df_generate_balance_last_month不为空，则填充其合同分配明细列
+        if df_generate_balance_last_month is not None and not df_generate_balance_last_month.empty:
+            df_generate_balance_last_month.loc[df_generate_balance_last_month['total_sale_number_detail'].isna(), 'total_sale_number_detail'] = fill_value
+        
+        # 步骤8：填充df_generate_balance_current_month分配明细列，规则为关联df_generate_sum表，根据日期和过磅单编号关联，
+        # 填充值为BWD-JC开头，加current_date年份的后2位数字，加current_date月份的第一天
+        # 确保日期列的类型一致
+        df_generate_balance_current_month['balance_date'] = pd.to_datetime(df_generate_balance_current_month['balance_date'])
+        df_generate_sum['total_supplied_date'] = pd.to_datetime(df_generate_sum['total_supplied_date'])
+        
+        # 保存原始列名
+        original_columns = df_generate_balance_current_month.columns.tolist()
+        
+        # 合并数据，只选择需要的列
+        merged_df = df_generate_balance_current_month.merge(
+            df_generate_sum[['total_supplied_date', 'total_weighbridge_ticket_number', 'total_sale_number_detail']], 
+            left_on=['balance_date', 'balance_order_number'], 
+            right_on=['total_supplied_date', 'total_weighbridge_ticket_number'], 
+            how='left'
+        )
+        
+        # 只保留原始列，并更新balance_sale_number
+        df_generate_balance_current_month = merged_df[original_columns].copy()
+        df_generate_balance_current_month['balance_sale_number'] = merged_df['total_sale_number_detail'].fillna(fill_value)
+
+        return df_generate_sum, df_generate_balance_last_month, df_generate_balance_current_month
 
 if __name__ == "__main__":
     from app.config.config import CONF
