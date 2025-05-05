@@ -1102,6 +1102,8 @@ class GetReceiveRecordService:
             if cumulative_weight > remaining_material:
                 stop_index = idx
                 break
+            else:
+                stop_index = df_generate_sum.index[-1]
         
         # 步骤6：填充df_generate_sum表中分配明细列，
         # 填充规则为1：供应日期的月份=current_date减1个月的合同分配明细列为空的分配明细列；
@@ -1142,7 +1144,7 @@ class GetReceiveRecordService:
         
         # 只保留原始列，并更新balance_sale_number
         df_generate_balance_current_month = merged_df[original_columns].copy()
-        df_generate_balance_current_month['balance_sale_number'] = merged_df['total_sale_number_detail'].fillna(fill_value)
+        df_generate_balance_current_month['balance_sale_number'] = merged_df['total_sale_number_detail']
 
         return df_generate_sum, df_generate_balance_last_month, df_generate_balance_current_month
 
