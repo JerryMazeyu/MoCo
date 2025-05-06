@@ -112,9 +112,24 @@ class SalesDaysDialog(QDialog):
         self.file_button.clicked.connect(self.select_file)
         self.file_button.setVisible(False)
         layout.addWidget(self.file_button)
+
+        # 从OSS读取选项
+        self.oss_group = QButtonGroup(self)
+        self.oss_yes = QRadioButton("是", self)
+        self.oss_no = QRadioButton("否", self)
+        self.oss_yes.setChecked(True)  # 默认选择"是"
+        
+        self.oss_label = QLabel("是否读取OSS平衡表总表:", self)
+        layout.addWidget(self.oss_label)
+        
+        oss_radio_layout = QHBoxLayout()
+        oss_radio_layout.addWidget(self.oss_yes)
+        oss_radio_layout.addWidget(self.oss_no)
+        layout.addLayout(oss_radio_layout)
         
         # 连接单选按钮信号
         self.upload_yes.toggled.connect(self.toggle_file_button)
+        self.upload_no.toggled.connect(self.toggle_oss_options)
         
         # 确认和取消按钮
         button_layout = QHBoxLayout()
@@ -133,6 +148,16 @@ class SalesDaysDialog(QDialog):
     def toggle_file_button(self, checked):
         """切换文件上传按钮的可见性"""
         self.file_button.setVisible(checked)
+        # 当选择上传文件时，隐藏OSS选项
+        self.oss_label.setVisible(not checked)
+        self.oss_yes.setVisible(not checked)
+        self.oss_no.setVisible(not checked)
+
+    def toggle_oss_options(self, checked):
+        """切换OSS选项的可见性"""
+        self.oss_label.setVisible(checked)
+        self.oss_yes.setVisible(checked)
+        self.oss_no.setVisible(checked)
 
     def select_file(self):
         """选择并读取Excel文件"""
@@ -156,7 +181,26 @@ class SalesDaysDialog(QDialog):
 
     def get_input_data(self):
         """获取输入的数据"""
-        return self.days_input.text(), self.balance_total
+        days_input = self.days_input.text()
+        
+        # 如果选择上传文件
+        if self.upload_yes.isChecked():
+            return days_input, self.balance_total
+        
+        # 如果选择从OSS读取
+        if self.upload_no.isChecked() and self.oss_yes.isChecked():
+            try:
+                # 获取父窗口的total_file路径
+                parent = self.parent()
+                if hasattr(parent, 'total_file'):
+                    self.balance_total = oss_get_excel_file(parent.total_file)
+                    if self.balance_total is None:
+                        QMessageBox.warning(self, "文件不存在", f"未在OSS中找到文件: {parent.total_file}")
+            except Exception as e:
+                QMessageBox.critical(self, "读取失败", f"从OSS读取总表失败: {str(e)}")
+                self.balance_total = None
+        
+        return days_input, self.balance_total
 
 class Tab3(QWidget):
     """收油表生成Tab，实现餐厅和车辆信息的加载与收油表生成"""
@@ -703,7 +747,20 @@ class Tab3(QWidget):
                         success_count += 1
                 except Exception as e:
                     error_messages.append(f"保存平衡表失败: {str(e)}")
-            
+            # 保存总表
+            if self.total_view:
+                try:
+                    if self.balance_view.save_file():
+                        success_count +=1
+                except Exception as e:
+                    error_messages.append(f"保存总表失败: {str(e)}")
+            # 保存收货确认书
+            if self.check_view:
+                try:
+                    if self.check_view.save_file():
+                        success_count +=1
+                except Exception as e:
+                    error_messages.append(f"保存总表失败: {str(e)}")
             # 显示保存结果
             if error_messages:
                 # 如果有错误，显示错误信息
@@ -781,14 +838,29 @@ class Tab3(QWidget):
                 
                 # 调用服务生成总表和收货确认书
                 service = GetReceiveRecordService(model=ReceiveRecordModel, conf=CONF)
-                total_df = service.process_dataframe_with_new_columns(balance_df,balance_total)
-                check_df = service.generate_df_check(int(days_input), balance_df, vehicle_df)
+
+                # 1. 先生成总表的基础结构
+                total_df = service.process_dataframe_with_new_columns(balance_df, balance_total)
+
+                # 2. 生成收货确认书
+                check_df,cp_vehicle_df = service.generate_df_check(int(days_input), balance_df, vehicle_df)
+
+                # 3. 更新总表的售出数量
                 total_df = service.process_check_to_sum(check_df, total_df)
-                
-                # 处理合同分配
-                # 获取转化系数
+
+                # 4. 重新计算期末库存
+                previous_end_stock = 0.0  # 第一行的期末库存前一行默认0
+                for index, row in total_df.iterrows():
+                    current_output = row['total_output_quantity'] if pd.notna(row['total_output_quantity']) else 0
+                    current_sale = row['total_quantities_sold'] if pd.notna(row['total_quantities_sold']) else 0
+                    current_inventory = round(current_output + previous_end_stock - current_sale, 2)
+                    if current_inventory < 0:
+                        raise ValueError(f"{row['total_supplied_date']}库存不足: 当前产出量({current_output}) + 上期库存({previous_end_stock}) < 售出数量({current_sale})")
+                    total_df.at[index, 'total_ending_inventory'] = current_inventory
+                    previous_end_stock = current_inventory
+
+                # 5. 处理合同分配
                 coeff_number = CONF.BUSINESS.REST2CP.比率
-                # 从平衡表中获取日期
                 current_date = balance_df['balance_date'].min().strftime('%Y-%m')
                 
                 # 调用合同分配处理函数
@@ -802,6 +874,8 @@ class Tab3(QWidget):
                 self.check_view.load_data(data=check_df)
                 self.report_viewer.load_data(data=oil_records_df)
                 self.balance_view.load_data(data=balance_current_month)
+                ## 更新车辆信息
+                self.vehicle_viewer.load_data(data=cp_vehicle_df)
 
                 # 切换到总表页签
                 self.tab_widget.setCurrentIndex(4)

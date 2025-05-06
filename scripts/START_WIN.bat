@@ -40,25 +40,25 @@ if "%FOUND_FILE%"=="false" (
 )
 
 REM 激活Conda环境
-echo 正在尝试激活conda环境...
-call conda activate moco
-if %ERRORLEVEL% NEQ 0 (
-    echo conda activate moco 命令失败，尝试其他方式...
+@REM echo 正在尝试激活conda环境...
+@REM call conda activate moco
+@REM if %ERRORLEVEL% NEQ 0 (
+@REM     echo conda activate moco 命令失败，尝试其他方式...
     
-    REM 尝试其他可能的conda激活路径
-    if exist C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat (
-        echo 尝试路径: C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat
-        call C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat moco
-    ) else if exist C:\ProgramData\Anaconda3\Scripts\activate.bat (
-        echo 尝试路径: C:\ProgramData\Anaconda3\Scripts\activate.bat
-        call C:\ProgramData\Anaconda3\Scripts\activate.bat moco
-    ) else if exist C:\Users\%USERNAME%\miniconda3\Scripts\activate.bat (
-        echo 尝试路径: C:\Users\%USERNAME%\miniconda3\Scripts\activate.bat
-        call C:\Users\%USERNAME%\miniconda3\Scripts\activate.bat moco
-    ) else (
-        echo 警告: 无法找到conda环境，将使用系统Python
-    )
-)
+@REM     REM 尝试其他可能的conda激活路径
+@REM     if exist C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat (
+@REM         echo 尝试路径: C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat
+@REM         call C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat moco
+@REM     ) else if exist C:\ProgramData\Anaconda3\Scripts\activate.bat (
+@REM         echo 尝试路径: C:\ProgramData\Anaconda3\Scripts\activate.bat
+@REM         call C:\ProgramData\Anaconda3\Scripts\activate.bat moco
+@REM     ) else if exist C:\Users\%USERNAME%\miniconda3\Scripts\activate.bat (
+@REM         echo 尝试路径: C:\Users\%USERNAME%\miniconda3\Scripts\activate.bat
+@REM         call C:\Users\%USERNAME%\miniconda3\Scripts\activate.bat moco
+@REM     ) else (
+@REM         echo 警告: 无法找到conda环境，将使用系统Python
+@REM     )
+@REM )
 
 echo 环境准备完成，开始运行应用程序...
 

@@ -714,7 +714,7 @@ class GetReceiveRecordService:
 ####################################################################################
     """
     总表：生成毛油库存 期末库存、辅助列、转化系数、产出重量、售出数量、加工量
-    传入平衡表_5月表
+    传入平衡表_5月表和平衡表总表
     售出数量需要修改，规则没确定
     步骤1：复制日期、车牌号、榜单净重、榜单编号、收集城市;
     步骤2：新增一列加工量，如果当前日期为相同日期的最后一行，则加工量等于每个日期的榜单净重和，否则等于0 ；
@@ -734,7 +734,12 @@ class GetReceiveRecordService:
         """
         # 步骤1：新建一个dataframe,从dataframe复制日期、车牌号、榜单净重、榜单编号、收集城市
         new_df = balance_df[['balance_date', 'balance_vehicle_license_plate', 'balance_weight_of_order', 'balance_order_number', 'balance_district']].copy()
-        new_df.rename(columns={'balance_date':'total_supplied_date','balance_vehicle_license_plate':'total_delivery_trucks_vehicle_registration_no','balance_weight_of_order':'total_supplied_weight_of_order','balance_order_number':'total_weighbridge_ticket_number','balance_district':'total_collection_city'},inplace=True)
+        new_df.rename(columns={'balance_date':'total_supplied_date',
+                               'balance_vehicle_license_plate':'total_delivery_trucks_vehicle_registration_no',
+                               'balance_weight_of_order':'total_supplied_weight_of_order',
+                               'balance_order_number':'total_weighbridge_ticket_number',
+                               'balance_district':'total_collection_city'}
+                               ,inplace=True)
         
         # 创建RestaurantTotalModel对象列表
         total_records = []
@@ -750,9 +755,9 @@ class GetReceiveRecordService:
                 'total_iol_mt': 0.0,
                 'total_conversion_coefficient': round(np.random.randint(900, 931)/10,2),
                 'total_output_quantity': 0.0,
-                'total_quantities_sold': 0,
-                'total_ending_inventory': 0.0,
-                'total_cp': None,  # 添加其他可能需要的字段
+                'total_quantities_sold': 0,  # 这个值会在后面由 process_check_to_sum 更新
+                'total_ending_inventory': 0.0,  # 这个值会在后面根据 total_quantities_sold 重新计算
+                'total_cp': None,
                 'total_sale_number_detail': None,
                 'total_volume_per_trucks': None,
                 'total_customer': None,
@@ -789,14 +794,6 @@ class GetReceiveRecordService:
         # 计算辅助列
         new_df['辅助列'] = new_df['total_supplied_date'].ne(new_df['total_supplied_date'].shift(-1)).astype(int)
         new_df['辅助列'] = new_df['辅助列'].replace({1: 1, 0: None})
-        
-        # 计算期末库存
-        previous_end_stock = 0.0 #第一行的期末库存前一行默认0
-        for index, row in new_df.iterrows():
-            current_output = row['total_output_quantity']
-            current_sale = row['total_quantities_sold']
-            new_df.at[index, 'total_ending_inventory'] = round(current_output + previous_end_stock - current_sale,2)
-            previous_end_stock = new_df.at[index, 'total_ending_inventory']
 
         # 如果提供了总表，则合并数据
         if total_df is not None:
@@ -837,9 +834,9 @@ class GetReceiveRecordService:
         vehicles = [Vehicle(row.to_dict(), model=VehicleModel) for _, row in df_car.iterrows()]
         vehicle_group = VehicleGroup(vehicles=vehicles)
         
-        cp_vehicle_df = vehicle_group.filter_available()
-        cp_vehicle_df = cp_vehicle_df.filter_by_type(vehicle_type="to_sale")
-        cp_vehicle_df = cp_vehicle_df.to_dataframe()
+        # 获取可用的销售车辆
+        cp_vehicle_group = vehicle_group.filter_available()
+        cp_vehicle_group = cp_vehicle_group.filter_by_type(vehicle_type="to_sale")
 
         oil_weight = self.conf.get("BUSINESS.REST2CP.收油重量（成品）")
         
@@ -862,7 +859,7 @@ class GetReceiveRecordService:
                     weights = []
                     total_weight = 0
         rows_count = len(weights)
-    
+
         # 步骤2：分配日期
         start_date = pd.to_datetime(df_balance['balance_date'].min()) + timedelta(days=1)
         base_cars_per_day = rows_count // days
@@ -891,21 +888,41 @@ class GetReceiveRecordService:
             # 添加当天的日期
             dates.extend([current_date] * day_cars)
         
-        # 步骤5：分配车辆信息
-        # 随机打乱车辆信息
-        df_car_shuffled = cp_vehicle_df.sample(frac=1).reset_index(drop=True)
-        car_info = df_car_shuffled.iloc[:(rows_count % len(df_car_shuffled) + 1)].copy()
-        while len(car_info) < rows_count:
-            car_info = pd.concat([car_info, df_car_shuffled])
-        car_info = car_info.iloc[:rows_count]
-        
         # 创建检查记录
+        daily_cars = {}  # 用于记录每天需要的车辆数
+        for date in dates:
+            date_str = date.strftime('%Y-%m-%d')
+            daily_cars[date_str] = daily_cars.get(date_str, 0) + 1
+
         for i in range(rows_count):
             current_date = dates[i]
-            current_date_str = current_date.strftime('%Y%m')
+            current_date_str = current_date.strftime('%Y-%m-%d')
+            
+            # 获取当天可用的车辆
+            available_vehicles = cp_vehicle_group.filter_available(current_date_str)
+            available_vehicles = available_vehicles.filter_by_type(vehicle_type="to_sale")
+            
+            # 如果没有可用车辆，抛出异常
+            if available_vehicles.count() == 0:
+                needed = daily_cars[current_date_str]  # 使用当天实际需要的车辆数
+                raise ValueError(f"日期 {current_date_str} 没有可用车辆，该日期需要 {needed} 辆车进行收油作业")
+            
+            # 分配一辆可用车辆
+            allocated_vehicle = available_vehicles.allocate(date=current_date_str)
+            if allocated_vehicle is None:
+                needed = daily_cars[current_date_str]  # 使用当天实际需要的车辆数
+                available = available_vehicles.count()
+                raise ValueError(f"日期 {current_date_str} 车辆分配失败，需要 {needed} 辆车，但只有 {available} 辆可用车辆")
+            
+            # 更新车辆最后使用时间，注意是更新原始数据
+            vehicle_group.update_vehicle_info(
+                allocated_vehicle.info['vehicle_id'],
+                {'vehicle_last_use': current_date_str}
+            )
+            
+            # 获取车辆信息
             weight = weights[i]
-            car = car_info.iloc[i]
-            tare_weight = car['vehicle_tare_weight'] + np.random.randint(1, 14) * 10
+            tare_weight = allocated_vehicle.info['vehicle_tare_weight'] + np.random.randint(1, 14) * 10
             net_weight = int(weight * 1000)
             gross_weight = tare_weight + net_weight
             difference = get_difference_value()
@@ -915,16 +932,16 @@ class GetReceiveRecordService:
             record_dict = {
                 'check_date': current_date,
                 'check_name': "工业级混合油",
-                'check_truck_plate_no': car['vehicle_license_plate'],
+                'check_truck_plate_no': allocated_vehicle.info['vehicle_license_plate'],
                 'check_weight': weight,
-                'check_quantity': car['vehicle_driver_name'],
-                'check_weighbridge_ticket_number': f"BD{current_date_str}{str(i+1).zfill(3)}",
+                'check_quantity': allocated_vehicle.info['vehicle_driver_name'],
+                'check_weighbridge_ticket_number': f"BD{current_date.strftime('%Y%m')}{str(i+1).zfill(3)}",
                 'check_gross_weight': gross_weight,
                 'check_tare_weight': tare_weight,
                 'check_net_weight': net_weight,
                 'check_unload_weight': unload_weight,
                 'check_difference': difference,
-                'check_belong_cp': None,  # 添加其他可能需要的字段
+                'check_belong_cp': None,
                 'check_description_of_material': None
             }
             
@@ -933,8 +950,8 @@ class GetReceiveRecordService:
         
         # 将模型对象列表转换为DataFrame
         df_check = pd.DataFrame([record.dict() for record in check_records])
-        
-        return df_check
+        cp_vehicle_df = vehicle_group.to_dataframe()
+        return df_check,cp_vehicle_df
     
     """
     复制收货确认书的"数据透视表"的每日重量一列至物料平衡表-总表，对齐日期
@@ -1009,10 +1026,10 @@ class GetReceiveRecordService:
         ]
         
         # 打印调试信息
-        print("df_generate_oil columns:", df_generate_oil.columns.tolist())
-        print("df_generate_balance columns:", df_generate_balance.columns.tolist())
-        print("df_generate_oil shape:", df_generate_oil.shape)
-        print("df_generate_balance shape:", df_generate_balance.shape)
+        # print("df_generate_oil columns:", df_generate_oil.columns.tolist())
+        # print("df_generate_balance columns:", df_generate_balance.columns.tolist())
+        # print("df_generate_oil shape:", df_generate_oil.shape)
+        # print("df_generate_balance shape:", df_generate_balance.shape)
         
         # 执行合并
         merged_df = pd.merge(
