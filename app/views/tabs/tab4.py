@@ -3,12 +3,18 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QPushButton, QScrollArea, QFrame, QFormLayout,
                              QLineEdit, QMessageBox, QDialog, QGridLayout, QSpinBox,
-                             QListWidget)
-from PyQt5.QtCore import Qt, pyqtSignal
+                             QListWidget, QTreeWidget, QTreeWidgetItem, QHeaderView,
+                             QMenu, QAction)
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QPoint
+from PyQt5.QtGui import QDesktopServices, QCursor
 from app.services.instances.cp import CP
 from app.utils.logger import setup_logger
-from app.utils.oss import oss_get_json_file, oss_get_yaml_file, oss_put_yaml_file
+from app.utils.oss import oss_get_json_file, oss_get_yaml_file, oss_put_yaml_file, oss_list_objects, oss_delete_object
 from app.config.config import CONF
+import os
+import requests
+import shutil
+import urllib.parse
 
 # 设置日志
 LOGGER = setup_logger()
@@ -53,6 +59,286 @@ class AccountSelectDialog(QDialog):
         if selected_items:
             return selected_items[0].text()
         return None
+
+# CP详情对话框
+class CPDetailDialog(QDialog):
+    """CP详情对话框，显示OSS上的相关文件夹和文件"""
+    def __init__(self, cp_id, parent=None):
+        super().__init__(parent)
+        self.cp_id = cp_id
+        self.setWindowTitle(f"CP详情 - {cp_id}")
+        self.setMinimumSize(800, 600)
+        self.setup_ui()
+        self.load_data()
+    
+    def setup_ui(self):
+        """设置UI"""
+        layout = QVBoxLayout(self)
+        
+        # 标题
+        title_layout = QHBoxLayout()
+        title = QLabel(f"CP ID: {self.cp_id}")
+        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        title_layout.addWidget(title)
+        title_layout.addStretch()
+        layout.addLayout(title_layout)
+        
+        # 文件树
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels(["文件名", "类型", "大小", "操作"])
+        self.tree.setColumnWidth(0, 400)
+        self.tree.setColumnWidth(3, 80)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self.show_context_menu)
+        layout.addWidget(self.tree)
+        
+        # 按钮区域
+        btn_layout = QHBoxLayout()
+        self.download_btn = QPushButton("一键下载")
+        self.download_btn.setStyleSheet("""
+            background-color: #4a86e8;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-weight: bold;
+        """)
+        self.open_oss_btn = QPushButton("打开OSS链接")
+        self.open_oss_btn.setStyleSheet("""
+            background-color: #2ecc71;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-weight: bold;
+        """)
+        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn.setStyleSheet("""
+            background-color: #f39c12;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-weight: bold;
+        """)
+        self.close_btn = QPushButton("关闭")
+        
+        self.download_btn.clicked.connect(self.download_files)
+        self.open_oss_btn.clicked.connect(self.open_oss_link)
+        self.refresh_btn.clicked.connect(self.load_data)
+        self.close_btn.clicked.connect(self.close)
+        
+        btn_layout.addWidget(self.download_btn)
+        btn_layout.addWidget(self.open_oss_btn)
+        btn_layout.addWidget(self.refresh_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.close_btn)
+        layout.addLayout(btn_layout)
+    
+    def show_context_menu(self, position):
+        """显示右键菜单"""
+        item = self.tree.itemAt(position)
+        if item is None:
+            return
+            
+        # 只对文件项显示右键菜单
+        if item.text(1) == "文件":
+            menu = QMenu(self)
+            delete_action = QAction("删除", self)
+            delete_action.triggered.connect(lambda: self.delete_file(item))
+            menu.addAction(delete_action)
+            menu.exec_(QCursor.pos())
+
+    def add_delete_button(self, item, file_path):
+        """为文件树项添加删除按钮"""
+        if item.text(1) == "文件":
+            delete_btn = QPushButton("删除")
+            delete_btn.setStyleSheet("""
+                background-color: #e74c3c;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 2px 5px;
+                font-size: 11px;
+            """)
+            delete_btn.clicked.connect(lambda: self.delete_file_confirm(file_path))
+            self.tree.setItemWidget(item, 3, delete_btn)
+    
+    def delete_file(self, item):
+        """删除选中的文件"""
+        # 获取完整的文件路径
+        parent = item.parent()
+        if parent is None:
+            return
+            
+        folder_name = parent.text(0)
+        file_name = item.text(0)
+        
+        # 确认文件路径
+        if parent.parent() is not None:  # 如果有更高级的父节点（根节点）
+            cp_path = parent.parent().text(0)
+            file_path = f"{cp_path}/{folder_name}/{file_name}"
+        else:
+            file_path = f"CPs/{self.cp_id}/{folder_name}/{file_name}"
+            
+        self.delete_file_confirm(file_path)
+    
+    def delete_file_confirm(self, file_path):
+        """确认并删除文件"""
+        # 确认对话框
+        reply = QMessageBox.question(
+            self, 
+            "确认删除", 
+            f"确定要删除文件 {file_path} 吗？\n此操作不可撤销!",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # 删除文件
+            success = oss_delete_object(file_path)
+            if success:
+                QMessageBox.information(self, "删除成功", f"文件 {file_path} 已成功删除!")
+                # 重新加载文件列表
+                self.load_data()
+            else:
+                QMessageBox.critical(self, "删除失败", f"删除文件 {file_path} 时发生错误!")
+    
+    def load_data(self):
+        """加载OSS上的文件数据"""
+        try:
+            # 清空树
+            self.tree.clear()
+            
+            # 文件夹列表
+            folders = ["balance_record", "vehicle", "restaurant", "receive_record"]
+            
+            # 根节点
+            root = QTreeWidgetItem(self.tree, [f"CPs/{self.cp_id}", "文件夹", ""])
+            
+            # 遍历可能的文件夹
+            for folder in folders:
+                prefix = f"CPs/{self.cp_id}/{folder}/"
+                try:
+                    objects = oss_list_objects(prefix)
+                    
+                    if objects:
+                        # 创建文件夹节点
+                        folder_item = QTreeWidgetItem(root, [folder, "文件夹", ""])
+                        
+                        # 添加文件
+                        for obj in objects:
+                            if obj.key != prefix:  # 排除文件夹本身
+                                # 获取文件名（去除路径前缀）
+                                filename = obj.key.replace(prefix, "")
+                                if filename:  # 确保不是空字符串
+                                    # 文件大小格式化
+                                    size = self.format_size(obj.size)
+                                    file_item = QTreeWidgetItem(folder_item, [filename, "文件", size])
+                                    # 添加删除按钮
+                                    self.add_delete_button(file_item, obj.key)
+                except Exception as e:
+                    LOGGER.error(f"列出文件夹 {prefix} 时出错: {str(e)}")
+            
+            # 展开所有节点
+            self.tree.expandAll()
+            
+        except Exception as e:
+            LOGGER.error(f"加载CP数据时出错: {str(e)}")
+            QMessageBox.critical(self, "加载失败", f"加载CP数据时出错: {str(e)}")
+    
+    def format_size(self, size_bytes):
+        """格式化文件大小"""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes/1024:.2f} KB"
+        elif size_bytes < 1024 * 1024 * 1024:
+            return f"{size_bytes/(1024*1024):.2f} MB"
+        else:
+            return f"{size_bytes/(1024*1024*1024):.2f} GB"
+    
+    def download_files(self):
+        """下载CPs/<cp_id>的所有文件"""
+        try:
+            # 询问用户下载位置
+            download_dir = os.path.join(os.path.expanduser("~"), "Downloads", f"CP_{self.cp_id}")
+            
+            # 确认对话框
+            msg_box = QMessageBox()
+            msg_box.setWindowTitle("确认下载")
+            msg_box.setText(f"文件将下载到:\n{download_dir}\n\n是否继续?")
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg_box.setDefaultButton(QMessageBox.Yes)
+            
+            if msg_box.exec_() != QMessageBox.Yes:
+                return
+            
+            # 创建下载目录
+            os.makedirs(download_dir, exist_ok=True)
+            
+            # 获取要下载的所有文件
+            prefix = f"CPs/{self.cp_id}/"
+            objects = oss_list_objects(prefix)
+            
+            if not objects:
+                QMessageBox.information(self, "下载完成", "没有找到文件可下载。")
+                return
+                
+            # 下载进度对话框
+            progress_msg = QMessageBox()
+            progress_msg.setWindowTitle("下载中")
+            progress_msg.setText(f"正在下载文件，请稍候...\n\n这可能需要一些时间，具体取决于文件数量和大小。")
+            progress_msg.setStandardButtons(QMessageBox.NoButton)
+            progress_msg.show()
+            
+            # 开始下载
+            downloaded = 0
+            for obj in objects:
+                if obj.key.endswith('/'):  # 跳过目录
+                    continue
+                    
+                # 创建本地目录结构
+                rel_path = obj.key[len(prefix):]
+                local_path = os.path.join(download_dir, rel_path)
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                
+                # 下载文件
+                try:
+                    # 使用OSS SDK的下载方法
+                    # 这里简化为直接从URL下载
+                    oss_url = f"https://moco-data.oss-cn-shanghai.aliyuncs.com/{obj.key}"
+                    response = requests.get(oss_url, stream=True)
+                    with open(local_path, 'wb') as out_file:
+                        shutil.copyfileobj(response.raw, out_file)
+                    downloaded += 1
+                except Exception as e:
+                    LOGGER.error(f"下载文件 {obj.key} 失败: {str(e)}")
+            
+            progress_msg.close()
+            
+            # 完成提示
+            QMessageBox.information(self, "下载完成", f"成功下载了 {downloaded} 个文件到:\n{download_dir}")
+            
+        except Exception as e:
+            LOGGER.error(f"下载文件时出错: {str(e)}")
+            QMessageBox.critical(self, "下载失败", f"下载文件时出错: {str(e)}")
+    
+    def open_oss_link(self):
+        """打开OSS控制台链接"""
+        try:
+            # 构建OSS控制台URL
+            base_url = "https://oss.console.aliyun.com/bucket/oss-cn-shanghai/moco-data/object"
+            encoded_path = urllib.parse.quote(f"CPs/{self.cp_id}/")
+            url = f"{base_url}?path={encoded_path}"
+            
+            # 使用默认浏览器打开
+            QDesktopServices.openUrl(QUrl(url))
+            
+        except Exception as e:
+            LOGGER.error(f"打开OSS链接时出错: {str(e)}")
+            QMessageBox.critical(self, "打开失败", f"打开OSS链接时出错: {str(e)}")
+
 
 class CPCard(QFrame):
     """CP信息卡片组件"""
@@ -108,8 +394,18 @@ class CPCard(QFrame):
         """)
         self.bind_button.clicked.connect(self.toggle_bind)
         
+        # 查看详情按钮
+        self.detail_button = QPushButton("查看详情")
+        self.detail_button.setStyleSheet("""
+            background-color: #f39c12;
+            color: white;
+            border: none;
+        """)
+        self.detail_button.clicked.connect(self.show_detail)
+        
         title_bar.addWidget(title)
         title_bar.addStretch()
+        title_bar.addWidget(self.detail_button)
         
         # 只有当有目标用户时才显示绑定按钮
         if hasattr(CONF, 'runtime') and hasattr(CONF.runtime, 'target_manipulate_user'):
@@ -170,6 +466,13 @@ class CPCard(QFrame):
         btn_layout.addWidget(edit_btn)
         btn_layout.addWidget(delete_btn)
         main_layout.addLayout(btn_layout)
+    
+    def show_detail(self):
+        """显示CP详情对话框"""
+        cp_id = self.cp_data.get('cp_id')
+        if cp_id:
+            dialog = CPDetailDialog(cp_id, self)
+            dialog.exec_()
     
     def toggle_bind(self):
         """切换CP绑定状态"""

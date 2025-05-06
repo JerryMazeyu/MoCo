@@ -154,3 +154,60 @@ def oss_rename_excel_file(old_file_path, new_file_path):
 
     return True
 
+def oss_list_objects(prefix):
+    """
+    列出OSS存储桶中指定前缀的所有对象
+    
+    Args:
+        prefix (str): 对象前缀
+        
+    Returns:
+        list: 对象列表，如果发生错误则返回None
+    """
+    try:
+        access_key_id = OSS_CONF['access_key_id']
+        access_key_secret = OSS_CONF['access_key_secret']
+        endpoint = OSS_CONF['endpoint']
+        bucket_name = OSS_CONF['bucket_name']
+        region = OSS_CONF['region']
+        auth = oss2.Auth(access_key_id, access_key_secret)
+        bucket = oss2.Bucket(auth, endpoint, bucket_name, region=region)
+        
+        # 列举所有指定前缀的文件
+        objects = []
+        for obj in oss2.ObjectIterator(bucket, prefix=prefix):
+            objects.append(obj)
+        
+        LOGGER.info(f"[OSS] 成功列出前缀为 {prefix} 的对象，共 {len(objects)} 个")
+        return objects
+    except Exception as e:
+        LOGGER.error(f"[OSS] 列出对象失败: {e}")
+        return None
+
+def oss_delete_object(object_key):
+    """
+    删除OSS存储桶中的指定对象
+    
+    Args:
+        object_key (str): 要删除的对象的完整路径
+        
+    Returns:
+        bool: 成功返回True，失败返回False
+    """
+    try:
+        access_key_id = OSS_CONF['access_key_id']
+        access_key_secret = OSS_CONF['access_key_secret']
+        endpoint = OSS_CONF['endpoint']
+        bucket_name = OSS_CONF['bucket_name']
+        region = OSS_CONF['region']
+        auth = oss2.Auth(access_key_id, access_key_secret)
+        bucket = oss2.Bucket(auth, endpoint, bucket_name, region=region)
+        
+        # 删除对象
+        bucket.delete_object(object_key)
+        LOGGER.info(f"[OSS] 成功删除对象: {object_key}")
+        return True
+    except Exception as e:
+        LOGGER.error(f"[OSS] 删除对象失败: {e}")
+        return False
+

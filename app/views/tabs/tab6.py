@@ -173,8 +173,8 @@ class Tab6(QWidget):
                 LOGGER.info(f"成功从OSS加载账号信息: {len(self.accounts)} 个账号")
                 
                 # 移除admin账号（不显示）
-                if 'admin' in self.accounts:
-                    del self.accounts['admin']
+                # if 'admin' in self.accounts:
+                #     del self.accounts['admin']
                 
                 # 加载每个用户的CP绑定信息
                 self.load_user_cp_bindings()
@@ -212,8 +212,8 @@ class Tab6(QWidget):
             
             # 为每个用户下载并解析YAML配置
             for username in self.accounts.keys():
-                if username == 'admin':
-                    continue
+                # if username == 'admin':
+                #     continue
                 
                 yaml_path = f'configs/{username}.yaml'
                 local_yaml_file = os.path.join(temp_dir, f'{username}.yaml')
@@ -289,8 +289,8 @@ class Tab6(QWidget):
             
             # 添加账号到表格
             for username, info in self.accounts.items():
-                if username == 'admin':
-                    continue  # 跳过admin账号
+                # if username == 'admin':
+                #     continue  # 跳过admin账号
                 
                 row = self.accounts_table.rowCount()
                 self.accounts_table.insertRow(row)
