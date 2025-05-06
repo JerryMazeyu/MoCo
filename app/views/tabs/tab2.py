@@ -35,6 +35,8 @@ from app.services.functions.get_restaurant_service import GetRestaurantService
 from app.services.instances.restaurant import RestaurantModel, Restaurant, RestaurantsGroup
 import concurrent.futures
 import copy
+import re
+import shutil
 # 获取全局日志对象
 LOGGER = get_logger()
 
@@ -1006,6 +1008,31 @@ class Tab2(QWidget):
         # 清空CONF.runtime.temp_files
         if hasattr(self.conf.runtime, 'temp_files'):
             self.conf.runtime.temp_files = []
+            
+        # 清理临时文件夹（例如：C:\Users\H3C\AppData\Local\Temp\20250506_091058）
+        try:
+            temp_dir = tempfile.gettempdir()
+            # 获取临时目录下所有子目录
+            for item in os.listdir(temp_dir):
+                item_path = os.path.join(temp_dir, item)
+                # 检查是否是目录且匹配日期格式（YYYYMMDD_HHMMSS）
+                if os.path.isdir(item_path) and re.match(r"^\d{8}_\d{6}$", item):
+                    try:
+                        # 先尝试删除目录中的所有文件
+                        for sub_item in os.listdir(item_path):
+                            sub_item_path = os.path.join(item_path, sub_item)
+                            if os.path.isfile(sub_item_path):
+                                os.remove(sub_item_path)
+                            elif os.path.isdir(sub_item_path):
+                                shutil.rmtree(sub_item_path, ignore_errors=True)
+                        
+                        # 删除空目录
+                        os.rmdir(item_path)
+                        LOGGER.info(f"已删除临时文件夹: {item_path}")
+                    except Exception as e:
+                        LOGGER.error(f"删除临时文件夹时出错: {item_path}, {str(e)}")
+        except Exception as e:
+            LOGGER.error(f"清理临时文件夹时出错: {str(e)}")
             
         # 设置标志位，防止__del__方法再次处理
         self.cleaned_in_close_event = True
