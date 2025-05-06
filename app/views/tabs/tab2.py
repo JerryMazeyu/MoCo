@@ -1188,7 +1188,7 @@ class Tab2(QWidget):
         
         # 添加使用大模型的复选框
         self.use_llm_checkbox = QCheckBox("使用大模型生成餐厅类型")
-        self.use_llm_checkbox.setChecked(True)  # 默认选中
+        self.use_llm_checkbox.setChecked(False)  # 默认选中
         self.use_llm_checkbox.setEnabled(False)  # 默认禁用，需要先选择CP
         
         # 获取餐厅按钮
@@ -1778,6 +1778,12 @@ class Tab2(QWidget):
     def complete_restaurant_info(self):
         """补全餐厅信息"""
         try:
+            # 是否使用大模型
+            use_llm = self.use_llm_checkbox.isChecked()
+            self.conf.runtime.USE_LLM = use_llm
+            LOGGER.info(f"用户选择{'使用' if use_llm else '不使用'}大模型生成餐厅类型")
+                
+
             # 防止重复点击
             if hasattr(self, 'complete_task_running') and self.complete_task_running:
                 # 任务已在运行，询问是否取消
@@ -1925,7 +1931,7 @@ class Tab2(QWidget):
                                      'services', 'scripts', 'complete_restaurants_info.py')
             
             # 创建临时配置文件，保存当前runtime配置
-            runtime_config_file = os.path.join(output_dir, f"runtime_config_{task_id}.json")
+            runtime_config_file = os.path.join(output_dir, f"runtime_config.json")
             try:
                 # 确保输出目录存在
                 os.makedirs(output_dir, exist_ok=True)

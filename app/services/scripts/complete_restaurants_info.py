@@ -210,8 +210,8 @@ class RestaurantCompleter:
                         if not attr.startswith('_') and not callable(getattr(CONF.runtime, attr)):
                             value = getattr(CONF.runtime, attr)
                             # 仅记录简单类型
-                            if isinstance(value, (int, float, bool, str)) or value is None:
-                                runtime_attrs[attr] = value
+                            # if isinstance(value, (int, float, bool, dict, list)) or value is None:
+                            runtime_attrs[attr] = value
                     
                     if runtime_attrs:
                         self.logger.info(f"运行时配置详情: {json.dumps(runtime_attrs, ensure_ascii=False)}")
@@ -410,8 +410,8 @@ class RestaurantCompleter:
                             # 调用服务补全信息，使用batch_logger
                             processed_group = service.gen_info_v2(
                                 restaurant_group, 
-                                # num_workers=num_workers,  # PROD
-                                num_workers=1,  # DEBUG
+                                num_workers=num_workers,  # PROD
+                                # num_workers=1,  # DEBUG
                                 logger_file=os.path.join(self.task_dir, f"batch_{batch_id}.log")  # 传递批处理日志文件路径
                             )
                             
@@ -771,7 +771,7 @@ def main():
     args = parse_args()
     
     # 如果提供了配置文件，加载运行时配置
-    if args.config_file and os.path.exists(args.config_file):
+    if args.config_file:
         try:
             from app.config.config import CONF
             
