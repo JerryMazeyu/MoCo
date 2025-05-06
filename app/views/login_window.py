@@ -245,6 +245,10 @@ class LoginWindow(QWidget):
         
         # 连接信号
         self.login_button.clicked.connect(self.attempt_login)
+        
+        # 添加回车键触发登录功能
+        self.username_input.returnPressed.connect(self.attempt_login)
+        self.password_input.returnPressed.connect(self.attempt_login)
 
     def attempt_login(self):
         username = self.username_input.text()

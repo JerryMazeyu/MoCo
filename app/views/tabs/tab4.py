@@ -1,3 +1,5 @@
+# ================================ CP管理 ================================
+
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QPushButton, QScrollArea, QFrame, QFormLayout,
                              QLineEdit, QMessageBox, QDialog, QGridLayout, QSpinBox,

@@ -88,6 +88,7 @@ class MainWindow(QMainWindow):
             from app.views.tabs.tab1_new import Tab1New  # 配置界面
             from app.views.tabs.tab4 import Tab4  # 油站获取
             from app.views.tabs.tab5 import Tab5  # 车辆管理
+            from app.views.tabs.tab6 import Tab6  # 账号管理
 
             # 创建Tab组件
             self.tab1_widget = QWidget()
@@ -95,12 +96,16 @@ class MainWindow(QMainWindow):
             self.tab3_widget = QWidget()
             self.tab4_widget = QWidget()
             self.tab5_widget = QWidget()
+            self.tab6_widget = QWidget()
+            
             # 设置Tab布局
             self.tab1_widget.setLayout(QVBoxLayout())
             self.tab2_widget.setLayout(QVBoxLayout())
             self.tab3_widget.setLayout(QVBoxLayout())
             self.tab4_widget.setLayout(QVBoxLayout())
             self.tab5_widget.setLayout(QVBoxLayout())
+            self.tab6_widget.setLayout(QVBoxLayout())
+            
             # 创建Tab内容
             # self.tab1_content = Tab1(self)  # 配置界面
             self.tab1_content = Tab1New(self)  # 配置界面
@@ -108,18 +113,30 @@ class MainWindow(QMainWindow):
             self.tab3_content = Tab3(self)  # 车辆获取
             self.tab4_content = Tab4(self)  # 油站获取
             self.tab5_content = Tab5(self)  # 车辆管理
+            self.tab6_content = Tab6(self)  # 账号管理
+            
             # 添加内容到布局
             self.tab1_widget.layout().addWidget(self.tab1_content)
             self.tab2_widget.layout().addWidget(self.tab2_content)
             self.tab3_widget.layout().addWidget(self.tab3_content)
             self.tab4_widget.layout().addWidget(self.tab4_content)
             self.tab5_widget.layout().addWidget(self.tab5_content)
-            # 添加Tab到标签页控件
+            self.tab6_widget.layout().addWidget(self.tab6_content)
+            
+            # 根据用户角色添加不同的Tab
+            # 基本Tab - 所有用户都可以看到
             self.tab_widget.addTab(self.tab1_widget, "配置界面")
             self.tab_widget.addTab(self.tab2_widget, "餐厅获取")
             self.tab_widget.addTab(self.tab3_widget, "收油表获取")
-            self.tab_widget.addTab(self.tab4_widget, "CP配置")
             self.tab_widget.addTab(self.tab5_widget, "车辆管理")
+            
+            # 管理员专属Tab - 只有admin用户可以看到
+            is_admin = self.user_info and self.user_info.get('username') == 'admin'
+            if is_admin:
+                self.tab_widget.addTab(self.tab4_widget, "CP配置")
+                self.tab_widget.addTab(self.tab6_widget, "账号管理")
+                LOGGER.info("已加载管理员专属功能")
+                
         except Exception as e:
             LOGGER.error(f"设置标签页失败: {str(e)}")
 
@@ -198,6 +215,11 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'tab5_content') and self.tab5_content:
                 if hasattr(self.tab5_content, 'cleanup_temp_files'):
                     self.tab5_content.cleanup_temp_files()
+            
+            # 清理Tab6的临时文件
+            if hasattr(self, 'tab6_content') and self.tab6_content:
+                if hasattr(self.tab6_content, 'cleanup_temp_files'):
+                    self.tab6_content.cleanup_temp_files()
             
             # 如果有其他Tab也有临时文件，可以在这里添加类似的清理代码
             
