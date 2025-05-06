@@ -394,6 +394,10 @@ class RestaurantWorker(QThread):
         self.if_gen_info = if_gen_info
         self.running = True
         
+        # 用于资源跟踪和清理的属性
+        self._restaurant_service = None
+        self._restaurant_group = None
+        
         # 创建临时目录
         self.temp_dir = tempfile.gettempdir()
         
@@ -405,15 +409,42 @@ class RestaurantWorker(QThread):
     def stop(self):
         """停止线程执行"""
         self.running = False
+        
+        # 强制中断当前线程中的长时间操作
+        try:
+            # 记录终止请求
+            LOGGER.info("收到线程终止请求，正在强制停止...")
+            
+            # 尝试终止或清理进行中的任何操作
+            import gc
+            
+            # 释放可能存在的大型对象引用，帮助垃圾回收
+            if hasattr(self, '_restaurant_service') and self._restaurant_service:
+                self._restaurant_service = None
+                
+            if hasattr(self, '_restaurant_group') and self._restaurant_group:
+                self._restaurant_group = None
+                
+            # 强制执行垃圾回收
+            gc.collect()
+            
+            # 发送取消信息到进度
+            self.progress.emit("操作已被用户取消")
+            
+            # 在Python中不能真正"杀死"线程，但可以通过标志位和清理资源来让线程尽快退出
+            LOGGER.info("线程资源已清理，等待线程自行退出...")
+            
+        except Exception as e:
+            LOGGER.error(f"停止线程时出错: {str(e)}")
     
     def run(self):
         try:
             LOGGER.info(f"线程开始: 正在获取 {self.city} 的餐厅信息...")
             self.progress.emit(f"开始获取 {self.city} 的餐厅信息...")
-            # import ptvsd  # DEBUG
-            # ptvsd.debug_this_thread()
+            
             # 创建服务实例
             restaurant_service = GetRestaurantService()
+            self._restaurant_service = restaurant_service  # 保存引用用于取消时清理
             
             # 检查线程是否仍在运行
             if not self.running:
@@ -449,6 +480,7 @@ class RestaurantWorker(QThread):
                     # 实现分批处理
                     batch_size = 200  # 每批处理200家餐厅
                     restaurant_group = restaurant_service.get_restaurants_group()
+                    self._restaurant_group = restaurant_group  # 保存引用用于取消时清理
                     all_restaurants = restaurant_group.members.copy()
                     processed_restaurants = []
                     
@@ -480,15 +512,19 @@ class RestaurantWorker(QThread):
                     
                     # 创建最终结果
                     restaurant_group = RestaurantsGroup(processed_restaurants, group_type=restaurant_group.group_type)
+                    self._restaurant_group = restaurant_group  # 更新引用
                     
                 else:
                     # 对于小数据量，使用原始方法但调整线程数
                     restaurant_group = restaurant_service.get_restaurants_group()
+                    self._restaurant_group = restaurant_group  # 保存引用用于取消时清理
                     self.progress.emit(f"使用 {self.num_workers} 个工作线程生成餐厅详细信息...")
                     restaurant_group = restaurant_service.gen_info(restaurant_group, num_workers=self.num_workers)
+                    self._restaurant_group = restaurant_group  # 更新引用
             else:
                 self.progress.emit(f"已找到 {restaurants_count} 家餐厅，跳过生成详细信息...")
                 restaurant_group = restaurant_service.get_restaurants_group()
+                self._restaurant_group = restaurant_group  # 保存引用
             
             # 检查线程是否仍在运行
             if not self.running:
@@ -511,6 +547,8 @@ class RestaurantWorker(QThread):
                 LOGGER.info(f"已将完整数据({len(restaurant_data)}条记录)保存到: {file_path}")
                 
                 # 清理内存中的大对象，确保发送前已经释放资源
+                self._restaurant_group = None
+                self._restaurant_service = None
                 restaurant_group = None
                 restaurant_service = None
                 
@@ -1238,6 +1276,10 @@ class Tab2(QWidget):
             QPushButton:hover {
                 background-color: #ec971f;
             }
+            QPushButton:disabled {
+                background-color: #d9d9d9;
+                color: #a6a6a6;
+            }
         """)
         
         # 验证餐厅营业状态按钮
@@ -1534,12 +1576,48 @@ class Tab2(QWidget):
         try:
             # 检查是否已经有一个正在运行的线程
             if hasattr(self, 'worker') and self.worker is not None and self.worker.isRunning():
-                # 线程正在运行，则停止它
-                self.worker.stop()
-                self.get_restaurant_button.setText("餐厅获取")
-                if hasattr(self, 'progress_label'):
-                    self.progress_label.setText("操作已取消")
-                LOGGER.info("用户取消了餐厅获取操作")
+                # 线程正在运行，则强制停止它
+                try:
+                    LOGGER.info("用户取消了正在运行的餐厅获取操作，正在强制终止线程...")
+                    
+                    # 先调用线程的stop方法，设置停止标志
+                    self.worker.stop()
+                    
+                    # 显示取消状态
+                    self.get_restaurant_button.setText("餐厅获取")
+                    if hasattr(self, 'progress_label'):
+                        self.progress_label.setText("正在取消操作...")
+                    
+                    # 设置超时时间，防止无限等待
+                    max_wait_time = 3  # 等待最多3秒
+                    if not self.worker.wait(max_wait_time * 1000):  # wait方法接受毫秒为单位
+                        LOGGER.warning(f"线程未在{max_wait_time}秒内退出，将强制终止")
+                        
+                        # 断开信号连接，避免已中断的线程仍然发送信号
+                        try:
+                            self.worker.finished.disconnect()
+                            self.worker.error.disconnect()
+                            self.worker.progress.disconnect()
+                        except Exception:
+                            pass
+                        
+                        # 强制线程终止并释放 - 不建议在实际生产环境中使用，但这里我们需要确保线程停止
+                        self.worker.terminate()
+                        self.worker = None
+                    
+                    # 更新UI状态
+                    if hasattr(self, 'progress_label'):
+                        self.progress_label.setText("操作已取消")
+                        QTimer.singleShot(2000, lambda: self.progress_label.setVisible(False))
+                        
+                    LOGGER.info("餐厅获取操作已成功取消")
+                    
+                except Exception as e:
+                    LOGGER.error(f"取消餐厅获取操作时出错: {str(e)}")
+                    self.get_restaurant_button.setText("餐厅获取")
+                    if hasattr(self, 'progress_label'):
+                        self.progress_label.setVisible(False)
+                
                 return
             
             # 如果没有传入城市名，从输入框获取
@@ -1698,8 +1776,29 @@ class Tab2(QWidget):
             
             # 清理线程
             if hasattr(self, 'worker'):
-                self.worker.disconnect()  # 断开所有信号连接
+                try:
+                    # 断开信号连接
+                    self.worker.finished.disconnect()
+                    self.worker.error.disconnect()
+                    self.worker.progress.disconnect()
+                except Exception:
+                    pass
+                    
+                # 确保线程终止
+                if self.worker.isRunning():
+                    # 先尝试正常停止
+                    self.worker.stop()
+                    # 等待短暂时间
+                    if not self.worker.wait(1000):  # 等待1秒
+                        # 如果没有正常终止，则强制终止
+                        self.worker.terminate()
+                        
+                # 清除引用
                 self.worker = None
+                
+                # 强制垃圾回收
+                import gc
+                gc.collect()
             
         except Exception as e:
             LOGGER.error(f"处理餐厅搜索结果时出错: {str(e)}")
@@ -1710,7 +1809,12 @@ class Tab2(QWidget):
             
             # 清理线程
             if hasattr(self, 'worker'):
-                self.worker.disconnect()
+                try:
+                    self.worker.disconnect()
+                    if self.worker.isRunning():
+                        self.worker.terminate()
+                except Exception:
+                    pass
                 self.worker = None
     
     def open_file_external(self, file_path):
@@ -1741,8 +1845,29 @@ class Tab2(QWidget):
             
         # 清理线程
         if hasattr(self, 'worker'):
-            self.worker.disconnect()  # 断开所有信号连接
+            try:
+                # 断开信号连接
+                self.worker.finished.disconnect()
+                self.worker.error.disconnect()
+                self.worker.progress.disconnect()
+            except Exception:
+                pass
+                
+            # 确保线程终止
+            if self.worker.isRunning():
+                # 先尝试正常停止
+                self.worker.stop()
+                # 等待短暂时间
+                if not self.worker.wait(1000):  # 等待1秒
+                    # 如果没有正常终止，则强制终止
+                    self.worker.terminate()
+                    
+            # 清除引用
             self.worker = None
+            
+            # 强制垃圾回收
+            import gc
+            gc.collect()
     
     def check_apis(self):
         """检查所有API连通性"""
@@ -1778,38 +1903,13 @@ class Tab2(QWidget):
     def complete_restaurant_info(self):
         """补全餐厅信息"""
         try:
+            # 禁用按钮，防止重复点击
+            self.complete_info_button.setEnabled(False)
+            
             # 是否使用大模型
             use_llm = self.use_llm_checkbox.isChecked()
             self.conf.runtime.USE_LLM = use_llm
             LOGGER.info(f"用户选择{'使用' if use_llm else '不使用'}大模型生成餐厅类型")
-                
-
-            # 防止重复点击
-            if hasattr(self, 'complete_task_running') and self.complete_task_running:
-                # 任务已在运行，询问是否取消
-                reply = QMessageBox.question(
-                    self, "任务进行中", 
-                    "当前已有补全任务正在进行中，是否取消?",
-                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-                )
-                
-                if reply == QMessageBox.Yes:
-                    # 取消任务
-                    self.cancel_complete_task = True
-                    self.complete_info_button.setText("补全餐厅信息")
-                    if hasattr(self, 'progress_label'):
-                        self.progress_label.setText("正在取消操作...")
-                    
-                    # 通过标志位停止轮询
-                    if hasattr(self, 'monitor_timer'):
-                        self.monitor_timer.stop()
-                        
-                    LOGGER.info("用户取消了餐厅信息补全操作")
-                
-                return
-            
-            # 更改按钮文本
-            self.complete_info_button.setText("取消补全")
             
             # 显示进度信息
             if not hasattr(self, 'progress_label'):
@@ -1838,7 +1938,7 @@ class Tab2(QWidget):
                 # 检查是否有数据
                 if not hasattr(self.xlsx_viewer, 'model') or self.xlsx_viewer.model is None or not hasattr(self.xlsx_viewer.model, '_data') or self.xlsx_viewer.model._data is None or len(self.xlsx_viewer.model._data) == 0:
                     QMessageBox.warning(self, "无数据", "请先获取或导入餐厅数据")
-                    self.complete_info_button.setText("补全餐厅信息")
+                    self.complete_info_button.setEnabled(True)
                     if hasattr(self, 'progress_label'):
                         self.progress_label.setVisible(False)
                     return
@@ -1865,7 +1965,10 @@ class Tab2(QWidget):
                 except Exception as e:
                     LOGGER.error(f"复制当前表格数据时出错: {str(e)}")
                     QMessageBox.critical(self, "数据错误", f"无法处理当前表格数据: {str(e)}")
-                    self.complete_info_button.setText("补全餐厅信息")
+                    
+                    # 设置定时器在2秒后恢复按钮
+                    QTimer.singleShot(2000, lambda: self.complete_info_button.setEnabled(True))
+                    
                     if hasattr(self, 'progress_label'):
                         self.progress_label.setVisible(False)
                     return
@@ -1913,10 +2016,6 @@ class Tab2(QWidget):
             
             # 创建日志文件路径
             log_file = os.path.join(output_dir, f"log_{task_id}.txt")
-            
-            # 设置任务状态
-            self.complete_task_running = True
-            self.cancel_complete_task = False
             
             # 存储当前任务信息
             self.current_task = {
@@ -2026,23 +2125,6 @@ class Tab2(QWidget):
             
             # 显示日志按钮
             self.view_log_button.setVisible(True)
-
-            # ===================DEBUG===================
-
-            # # DEBUG: 用于debug
-            # import subprocess
-            # process = subprocess.Popen(
-            #         cmd, 
-            #         stdout=subprocess.PIPE, 
-            #         stderr=subprocess.PIPE,
-            #         # creationflags=subprocess.CREATE_NO_WINDOW  # 在Windows上不显示窗口
-            #     )
-            # ===================DEBUG===================
-            
-            # 不使用subprocess，直接启动CMD窗口运行命令
-            # os模块已在文件顶部导入，这里不需要再次导入
-            
-            # ===================PROD===================
             
             # 将命令转换为字符串
             cmd_str = ' '.join(cmd)
@@ -2087,21 +2169,23 @@ class Tab2(QWidget):
                 os.system(linux_cmd)
                 LOGGER.info(f"已在Linux新窗口启动命令: {cmd_str}")
             
-            # 不再需要保存进程对象
-            self.complete_process = None
-            
             # 记录日志
             LOGGER.info(f"已在新窗口启动命令: {cmd_str}")
             
-            # 标记任务正在运行
-            self.complete_task_running = True
-
-            # ===================PROD===================
+            # 隐藏进度标签
+            if hasattr(self, 'progress_label'):
+                self.progress_label.setVisible(False)
+            
+            # 设置定时器在2秒后恢复按钮
+            QTimer.singleShot(2000, lambda: self.complete_info_button.setEnabled(True))
+            
         except Exception as e:
             LOGGER.error(f"启动餐厅信息补全时出错: {str(e)}")
             QMessageBox.critical(self, "操作失败", f"启动餐厅信息补全时出错: {str(e)}")
-            self.complete_info_button.setText("补全餐厅信息")
-            self.complete_task_running = False
+            
+            # 设置定时器在2秒后恢复按钮
+            QTimer.singleShot(2000, lambda: self.complete_info_button.setEnabled(True))
+            
             if hasattr(self, 'progress_label'):
                 self.progress_label.setVisible(False)
             if hasattr(self, 'view_log_button'):
