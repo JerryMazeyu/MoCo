@@ -234,7 +234,6 @@ class GetRestaurantService:
         if loc:
             LOGGER.info(f"使用周边搜索，地址: {self.gaode_address}")
             urls = create_gaode_around_url()
-            print("<<<>>>", urls[0])
         else:
             LOGGER.info(f"使用关键词搜索，关键词: {self.gaode_keywords}")
             urls = create_gaode_url()
@@ -299,15 +298,17 @@ class GetRestaurantService:
         for word in blocked_words:
             self.blocked_list.append(word)
         
-    def _dedup(self) -> None:
+    def _dedup(self, restaurant_list=None) -> None:
         """
         对获取到的餐厅信息进行去重
         """
+        if restaurant_list is None:
+            restaurant_list = self.info
         # 创建一个唯一标识符集合
         unique_identifiers = set()
         deduped_info = []
         
-        for item in self.info:
+        for item in restaurant_list:
             # 创建唯一标识符（使用餐厅名称和地址组合）
             name = item.get('rest_chinese_name', '')
             address = item.get('rest_chinese_address', '')
@@ -829,9 +830,9 @@ class GetRestaurantService:
                         restaurant_list = robust_query(_gaode_search_func, self.conf.KEYS.gaode_keys)
                         
                         if strict_mode:
-                            restaurant_list_accurate = [restaurant for restaurant in restaurant_list if restaurant['adname'] == city_name]
+                            restaurant_list_accurate = [restaurant for restaurant in restaurant_list if restaurant['rest_city'] == city]
                             LOGGER.info(f"使用严格模式搜索，关键词: {key_words}, 城市: {city_name}, 周边结果：{len(restaurant_list)} 条， 精确结果：{len(restaurant_list_accurate)} 条")
-
+                            restaurant_list = restaurant_list_accurate
                         # 根据use_llm设置决定是否在这里设置rest_type
                         if not use_llm:
                             for restaurant in restaurant_list:
@@ -849,9 +850,10 @@ class GetRestaurantService:
         # 屏蔽词
         LOGGER.info(f"开始过滤屏蔽词")
         self.info = [restaurant for restaurant in self.info if not any(word in restaurant['rest_chinese_name'] for word in self.blocked_list)]
+        restaurant_list = self.info
         LOGGER.info(f"过滤屏蔽词后剩余 {len(self.info)} 条餐厅信息")
         # 去重
-        self._dedup()
+        self._dedup(restaurant_list=restaurant_list)
         
         # 转换为餐厅实体
         self._info_to_restaurant(model_class=model_class, cp_id=cp_id)

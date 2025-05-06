@@ -410,7 +410,8 @@ class RestaurantCompleter:
                             # 调用服务补全信息，使用batch_logger
                             processed_group = service.gen_info_v2(
                                 restaurant_group, 
-                                num_workers=num_workers,  # DEBUG
+                                # num_workers=num_workers,  # PROD
+                                num_workers=1,  # DEBUG
                                 logger_file=os.path.join(self.task_dir, f"batch_{batch_id}.log")  # 传递批处理日志文件路径
                             )
                             

@@ -408,7 +408,8 @@ class RestaurantWorker(QThread):
         try:
             LOGGER.info(f"线程开始: 正在获取 {self.city} 的餐厅信息...")
             self.progress.emit(f"开始获取 {self.city} 的餐厅信息...")
-            
+            # import ptvsd  # DEBUG
+            # ptvsd.debug_this_thread()
             # 创建服务实例
             restaurant_service = GetRestaurantService()
             
@@ -893,11 +894,17 @@ class Tab2(QWidget):
         
         # 用于跟踪临时文件
         self.temp_files = []
+        # 确保CONF.runtime有temp_files属性
+        if not hasattr(self.conf.runtime, 'temp_files'):
+            setattr(self.conf.runtime, 'temp_files', [])
         # 记录最后一次查询生成的文件路径
         self.last_query_file = None
         
         # 内存监控标志
         self.memory_debug = False
+        
+        # 添加标志位，用于标记是否已经通过closeEvent处理过临时文件
+        self.cleaned_in_close_event = False
         
         self.conf.runtime.SEARCH_RADIUS = 50
         self.conf.runtime.STRICT_MODE = False
@@ -931,8 +938,43 @@ class Tab2(QWidget):
                 except Exception:
                     pass
             
-            # 清理临时文件
-            self.cleanup_temp_files()
+            # 检查是否已经在closeEvent中处理过
+            if hasattr(self, 'cleaned_in_close_event') and self.cleaned_in_close_event:
+                # 已经处理过，就不再显示确认对话框
+                pass
+            # 如果有临时文件，显示确认对话框询问是否保存数据
+            elif hasattr(self.conf.runtime, 'temp_files') and self.conf.runtime.temp_files:
+                try:
+                    from PyQt5.QtWidgets import QMessageBox
+                    # 使用QMessageBox确认是否需要保存数据
+                    reply = QMessageBox.question(
+                        None, 
+                        '保存数据确认', 
+                        '是否需要保存临时数据文件？\n选择"是"将打开相关文件，"否"则删除所有临时文件。',
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No
+                    )
+                    
+                    if reply == QMessageBox.Yes:
+                        # 打开最后一次查询的文件和结果文件
+                        if hasattr(self, 'last_query_file') and self.last_query_file and os.path.exists(self.last_query_file):
+                            self.open_file_external(self.last_query_file)
+                        
+                        # 查找result文件并打开
+                        for file_path in self.conf.runtime.temp_files:
+                            if os.path.exists(file_path) and 'result_' in file_path and file_path.endswith('.xlsx'):
+                                self.open_file_external(file_path)
+                                break
+                    else:
+                        # 清理临时文件
+                        self.cleanup_temp_files()
+                except Exception as e:
+                    # 尝试记录异常，但不阻止程序关闭
+                    if LOGGER:
+                        LOGGER.error(f"析构函数中显示确认对话框时出错: {str(e)}")
+            else:
+                # 如果没有临时文件，直接清理
+                self.cleanup_temp_files()
             
             # 强制垃圾回收
             try:
@@ -948,7 +990,10 @@ class Tab2(QWidget):
     def cleanup_temp_files(self):
         """清理临时文件"""
         
-        for file_path in self.temp_files:
+        # 合并self.temp_files和CONF.runtime.temp_files
+        temp_files_to_clean = set(self.temp_files + self.conf.runtime.temp_files if hasattr(self.conf.runtime, 'temp_files') else [])
+        
+        for file_path in temp_files_to_clean:
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
@@ -958,6 +1003,12 @@ class Tab2(QWidget):
                 
         # 清空列表
         self.temp_files = []
+        # 清空CONF.runtime.temp_files
+        if hasattr(self.conf.runtime, 'temp_files'):
+            self.conf.runtime.temp_files = []
+            
+        # 设置标志位，防止__del__方法再次处理
+        self.cleaned_in_close_event = True
     
     def initUI(self):
         # 主布局
@@ -1561,6 +1612,9 @@ class Tab2(QWidget):
         try:
             # 记录临时文件，用于程序退出时清理
             self.temp_files.append(file_path)
+            # 同时添加到CONF.runtime.temp_files
+            if hasattr(self.conf.runtime, 'temp_files'):
+                self.conf.runtime.temp_files.append(file_path)
             
             # 保存最后一次查询的文件路径
             self.last_query_file = file_path
@@ -1577,7 +1631,6 @@ class Tab2(QWidget):
                 warning_msg = f"数据量过大，仅显示前 {max_display_rows} 条记录（共 {row_count} 条）"
             else:
                 restaurant_data_display = restaurant_data
-                warning_msg = None
             
             # 确保在主线程中更新UI
             QApplication.processEvents()
@@ -1772,6 +1825,9 @@ class Tab2(QWidget):
                     
                     # 记录临时文件以便清理
                     self.temp_files.append(input_file)
+                    # 同时添加到CONF.runtime.temp_files
+                    if hasattr(self.conf.runtime, 'temp_files'):
+                        self.conf.runtime.temp_files.append(input_file)
                     
                 except Exception as e:
                     LOGGER.error(f"复制当前表格数据时出错: {str(e)}")
@@ -1785,15 +1841,40 @@ class Tab2(QWidget):
             cp_location = None
             if hasattr(self, 'current_cp') and self.current_cp:
                 cp_location = self.current_cp.get('cp_location', None)
-                LOGGER.info(f"使用CP位置: {cp_location}")
+                
+                # 如果current_cp中没有cp_location，尝试从CONF.runtime.CP获取
+                if not cp_location and hasattr(CONF, 'runtime') and hasattr(CONF.runtime, 'CP'):
+                    cp_location = CONF.runtime.CP.get('cp_location', None)
+                
+                # 如果还是没有找到，尝试通过CP ID获取位置信息
+                if not cp_location and self.current_cp.get('cp_id'):
+                    try:
+                        cp_data = CP.get(self.current_cp['cp_id'])
+                        if cp_data and 'cp_location' in cp_data:
+                            cp_location = cp_data['cp_location']
+                            
+                            # 更新current_cp和CONF.runtime.CP
+                            self.current_cp['cp_location'] = cp_location
+                            if hasattr(CONF, 'runtime') and hasattr(CONF.runtime, 'CP'):
+                                CONF.runtime.CP['cp_location'] = cp_location
+                    except Exception as e:
+                        LOGGER.error(f"获取CP位置信息时出错: {str(e)}")
+            
+            LOGGER.info(f"使用CP位置: {cp_location}")
             
             # 创建输出目录
             try:
-                output_dir = temp_dir
-            except Exception as e:
                 temp_dir = tempfile.gettempdir()
                 output_dir = os.path.join(temp_dir, self.timestamp)
-
+                os.makedirs(output_dir, exist_ok=True)
+                LOGGER.info(f"已创建输出目录: {output_dir}")
+            except Exception as e:
+                LOGGER.error(f"创建输出目录时出错: {str(e)}")
+                temp_dir = tempfile.gettempdir()
+                output_dir = os.path.join(temp_dir, self.timestamp)
+                os.makedirs(output_dir, exist_ok=True)
+                LOGGER.info(f"已创建备用输出目录: {output_dir}")
+            
             # 生成任务ID
             task_id = str(uuid.uuid4()) + "_" + self.timestamp
             
@@ -1819,24 +1900,44 @@ class Tab2(QWidget):
             # 创建临时配置文件，保存当前runtime配置
             runtime_config_file = os.path.join(output_dir, f"runtime_config_{task_id}.json")
             try:
+                # 确保输出目录存在
+                os.makedirs(output_dir, exist_ok=True)
+                
                 # 提取runtime配置
                 runtime_config = {}
                 if hasattr(self.conf, 'runtime'):
                     # 将runtime对象的所有非私有属性保存到字典
                     for attr in dir(self.conf.runtime):
                         if not attr.startswith('_'):  # 跳过私有属性
-                            value = getattr(self.conf.runtime, attr)
-                            # # 跳过复杂对象和方法
-                            # if not callable(value) and not attr == 'geoinfo' and not isinstance(value, (dict, list, set)) or isinstance(value, (int, float, bool, str)):
-                            runtime_config[attr] = value
+                            try:
+                                value = getattr(self.conf.runtime, attr)
+                                # 跳过方法和复杂对象
+                                if callable(value):
+                                    continue
+                                
+                                # 尝试将值转换为JSON可序列化的格式
+                                if isinstance(value, (int, float, bool, str, list, dict)) or value is None:
+                                    runtime_config[attr] = value
+                                elif hasattr(value, '__dict__'):
+                                    # 对于有__dict__属性的对象，尝试转换为字典
+                                    runtime_config[attr] = value.__dict__
+                                else:
+                                    # 尝试转换为字符串
+                                    runtime_config[attr] = str(value)
+                            except Exception as e:
+                                LOGGER.warning(f"无法序列化属性 {attr}: {str(e)}")
+                                continue
                             
                 # 保存到临时文件
                 with open(runtime_config_file, 'w', encoding='utf-8') as f:
-                    json.dump(runtime_config, f, ensure_ascii=False, indent=2)
+                    json.dump(runtime_config, f, ensure_ascii=False, indent=2, default=str)
                 LOGGER.info(f"已将运行时配置保存到临时文件: {runtime_config_file}")
                 
                 # 记录临时文件以便清理
                 self.temp_files.append(runtime_config_file)
+                # 同时添加到CONF.runtime.temp_files
+                if hasattr(self.conf.runtime, 'temp_files'):
+                    self.conf.runtime.temp_files.append(runtime_config_file)
             except Exception as e:
                 LOGGER.error(f"保存运行时配置失败: {e}")
                 runtime_config_file = None
@@ -1869,6 +1970,12 @@ class Tab2(QWidget):
             self.temp_files.append(result_file)
             self.temp_files.append(log_file)
             
+            # 同时添加到CONF.runtime.temp_files
+            if hasattr(self.conf.runtime, 'temp_files'):
+                self.conf.runtime.temp_files.append(status_file)
+                self.conf.runtime.temp_files.append(result_file)
+                self.conf.runtime.temp_files.append(log_file)
+            
             # 添加查看日志按钮（如果不存在）
             if not hasattr(self, 'view_log_button'):
                 self.view_log_button = QPushButton("打开文件目录")
@@ -1887,7 +1994,9 @@ class Tab2(QWidget):
             # 显示日志按钮
             self.view_log_button.setVisible(True)
 
-            # DEBUG: 用于debug
+            # ===================DEBUG===================
+
+            # # DEBUG: 用于debug
             # import subprocess
             # process = subprocess.Popen(
             #         cmd, 
@@ -1895,18 +2004,55 @@ class Tab2(QWidget):
             #         stderr=subprocess.PIPE,
             #         # creationflags=subprocess.CREATE_NO_WINDOW  # 在Windows上不显示窗口
             #     )
+            # ===================DEBUG===================
             
             # 不使用subprocess，直接启动CMD窗口运行命令
             # os模块已在文件顶部导入，这里不需要再次导入
             
+            # ===================PROD===================
+            
             # 将命令转换为字符串
             cmd_str = ' '.join(cmd)
             
-            # 在Windows上使用start命令打开新的CMD窗口
-            start_cmd = f'start cmd /k "{cmd_str}"'
-            
-            # 执行命令，不等待结果
-            os.system(start_cmd)
+            # 根据平台使用不同的启动方式
+            if sys.platform == 'win32':  # Windows
+                # 在Windows上使用start命令打开新的CMD窗口
+                start_cmd = f'start cmd /k "{cmd_str}"'
+                os.system(start_cmd)
+                LOGGER.info(f"已在Windows新窗口启动命令: {cmd_str}")
+            elif sys.platform == 'darwin':  # macOS
+                # 在Mac上使用Terminal运行
+                script_content = f"""
+                #!/bin/bash
+                cd "{os.getcwd()}"
+                {cmd_str}
+                echo "按任意键关闭窗口..."
+                read -n 1
+                """
+                
+                # 创建临时脚本文件
+                script_file = os.path.join(output_dir, f"run_script_{task_id}.sh")
+                with open(script_file, 'w') as f:
+                    f.write(script_content)
+                
+                # 添加执行权限
+                os.chmod(script_file, 0o755)
+                
+                # 使用Terminal运行脚本
+                mac_cmd = f"open -a Terminal {script_file}"
+                os.system(mac_cmd)
+                
+                # 记录临时文件
+                self.temp_files.append(script_file)
+                if hasattr(self.conf.runtime, 'temp_files'):
+                    self.conf.runtime.temp_files.append(script_file)
+                
+                LOGGER.info(f"已在macOS新窗口启动命令: {cmd_str}")
+            else:  # Linux等其他系统
+                # 使用终端模拟器
+                linux_cmd = f"xterm -e '{cmd_str}; echo \"按回车键关闭窗口...\"; read'"
+                os.system(linux_cmd)
+                LOGGER.info(f"已在Linux新窗口启动命令: {cmd_str}")
             
             # 不再需要保存进程对象
             self.complete_process = None
@@ -1916,7 +2062,8 @@ class Tab2(QWidget):
             
             # 标记任务正在运行
             self.complete_task_running = True
-            
+
+            # ===================PROD===================
         except Exception as e:
             LOGGER.error(f"启动餐厅信息补全时出错: {str(e)}")
             QMessageBox.critical(self, "操作失败", f"启动餐厅信息补全时出错: {str(e)}")
@@ -2288,3 +2435,7 @@ class Tab2(QWidget):
         except Exception as e:
             LOGGER.error(f"打开任务输出目录时出错: {str(e)}")
             QMessageBox.warning(self, "打开目录失败", f"无法打开输出目录: {str(e)}")
+    
+    def set_cleaned_in_close_event(self):
+        """设置已在关闭事件中处理过临时文件的标志"""
+        self.cleaned_in_close_event = True

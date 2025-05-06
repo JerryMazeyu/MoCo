@@ -3,7 +3,7 @@ import os
 # 添加项目根目录到 Python 路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, 
-                            QVBoxLayout, QSplitter, QStackedWidget)
+                            QVBoxLayout, QSplitter, QStackedWidget, QMessageBox)
 from PyQt5.QtCore import Qt
 from app.views.components.message_console import MessageConsoleWidget
 from app.views.login_window import LoginWindow
@@ -159,8 +159,40 @@ class MainWindow(QMainWindow):
             
             # 清理Tab2的临时文件
             if hasattr(self, 'tab2_content') and self.tab2_content:
-                if hasattr(self.tab2_content, 'cleanup_temp_files'):
-                    self.tab2_content.cleanup_temp_files()
+                # 不再直接调用cleanup_temp_files，而是使用与__del__方法类似的确认逻辑
+                
+                # 检查是否有临时文件
+                if hasattr(self.tab2_content, 'conf') and hasattr(self.tab2_content.conf, 'runtime') and hasattr(self.tab2_content.conf.runtime, 'temp_files') and self.tab2_content.conf.runtime.temp_files:
+                    # 使用QMessageBox确认是否需要保存数据
+                    reply = QMessageBox.question(
+                        self, 
+                        '保存数据确认', 
+                        '是否需要保存临时数据文件？\n选择"是"将打开相关文件，"否"则删除所有临时文件。',
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No
+                    )
+                    
+                    if reply == QMessageBox.Yes:
+                        # 打开最后一次查询的文件和结果文件
+                        if hasattr(self.tab2_content, 'last_query_file') and self.tab2_content.last_query_file and os.path.exists(self.tab2_content.last_query_file):
+                            self.tab2_content.open_file_external(self.tab2_content.last_query_file)
+                        
+                        # 查找result文件并打开
+                        for file_path in self.tab2_content.conf.runtime.temp_files:
+                            if os.path.exists(file_path) and 'result_' in file_path and file_path.endswith('.xlsx'):
+                                self.tab2_content.open_file_external(file_path)
+                                break
+                    else:
+                        # 删除临时文件
+                        self.tab2_content.cleanup_temp_files()
+                else:
+                    # 如果没有临时文件，直接清理
+                    if hasattr(self.tab2_content, 'cleanup_temp_files'):
+                        self.tab2_content.cleanup_temp_files()
+                
+                # 设置标志位，防止在__del__方法中再次处理
+                if hasattr(self.tab2_content, 'set_cleaned_in_close_event'):
+                    self.tab2_content.set_cleaned_in_close_event()
             
             # 清理Tab5的临时文件
             if hasattr(self, 'tab5_content') and self.tab5_content:
