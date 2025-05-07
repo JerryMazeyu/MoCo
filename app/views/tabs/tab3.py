@@ -4,11 +4,12 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 from PyQt5.QtGui import QPixmap
 from app.utils.logger import get_logger
 from app.services.instances.restaurant import Restaurant, RestaurantsGroup
+from app.services.instances.receive_record import BalanceTotal, BalanceTotalGroup,BuyerConfirmation,BuyerConfirmationGroup
 from app.services.instances.vehicle import Vehicle, VehicleGroup
 from app.services.functions.get_receive_record_service import GetReceiveRecordService
 from app.services.instances.cp import CP
 from app.config.config import CONF
-from app.models.receive_record import ReceiveRecordModel
+from app.models.receive_record import ReceiveRecordModel,RestaurantTotalModel,BuyerConfirmationModel
 import oss2
 from app.views.tabs.tab2 import CPSelectDialog
 from app.views.components.xlsxviewer import XlsxViewerWidget  # 导入 XlsxViewerWidget
@@ -839,35 +840,84 @@ class Tab3(QWidget):
                 # 调用服务生成总表和收货确认书
                 service = GetReceiveRecordService(model=ReceiveRecordModel, conf=CONF)
 
+                # 如果上传了总表数据，先进行验证和转换
+                if balance_total is not None:
+                    try:
+                        # 转换为RestaurantTotal对象列表
+                        total_records = [BalanceTotal(info) for info in balance_total.to_dict('records')]
+                        
+                        # 使用RestaurantTotalGroup进行过滤
+                        total_group = BalanceTotalGroup(instances=total_records)
+                        filtered_total = total_group.filter_by_cp(self.current_cp['cp_id']).to_dataframe()
+                        
+                        # 更新balance_total为过滤后的数据
+                        balance_total = filtered_total
+                        
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "missing" in error_msg.lower():
+                            # 提取缺失字段信息
+                            missing_field = error_msg.split("missing")[-1].strip()
+                            QMessageBox.critical(self, "数据验证失败", f"载入的总表缺少必要字段: {missing_field}\n请确认数据完整性。")
+                        else:
+                            QMessageBox.critical(self, "数据验证失败", f"验证总表数据时出错: {error_msg}")
+                        self.update_step_status(4, 'error')
+                        return
+
                 # 1. 先生成总表的基础结构
-                total_df = service.process_dataframe_with_new_columns(balance_df, balance_total)
+                total_df = service.process_dataframe_with_new_columns(self.current_cp['cp_id'], balance_df, balance_total)
 
                 # 2. 生成收货确认书
-                check_df,cp_vehicle_df = service.generate_df_check(int(days_input), balance_df, vehicle_df)
+                check_df,cp_vehicle_df = service.generate_df_check(self.current_cp['cp_id'],int(days_input), balance_df, vehicle_df)
 
                 # 3. 更新总表的售出数量
                 total_df = service.process_check_to_sum(check_df, total_df)
 
                 # 4. 重新计算期末库存
-                previous_end_stock = 0.0  # 第一行的期末库存前一行默认0
+                # 从balance_df获取月份信息
+                current_date = balance_df['balance_date'].min().strftime('%Y-%m')
+                year, month = current_date.split('-')
+                start_date = pd.to_datetime(f'{year}-{month}-01')
+                
+                # 获取上个月的期末库存
+                previous_month_end = total_df[total_df['total_supplied_date'] < start_date]
+                previous_end_stock = 0.0
+                if not previous_month_end.empty:
+                    previous_end_stock = previous_month_end.iloc[-1]['total_ending_inventory']
+                
+                # 只计算从指定月份开始的库存
                 for index, row in total_df.iterrows():
-                    current_output = row['total_output_quantity'] if pd.notna(row['total_output_quantity']) else 0
-                    current_sale = row['total_quantities_sold'] if pd.notna(row['total_quantities_sold']) else 0
-                    current_inventory = round(current_output + previous_end_stock - current_sale, 2)
-                    if current_inventory < 0:
-                        raise ValueError(f"{row['total_supplied_date']}库存不足: 当前产出量({current_output}) + 上期库存({previous_end_stock}) < 售出数量({current_sale})")
-                    total_df.at[index, 'total_ending_inventory'] = current_inventory
-                    previous_end_stock = current_inventory
+                    if row['total_supplied_date'] >= start_date:
+                        current_output = row['total_output_quantity'] if pd.notna(row['total_output_quantity']) else 0
+                        current_sale = row['total_quantities_sold'] if pd.notna(row['total_quantities_sold']) else 0
+                        current_inventory = round(current_output + previous_end_stock - current_sale, 2)
+                        total_df.at[index, 'total_ending_inventory'] = current_inventory
+                        previous_end_stock = current_inventory
 
                 # 5. 处理合同分配
                 coeff_number = CONF.BUSINESS.REST2CP.比率
-                current_date = balance_df['balance_date'].min().strftime('%Y-%m')
                 
                 # 调用合同分配处理函数
                 total_df, balance_last_month, balance_current_month = service.process_balance_sum_contract(
                     total_df, check_df, None, balance_df, coeff_number, current_date
                 )
                 oil_records_df = service.copy_balance_to_oil_dataframes(oil_records_df, balance_current_month)
+
+                # 在展示之前，通过实体类规范数据字段
+                try:
+                    # 处理总表数据
+                    total_records = [BalanceTotal(info, model=RestaurantTotalModel) for info in total_df.to_dict('records')]
+                    total_group = BalanceTotalGroup(instances=total_records)
+                    total_df = total_group.to_dataframe()
+
+                    # 处理收货确认书数据
+                    check_records = [BuyerConfirmation(info, model=BuyerConfirmationModel) for info in check_df.to_dict('records')]
+                    check_group = BuyerConfirmationGroup(instances=check_records)
+                    check_df = check_group.to_dataframe()
+                except Exception as e:
+                    QMessageBox.critical(self, "数据验证失败", f"数据验证转换失败: {str(e)}")
+                    self.update_step_status(4, 'error')
+                    return
 
                 # 更新总表和收货确认书、收油表、平衡表视图
                 self.total_view.load_data(data=total_df)

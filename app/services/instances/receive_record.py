@@ -562,4 +562,249 @@ class BalanceRecordsGroup(BaseGroup):
         :return: 字符串表示
         """
         date_info = f", 日期={self.group_date}" if self.group_date else ""
-        return f"BalanceRecordsGroup(数量={self.count()}, 类型={self.group_type}{date_info}, 总量={self.get_total_amount()})" 
+        return f"BalanceRecordsGroup(数量={self.count()}, 类型={self.group_type}{date_info}, 总量={self.get_total_amount()})"
+
+class BalanceTotal(BaseInstance):
+    """
+    总表实体类，处理餐厅的总表记录
+    """
+    def __init__(self, info: Dict[str, Any], model=None, conf=None):
+        """
+        初始化总表实体
+        
+        :param info: 总表信息字典
+        :param model: 总表模型类，可选
+        :param conf: 配置服务，可选
+        """
+        super().__init__(model)
+        self.conf = conf
+        
+        # 基本校验，确保必要字段存在
+        if model:
+            # 创建模型实例
+            self.inst = model(**info)
+        else:
+            # 如果没有提供模型类，直接存储info
+            self.inst = type('DynamicModel', (), info)
+        
+        self.status = 'pending'  # 初始状态为待处理
+
+    def generate(self) -> bool:
+        """
+        生成总表记录的所有缺失字段
+        
+        :return: 是否全部生成成功
+        """
+        # 这里可以添加生成逻辑
+        self.status = 'ready'
+        return True
+
+    def __str__(self) -> str:
+        """
+        返回总表记录的字符串表示
+        
+        :return: 字符串表示
+        """
+        return f"RestaurantTotal(CP={getattr(self.inst, 'total_cp', 'unknown')}, 日期={getattr(self.inst, 'total_supplied_date', 'unknown')}, 产出={getattr(self.inst, 'total_output_quantity', 'unknown')}, 售出={getattr(self.inst, 'total_quantities_sold', 'unknown')}, 库存={getattr(self.inst, 'total_ending_inventory', 'unknown')})"
+
+
+class BalanceTotalGroup(BaseGroup):
+    """
+    总表组合类，用于管理多个总表记录实体
+    """
+    def __init__(self, instances: List[BalanceTotal] = None, group_type: str = None, group_date: str = None):
+        """
+        初始化总表组合
+        
+        :param instances: 总表记录列表
+        :param group_type: 组合类型，如'daily'、'monthly'等
+        :param group_date: 组合日期，格式为'YYYY-MM-DD'
+        """
+        super().__init__(instances=instances, group_type=group_type)
+        self.group_date = group_date
+
+    def filter_by_date(self, date: str) -> 'BalanceTotalGroup':
+        """
+        按日期筛选总表记录
+        
+        :param date: 日期字符串，格式为'YYYY-MM-DD'
+        :return: 筛选后的总表记录组合
+        """
+        filtered = self.filter(lambda r: hasattr(r.inst, 'total_supplied_date') and r.inst.total_supplied_date == date)
+        filtered.group_date = date
+        return filtered
+
+    def filter_by_cp(self, cp_id: str) -> 'BalanceTotalGroup':
+        """
+        按CP筛选总表记录
+        
+        :param cp_id: CP ID
+        :return: 筛选后的总表记录组合
+        """
+        return self.filter(lambda r: hasattr(r.inst, 'total_cp') and r.inst.total_cp == cp_id)
+
+    def get_total_output(self) -> float:
+        """
+        获取总产出量
+        
+        :return: 总产出量
+        """
+        total = 0.0
+        for record in self.members:
+            if hasattr(record.inst, 'total_output_quantity'):
+                total += float(record.inst.total_output_quantity)
+        return total
+
+    def get_total_sold(self) -> float:
+        """
+        获取总售出量
+        
+        :return: 总售出量
+        """
+        total = 0.0
+        for record in self.members:
+            if hasattr(record.inst, 'total_quantities_sold'):
+                total += float(record.inst.total_quantities_sold)
+        return total
+
+    def get_total_inventory(self) -> float:
+        """
+        获取总库存量
+        
+        :return: 总库存量
+        """
+        total = 0.0
+        for record in self.members:
+            if hasattr(record.inst, 'total_ending_inventory'):
+                total += float(record.inst.total_ending_inventory)
+        return total
+
+    def __str__(self) -> str:
+        """
+        返回总表组合的字符串表示
+        
+        :return: 字符串表示
+        """
+        date_info = f", 日期={self.group_date}" if self.group_date else ""
+        return f"RestaurantTotalGroup(数量={self.count()}, 类型={self.group_type}{date_info}, 总产出={self.get_total_output()}, 总售出={self.get_total_sold()}, 总库存={self.get_total_inventory()})"
+
+
+class BuyerConfirmation(BaseInstance):
+    """
+    收货确认书实体类，处理收货确认书记录
+    """
+    def __init__(self, info: Dict[str, Any], model=None, conf=None):
+        """
+        初始化收货确认书实体
+        
+        :param info: 收货确认书信息字典
+        :param model: 收货确认书模型类，可选
+        :param conf: 配置服务，可选
+        """
+        super().__init__(model)
+        self.conf = conf
+        
+        # 基本校验，确保必要字段存在
+        if model:
+            # 创建模型实例
+            self.inst = model(**info)
+        else:
+            # 如果没有提供模型类，直接存储info
+            self.inst = type('DynamicModel', (), info)
+        
+        self.status = 'pending'  # 初始状态为待处理
+
+    def generate(self) -> bool:
+        """
+        生成收货确认书记录的所有缺失字段
+        
+        :return: 是否全部生成成功
+        """
+        # 这里可以添加生成逻辑
+        self.status = 'ready'
+        return True
+
+    def __str__(self) -> str:
+        """
+        返回收货确认书记录的字符串表示
+        
+        :return: 字符串表示
+        """
+        return f"BuyerConfirmation(CP={getattr(self.inst, 'check_belong_cp', 'unknown')}, 日期={getattr(self.inst, 'check_date', 'unknown')}, 车牌={getattr(self.inst, 'check_truck_plate_no', 'unknown')}, 重量={getattr(self.inst, 'check_weight', 'unknown')})"
+
+
+class BuyerConfirmationGroup(BaseGroup):
+    """
+    收货确认书组合类，用于管理多个收货确认书记录实体
+    """
+    def __init__(self, instances: List[BuyerConfirmation] = None, group_type: str = None, group_date: str = None):
+        """
+        初始化收货确认书组合
+        
+        :param records: 收货确认书记录列表
+        :param group_type: 组合类型，如'daily'、'monthly'等
+        :param group_date: 组合日期，格式为'YYYY-MM-DD'
+        """
+        super().__init__(instances=instances, group_type=group_type)
+        self.group_date = group_date
+
+    def filter_by_date(self, date: str) -> 'BuyerConfirmationGroup':
+        """
+        按日期筛选收货确认书记录
+        
+        :param date: 日期字符串，格式为'YYYY-MM-DD'
+        :return: 筛选后的收货确认书记录组合
+        """
+        filtered = self.filter(lambda r: hasattr(r.inst, 'check_date') and r.inst.check_date == date)
+        filtered.group_date = date
+        return filtered
+
+    def filter_by_cp(self, cp_id: str) -> 'BuyerConfirmationGroup':
+        """
+        按CP筛选收货确认书记录
+        
+        :param cp_id: CP ID
+        :return: 筛选后的收货确认书记录组合
+        """
+        return self.filter(lambda r: hasattr(r.inst, 'check_belong_cp') and r.inst.check_belong_cp == cp_id)
+
+    def get_total_weight(self) -> float:
+        """
+        获取总重量
+        
+        :return: 总重量
+        """
+        total = 0.0
+        for record in self.members:
+            if hasattr(record.inst, 'check_weight'):
+                total += float(record.inst.check_weight)
+        return total
+
+    def get_vehicle_usage(self) -> Dict[str, List[str]]:
+        """
+        获取车辆使用情况
+        
+        :return: 车辆使用情况字典，key为车牌号，value为使用日期列表
+        """
+        vehicle_usage = {}
+        for record in self.members:
+            if hasattr(record.inst, 'check_truck_plate_no') and hasattr(record.inst, 'check_date'):
+                plate = record.inst.check_truck_plate_no
+                date = record.inst.check_date
+                if plate in vehicle_usage:
+                    vehicle_usage[plate].append(date)
+                else:
+                    vehicle_usage[plate] = [date]
+        return vehicle_usage
+
+    def __str__(self) -> str:
+        """
+        返回收货确认书组合的字符串表示
+        
+        :return: 字符串表示
+        """
+        date_info = f", 日期={self.group_date}" if self.group_date else ""
+        return f"BuyerConfirmationGroup(数量={self.count()}, 类型={self.group_type}{date_info}, 总重量={self.get_total_weight()})"
+
+
+

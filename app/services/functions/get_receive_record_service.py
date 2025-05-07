@@ -464,7 +464,8 @@ class GetReceiveRecordService:
             oil_weight = self.conf.get("BUSINESS.REST2CP.收油重量（成品）")
             oil_weight_180kg_ratio = self.conf.get("BUSINESS.REST2CP.180KG桶占比")
             change_rate = self.conf.get("BUSINESS.REST2CP.比率")
-            total_barrels = np.ceil((oil_weight/change_rate)/0.18) # 先用180KG桶数计算总桶数
+            weight_of_180kg_barrel = self.conf.get("BUSINESS.REST2CP.吨每桶")
+            total_barrels = np.ceil((oil_weight/change_rate)/weight_of_180kg_barrel) # 先用180KG桶数计算总桶数
             count_of_barrel_180 = np.ceil((oil_weight*oil_weight_180kg_ratio/change_rate)/0.18)
             count_of_barrel_55 = np.ceil((oil_weight*(1-oil_weight_180kg_ratio)/change_rate)/0.055)
 
@@ -724,9 +725,9 @@ class GetReceiveRecordService:
     新增1列产出重量，值为round(加工量*转化系数/100,2);
     新增1列售出数量，值为0
     """
-    def process_dataframe_with_new_columns(self, balance_df: pd.DataFrame, total_df: pd.DataFrame = None) -> pd.DataFrame:
+    def process_dataframe_with_new_columns(self, cp_id: str, balance_df: pd.DataFrame, total_df: pd.DataFrame = None) -> pd.DataFrame:
         """
-        处理DataFrame并与总表合并
+        处理DataFrame，添加新的列
         
         :param balance_df: 当月平衡表，输入的DataFrame，至少包含'日期', '车牌号', '榜单净重', '榜单编号', '收集城市'字段
         :param total_df: 总表DataFrame，如果为None则创建新的DataFrame
@@ -757,7 +758,7 @@ class GetReceiveRecordService:
                 'total_output_quantity': 0.0,
                 'total_quantities_sold': 0,  # 这个值会在后面由 process_check_to_sum 更新
                 'total_ending_inventory': 0.0,  # 这个值会在后面根据 total_quantities_sold 重新计算
-                'total_cp': None,
+                'total_cp': cp_id,
                 'total_sale_number_detail': None,
                 'total_volume_per_trucks': None,
                 'total_customer': None,
@@ -797,7 +798,7 @@ class GetReceiveRecordService:
 
         # 如果提供了总表，则合并数据
         if total_df is not None:
-            # 使用concat合并两个DataFrame
+            # 直接使用concat合并两个DataFrame
             result_df = pd.concat([total_df, new_df], ignore_index=True)
             return result_df
         
@@ -805,7 +806,7 @@ class GetReceiveRecordService:
     """
     收货确认书:传入收油表、销售车牌信息、收油重量、收货确认天数
     """
-    def generate_df_check(self, days: int, df_balance: pd.DataFrame, df_car: pd.DataFrame) -> pd.DataFrame:
+    def generate_df_check(self,cp_id: str, days: int, df_balance: pd.DataFrame, df_car: pd.DataFrame) -> pd.DataFrame:
         """
         生成检查数据表
         
@@ -816,6 +817,9 @@ class GetReceiveRecordService:
         """
         def random_weight():
             """生成随机重量（吨）"""
+            min_weight = 3050 / 100  # 最小可能重量
+            if min_weight > oil_weight:
+                raise ValueError(f"收货确认书的重量随机数的最小值({min_weight}吨)大于收油重量({oil_weight}吨)，请确认")
             return np.random.randint(3050, 3496) / 100
         
         def get_difference_value():
@@ -939,9 +943,9 @@ class GetReceiveRecordService:
                 'check_gross_weight': gross_weight,
                 'check_tare_weight': tare_weight,
                 'check_net_weight': net_weight,
-                'check_unload_weight': unload_weight,
-                'check_difference': difference,
-                'check_belong_cp': None,
+                'check_unload_weight':  round(unload_weight,2),
+                'check_difference': round(difference,2),
+                'check_belong_cp': cp_id,
                 'check_description_of_material': None
             }
             
@@ -982,7 +986,8 @@ class GetReceiveRecordService:
             mask = df_merged['total_supplied_date'] == date
             if mask.sum() > 0:  # 确保有数据
                 last_index = df_merged[mask].index[-1]  # 获取相同日期中的最后一行索引
-                df_merged.at[last_index, 'total_quantities_sold'] = df_merged.loc[last_index, '汇总重量']
+                value = df_merged.loc[last_index, '汇总重量'] if pd.notna(df_merged.loc[last_index, '汇总重量']) else 0
+                df_merged.at[last_index, 'total_quantities_sold'] = float(value)
         
         # 删除不必要的列
         df_final = df_merged.drop(columns=['check_date', '汇总重量'])
