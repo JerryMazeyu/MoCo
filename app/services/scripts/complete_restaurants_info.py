@@ -81,7 +81,7 @@ class RestaurantCompleter:
         
         # 结果文件 - 同样存储在顶层目录，与状态文件位置一致
         self.task_result_file = os.path.join(self.task_dir, f"result_{self.task_id}.xlsx")
-        self.result_file = os.path.join(self.output_dir, f"result_{self.task_id}.xlsx")
+        self.result_file = os.path.join(self.output_dir, f"result_{self.task_id}【最终文件，请下载】.xlsx")
         
         # 设置日志文件
         self.log_file = log_file or os.path.join(self.output_dir, f"log_{self.task_id}.txt")

@@ -285,6 +285,45 @@ class Tab5(QWidget):
             }
         """)
         
+        # 下载模版数据按钮
+        self.download_template_button = QPushButton("下载模版数据")
+        self.download_template_button.clicked.connect(self.download_template)
+        self.download_template_button.setStyleSheet("""
+            QPushButton {
+                background-color: #337ab7;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #286090;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """)
+        
+        # 批量上传按钮
+        self.batch_upload_button = QPushButton("批量上传")
+        self.batch_upload_button.clicked.connect(self.batch_upload)
+        self.batch_upload_button.setEnabled(False)  # 默认禁用，需要先选择CP
+        self.batch_upload_button.setStyleSheet("""
+            QPushButton {
+                background-color: #f0ad4e;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #ec971f;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """)
+        
         # 保存到OSS按钮
         self.save_to_oss_button = QPushButton("保存到OSS")
         self.save_to_oss_button.clicked.connect(self.save_to_oss)
@@ -306,6 +345,8 @@ class Tab5(QWidget):
         """)
         
         add_button_layout.addWidget(self.add_vehicle_button)
+        add_button_layout.addWidget(self.download_template_button)
+        add_button_layout.addWidget(self.batch_upload_button)
         add_button_layout.addStretch()
         add_button_layout.addWidget(self.save_to_oss_button)
         
@@ -359,6 +400,7 @@ class Tab5(QWidget):
                     # 启用按钮
                     self.add_vehicle_button.setEnabled(True)
                     self.save_to_oss_button.setEnabled(True)
+                    self.batch_upload_button.setEnabled(True)
                     
                     # 加载车辆数据
                     self.load_vehicles_data()
@@ -440,8 +482,25 @@ class Tab5(QWidget):
                     # 创建Vehicle实例并生成其他字段
                     try:
                         vehicle = Vehicle(vehicle_info)
+                        
+                        # 先生成ID
+                        vehicle._generate_id()
+                        
+                        # 检查ID是否已存在
+                        if self.vehicles_data is not None and not self.vehicles_data.empty and 'vehicle_id' in self.vehicles_data.columns:
+                            existing_id = self.vehicles_data[
+                                self.vehicles_data['vehicle_id'] == vehicle.inst.vehicle_id
+                            ]
+                            if not existing_id.empty:
+                                QMessageBox.warning(
+                                    self, 
+                                    "车辆ID重复", 
+                                    f"生成的车辆ID {vehicle.inst.vehicle_id} 已存在，可能是相同车牌号和司机姓名组合"
+                                )
+                                return
+                        
+                        # 继续生成其他字段
                         vehicle.generate()
-                        # 生成UUID作为vehicle_id
                         
                         LOGGER.info(f"已创建新车辆: {str(vehicle)}")
                         
@@ -513,6 +572,114 @@ class Tab5(QWidget):
             LOGGER.error(f"保存车辆数据到OSS时出错: {str(e)}")
             QMessageBox.critical(self, "保存失败", f"保存车辆数据到OSS时出错: {str(e)}")
     
+    def download_template(self):
+        """下载模版数据"""
+        try:
+            # 获取保存位置
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, "保存模版文件", "vehicles_template.xlsx", "Excel文件 (*.xlsx)"
+            )
+            
+            if not save_path:
+                return  # 用户取消
+            
+            # 获取默认模版文件路径
+            
+            template_path = f"CPs/template/default.xlsx"
+            try:
+                file = oss_get_excel_file(template_path)
+                file.to_excel(save_path, index=False)
+                QMessageBox.information(self, "下载成功", f"模版文件已保存到: {save_path}")
+                LOGGER.info(f"模版文件已下载到: {save_path}")
+            except Exception as e:
+                LOGGER.error(f"下载模版文件时出错: {str(e)}")
+                QMessageBox.critical(self, "下载失败", f"下载模版文件时出错: {str(e)}")
+                
+        except Exception as e:
+            LOGGER.error(f"下载模版数据时出错: {str(e)}")
+            QMessageBox.critical(self, "下载失败", f"下载模版数据时出错: {str(e)}")
+    
+    def batch_upload(self):
+        """批量上传车辆数据"""
+        try:
+            if not self.current_cp:
+                QMessageBox.warning(self, "未选择CP", "请先选择CP")
+                return
+                
+            # 选择Excel文件
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "选择Excel文件", "", "Excel文件 (*.xlsx *.xls)"
+            )
+            
+            if not file_path:
+                return  # 用户取消
+                
+            # 读取Excel文件
+            import pandas as pd
+            try:
+                upload_data = pd.read_excel(file_path)
+                
+                # 检查数据
+                if upload_data.empty:
+                    QMessageBox.warning(self, "数据为空", "上传的Excel文件中没有数据")
+                    return
+                    
+                # 使用Vehicle类的批量验证方法验证数据
+                from app.services.instances.vehicle import Vehicle
+                valid_records, invalid_records = Vehicle.batch_validate(
+                    upload_data.to_dict('records'), 
+                    self.current_cp['cp_id'],
+                    self.vehicles_data  # 传递现有车辆数据
+                )
+                
+                # 如果有无效记录，显示警告
+                if invalid_records:
+                    invalid_msg = "\n".join([f"行 {i+1}: {reason}" for i, (_, reason) in enumerate(invalid_records)])
+                    QMessageBox.warning(
+                        self, 
+                        "数据验证警告", 
+                        f"以下 {len(invalid_records)} 条记录无效，将被跳过:\n{invalid_msg}"
+                    )
+                
+                # 如果没有有效记录，退出
+                if not valid_records:
+                    QMessageBox.warning(self, "无有效数据", "上传的Excel文件中没有有效的车辆数据")
+                    return
+                
+                # 批量生成车辆对象并添加到现有数据
+                new_vehicles = []
+                for record in valid_records:
+                    # 设置所属CP
+                    record["vehicle_belonged_cp"] = self.current_cp['cp_id']
+                    
+                    # 创建Vehicle实例并生成
+                    vehicle = Vehicle(record)
+                    vehicle.generate()
+                    new_vehicles.append(vehicle.to_dict())
+                
+                # 添加到现有数据
+                if self.vehicles_data is None:
+                    self.vehicles_data = pd.DataFrame(new_vehicles)
+                else:
+                    self.vehicles_data = pd.concat([self.vehicles_data, pd.DataFrame(new_vehicles)], ignore_index=True)
+                
+                # 更新UI
+                self.xlsx_viewer.load_data(data=self.vehicles_data)
+                
+                QMessageBox.information(
+                    self, 
+                    "上传成功", 
+                    f"成功添加 {len(new_vehicles)} 条车辆记录，请点击「保存到OSS」按钮保存更改"
+                )
+                
+            except Exception as e:
+                LOGGER.error(f"处理上传文件时出错: {str(e)}")
+                QMessageBox.critical(self, "处理失败", f"处理上传文件时出错: {str(e)}")
+                
+        except Exception as e:
+            LOGGER.error(f"批量上传车辆数据时出错: {str(e)}")
+            QMessageBox.critical(self, "上传失败", f"批量上传车辆数据时出错: {str(e)}")
+    
     def update_cp(self, cp_id):
         """更新CP选择按钮的文本并更新车辆列表"""
         try:
@@ -539,6 +706,7 @@ class Tab5(QWidget):
                     # 启用按钮
                     self.add_vehicle_button.setEnabled(True)
                     self.save_to_oss_button.setEnabled(True)
+                    self.batch_upload_button.setEnabled(True)
                     
                     # 加载车辆数据
                     self.load_vehicles_data()
@@ -547,12 +715,15 @@ class Tab5(QWidget):
                     self.cp_button.setText("未选择CP")
                     self.add_vehicle_button.setEnabled(False)
                     self.save_to_oss_button.setEnabled(False)
+                    self.batch_upload_button.setEnabled(False)
             else:
                 self.cp_button.setText("未选择CP")
                 self.add_vehicle_button.setEnabled(False)
                 self.save_to_oss_button.setEnabled(False)
+                self.batch_upload_button.setEnabled(False)
         except Exception as e:
             LOGGER.error(f"更新CP时出错: {str(e)}")
             self.cp_button.setText("未选择CP")
             self.add_vehicle_button.setEnabled(False)
             self.save_to_oss_button.setEnabled(False)
+            self.batch_upload_button.setEnabled(False)

@@ -76,7 +76,20 @@ class Vehicle(BaseInstance):
     
     def _generate_id(self) -> bool:
         """生成唯一车辆ID"""
-        self.inst.vehicle_id = f"V-{str(uuid.uuid4())[:8]}"
+        # 使用车牌号和司机姓名生成哈希
+        plate = self.inst.vehicle_license_plate
+        driver = self.inst.vehicle_driver_name if hasattr(self.inst, 'vehicle_driver_name') and self.inst.vehicle_driver_name else ""
+        
+        # 组合车牌号和司机姓名
+        combine_str = f"{plate}_{driver}"
+        
+        # 使用工具函数生成哈希
+        hash_value = hash_text(combine_str)
+        
+        # 设置车辆ID
+        self.inst.vehicle_id = f"V-{hash_value[:8]}"
+        
+        LOGGER.info(f"已为车辆生成ID: {self.inst.vehicle_id}")
         return True
     
     # def update_driver_info(self, name: str, phone: str) -> None:
@@ -226,8 +239,9 @@ class Vehicle(BaseInstance):
         """
         success = True
         
-        # 生成ID
-        success &= self._generate_id()
+        # 生成ID（如果尚未生成）
+        if not hasattr(self.inst, 'vehicle_id') or not self.inst.vehicle_id:
+            success &= self._generate_id()
         
         # 生成重量信息
         success &= self._generate_weights()
@@ -343,6 +357,114 @@ class Vehicle(BaseInstance):
             包含车辆信息的字典
         """
         return dict(self.inst)
+    
+    @staticmethod
+    def batch_validate(records: List[Dict[str, Any]], cp_id: str, existing_vehicles: Optional[pd.DataFrame] = None) -> tuple:
+        """
+        批量验证车辆数据
+        
+        Args:
+            records: 待验证的车辆数据列表
+            cp_id: 所属CP的ID
+            existing_vehicles: 现有车辆数据，用于检查ID和车牌号是否重复
+            
+        Returns:
+            (valid_records, invalid_records): 有效记录和无效记录的元组
+        """
+        valid_records = []
+        invalid_records = []
+        
+        # 记录已存在的车牌号和ID集合
+        existing_plates = set()
+        existing_ids = set()
+        
+        # 如果提供了现有车辆数据，提取车牌号和ID
+        if existing_vehicles is not None and not existing_vehicles.empty:
+            if 'vehicle_license_plate' in existing_vehicles.columns:
+                existing_plates.update(existing_vehicles['vehicle_license_plate'].dropna().unique())
+            if 'vehicle_id' in existing_vehicles.columns:
+                existing_ids.update(existing_vehicles['vehicle_id'].dropna().unique())
+        
+        # 记录此批次中已验证的车牌号，用于检查批次内重复
+        batch_plates = set()
+        
+        for record in records:
+            # 验证车牌号是否存在
+            if "vehicle_license_plate" not in record or not record["vehicle_license_plate"]:
+                invalid_records.append((record, "车牌号不能为空"))
+                continue
+            
+            # 检查车牌号是否重复（与现有数据比较）
+            plate = record["vehicle_license_plate"]
+            if plate in existing_plates:
+                invalid_records.append((record, f"车牌号 '{plate}' 已存在"))
+                continue
+            
+            # 检查车牌号是否在当前批次中重复
+            if plate in batch_plates:
+                invalid_records.append((record, f"车牌号 '{plate}' 在上传文件中重复"))
+                continue
+            
+            # 添加到批次车牌集合
+            batch_plates.add(plate)
+                
+            # 验证车辆类型是否合法
+            if "vehicle_type" not in record:
+                record["vehicle_type"] = "to_rest"  # 默认为收油车
+            elif record["vehicle_type"] not in ["to_rest", "to_sale"]:
+                invalid_records.append((record, f"车辆类型 '{record['vehicle_type']}' 无效，必须是 'to_rest' 或 'to_sale'"))
+                continue
+            
+            # 验证冷却天数
+            if "vehicle_cooldown_days" not in record or pd.isna(record["vehicle_cooldown_days"]):
+                record["vehicle_cooldown_days"] = 3  # 默认为3天
+            else:
+                try:
+                    # 尝试将冷却天数转换为整数
+                    record["vehicle_cooldown_days"] = int(record["vehicle_cooldown_days"])
+                    if record["vehicle_cooldown_days"] <= 0:
+                        record["vehicle_cooldown_days"] = 3  # 如果小于等于0，使用默认值
+                except (ValueError, TypeError):
+                    record["vehicle_cooldown_days"] = 3  # 如果转换失败，使用默认值
+            
+            # 设置其他必要字段的默认值
+            if "vehicle_driver_name" not in record:
+                record["vehicle_driver_name"] = ""
+                
+            # 设置所属CP
+            record["vehicle_belonged_cp"] = cp_id
+            
+            # 预生成ID并检查是否重复
+            try:
+                # 组合车牌号和司机姓名
+                driver = record.get("vehicle_driver_name", "")
+                combine_str = f"{plate}_{driver}"
+                
+                # 使用工具函数生成哈希
+                hash_value = hash_text(combine_str)
+                
+                # 设置车辆ID
+                vehicle_id = f"V-{hash_value[:8]}"
+                
+                # 检查ID是否重复
+                if vehicle_id in existing_ids:
+                    invalid_records.append((record, f"生成的车辆ID '{vehicle_id}' 已存在"))
+                    continue
+                
+                # 将ID添加到记录中
+                record["vehicle_id"] = vehicle_id
+                
+                # 添加到已存在ID集合，避免批次内重复
+                existing_ids.add(vehicle_id)
+            except Exception as e:
+                invalid_records.append((record, f"生成车辆ID时出错: {str(e)}"))
+                continue
+            
+            # 添加到有效记录列表
+            valid_records.append(record)
+            
+        LOGGER.info(f"批量验证车辆数据：共 {len(records)} 条，有效 {len(valid_records)} 条，无效 {len(invalid_records)} 条")
+        return valid_records, invalid_records
 
 
 class VehicleGroup(BaseGroup):

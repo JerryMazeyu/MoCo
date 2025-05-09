@@ -33,6 +33,7 @@ from app.config.config import CONF
 import oss2
 from app.services.functions.get_restaurant_service import GetRestaurantService
 from app.services.instances.restaurant import RestaurantModel, Restaurant, RestaurantsGroup
+from app.utils import oss_get_excel_file, oss_put_excel_file
 import concurrent.futures
 import copy
 import re
@@ -1298,6 +1299,22 @@ class Tab2(QWidget):
             }
         """)
         
+        # 下载模版按钮
+        self.download_template_button = QPushButton("下载模版")
+        self.download_template_button.clicked.connect(self.download_template)
+        self.download_template_button.setStyleSheet("""
+            QPushButton {
+                background-color: #337ab7;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 5px 15px;
+            }
+            QPushButton:hover {
+                background-color: #286090;
+            }
+        """)
+        
         control_layout.addWidget(city_label)
         control_layout.addWidget(self.city_input)  # 使用输入框
         control_layout.addWidget(self.search_by_cp_button)  # 添加根据CP位置搜索按钮
@@ -1310,6 +1327,7 @@ class Tab2(QWidget):
         control_layout.addWidget(self.import_button)
         control_layout.addWidget(self.complete_info_button)
         control_layout.addWidget(self.verify_status_button)
+        control_layout.addWidget(self.download_template_button)  # 添加下载模版按钮
         control_layout.addStretch()
         
         self.layout.addWidget(control_frame)
@@ -2552,6 +2570,32 @@ class Tab2(QWidget):
         except Exception as e:
             LOGGER.error(f"打开任务输出目录时出错: {str(e)}")
             QMessageBox.warning(self, "打开目录失败", f"无法打开输出目录: {str(e)}")
+    
+    def download_template(self):
+        """下载餐厅模版数据"""
+        try:
+            # 获取保存位置
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, "保存餐厅模版文件", "restaurant_template.xlsx", "Excel文件 (*.xlsx)"
+            )
+            
+            if not save_path:
+                return  # 用户取消
+            
+            # 从OSS获取模版文件路径
+            template_path = f"CPs/template/restaurant_example.xlsx"
+            try:
+                file = oss_get_excel_file(template_path)
+                file.to_excel(save_path, index=False)
+                QMessageBox.information(self, "下载成功", f"餐厅模版文件已保存到: {save_path}")
+                LOGGER.info(f"餐厅模版文件已下载到: {save_path}")
+            except Exception as e:
+                LOGGER.error(f"下载餐厅模版文件时出错: {str(e)}")
+                QMessageBox.critical(self, "下载失败", f"下载餐厅模版文件时出错: {str(e)}")
+                
+        except Exception as e:
+            LOGGER.error(f"下载餐厅模版数据时出错: {str(e)}")
+            QMessageBox.critical(self, "下载失败", f"下载餐厅模版数据时出错: {str(e)}")
     
     def set_cleaned_in_close_event(self):
         """设置已在关闭事件中处理过临时文件的标志"""
