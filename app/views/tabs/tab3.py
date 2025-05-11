@@ -165,12 +165,14 @@ class SalesDaysDialog(QDialog):
         
         # 布局
         layout = QVBoxLayout()
+        layout.setAlignment(Qt.AlignLeft)  # 主布局左对齐
         
         # 开始运输日期：年、月、日下拉框
         date_layout = QHBoxLayout()
+        date_layout.setAlignment(Qt.AlignLeft)
         date_label = QLabel("开始运输日期:")
         date_label.setFixedWidth(120)
-        date_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        date_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         date_layout.addWidget(date_label)
 
         self.year_combo = QComboBox(self)
@@ -196,6 +198,7 @@ class SalesDaysDialog(QDialog):
         self.date_warn_label.setStyleSheet("color: red;")
         self.date_warn_label.setVisible(False)
         warn_layout = QHBoxLayout()
+        warn_layout.setAlignment(Qt.AlignLeft)
         warn_layout.addSpacing(120)  # 与上面label对齐
         warn_layout.addWidget(self.date_warn_label, alignment=Qt.AlignLeft)
         warn_layout.addStretch()
@@ -203,9 +206,10 @@ class SalesDaysDialog(QDialog):
         
         # 天数输入框
         days_layout = QHBoxLayout()
+        days_layout.setAlignment(Qt.AlignLeft)
         days_label = QLabel("销售运输天数:")
         days_label.setFixedWidth(120)
-        days_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        days_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         days_layout.addWidget(days_label)
         self.days_input = QLineEdit(self)
         self.days_input.setPlaceholderText("请输入销售运输天数（1-31）")
@@ -216,9 +220,10 @@ class SalesDaysDialog(QDialog):
 
         # 是否忽略库存
         ignore_layout = QHBoxLayout()
+        ignore_layout.setAlignment(Qt.AlignLeft)
         ignore_label = QLabel("是否忽略库存:")
         ignore_label.setFixedWidth(120)
-        ignore_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        ignore_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         ignore_layout.addWidget(ignore_label)
         self.ignore_stock_combo = QComboBox(self)
         self.ignore_stock_combo.addItems(["否", "是"])
@@ -229,7 +234,9 @@ class SalesDaysDialog(QDialog):
         layout.addLayout(ignore_layout)
         
         # 上传平衡表总表选项
-        layout.addWidget(QLabel("是否上传已有平衡表总表:"))
+        upload_label = QLabel("是否上传已有平衡表总表:")
+        upload_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        layout.addWidget(upload_label, alignment=Qt.AlignLeft)
         
         # 创建单选按钮组
         self.upload_group = QButtonGroup(self)
@@ -243,6 +250,7 @@ class SalesDaysDialog(QDialog):
         
         # 创建水平布局放置单选按钮
         radio_layout = QHBoxLayout()
+        radio_layout.setAlignment(Qt.AlignLeft)
         radio_layout.addWidget(self.upload_yes)
         radio_layout.addWidget(self.upload_no)
         layout.addLayout(radio_layout)
@@ -251,7 +259,7 @@ class SalesDaysDialog(QDialog):
         self.file_button = QPushButton("选择平衡表总表文件", self)
         self.file_button.clicked.connect(self.select_file)
         self.file_button.setVisible(False)
-        layout.addWidget(self.file_button)
+        layout.addWidget(self.file_button, alignment=Qt.AlignLeft)
 
         # 从OSS读取选项
         self.oss_group = QButtonGroup(self)
@@ -260,9 +268,11 @@ class SalesDaysDialog(QDialog):
         self.oss_yes.setChecked(True)  # 默认选择"是"
         
         self.oss_label = QLabel("是否读取OSS平衡表总表:", self)
-        layout.addWidget(self.oss_label)
+        self.oss_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        layout.addWidget(self.oss_label, alignment=Qt.AlignLeft)
         
         oss_radio_layout = QHBoxLayout()
+        oss_radio_layout.setAlignment(Qt.AlignLeft)
         oss_radio_layout.addWidget(self.oss_yes)
         oss_radio_layout.addWidget(self.oss_no)
         layout.addLayout(oss_radio_layout)
@@ -277,6 +287,7 @@ class SalesDaysDialog(QDialog):
         
         # 确认和取消按钮
         button_layout = QHBoxLayout()
+        button_layout.setAlignment(Qt.AlignLeft)
         self.confirm_button = QPushButton("确认", self)
         self.confirm_button.clicked.connect(self.on_confirm_clicked)
         self.cancel_button = QPushButton("取消", self)
@@ -424,7 +435,23 @@ class Tab3(QWidget):
         self.clear_button = QPushButton("清空页面")
         self.clear_button.clicked.connect(self.clear_page)
         self.clear_button.setMinimumWidth(120)
-        self.clear_button.setStyleSheet("font-size: 15px; font-weight: bold;")
+        self.clear_button.setStyleSheet("""
+            QPushButton {
+                background-color: #f0ad4e;
+                color: white;
+                font-size: 15px;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #ec971f;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #f0f0f0;
+            }
+        """)
         
         top_layout.addStretch(1)
         top_layout.addWidget(self.cp_button)
@@ -545,14 +572,44 @@ class Tab3(QWidget):
         # 新增下载模板按钮
         self.download_template_button = QPushButton("下载模板数据")
         self.download_template_button.setMinimumWidth(140)
-        self.download_template_button.setStyleSheet("font-size: 15px; font-weight: bold;")
+        self.download_template_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2176ae;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #18507a;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #f0f0f0;
+            }
+        """)
         self.download_template_button.clicked.connect(self.download_template)
         bottom_layout.addWidget(self.download_template_button)
         # 其余按钮
-        self.save_all_button = QPushButton("保存所有信息")
+        self.save_all_button = QPushButton("保存到OSS")
         self.save_all_button.clicked.connect(self.save_all_data)
-        self.save_all_button.setMinimumWidth(140)
-        self.save_all_button.setStyleSheet("font-size: 15px; font-weight: bold;")
+        self.save_all_button.setMinimumWidth(200)
+        self.save_all_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #388e3c;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #f0f0f0;
+            }
+        """)
         bottom_layout.addStretch()  # 添加弹性空间，使按钮靠右
         bottom_layout.addWidget(self.save_all_button)
         self.layout.addLayout(bottom_layout)
