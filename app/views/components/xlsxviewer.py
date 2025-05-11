@@ -490,7 +490,11 @@ class XlsxViewerWidget(QWidget):
         QApplication.processEvents()
         # 标记数据已修改
         self.data = self.model.getDataFrame()
-
+    def clear_data(self):
+        """清除数据"""
+        empty_df = pd.DataFrame()
+        self.model.setDataFrame(empty_df)
+        self.table_view.resizeColumnsToContents()
 # Example usage:
 
 if __name__ == '__main__':

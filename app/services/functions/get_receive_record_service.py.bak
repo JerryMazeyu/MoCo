@@ -284,27 +284,25 @@ class GetReceiveRecordService:
 
                     for temp_row in temp_group:
                         temp_row = temp_row.copy()  # 防止修改原DataFrame
-                        ## 不判断车辆，因为这里没有分配车辆，后面再分配
-                        # if current_vehicle_index < len(vehicle_sorted_df):
+                        if current_vehicle_index < len(vehicle_sorted_df):
                             # 正确获取vehicle_id和license_plate
-                        # current_vehicle = vehicle_sorted_df.iloc[current_vehicle_index]
-                        # vehicle_id = current_vehicle['vehicle_id']
-                        # vehicle_id = current_vehicle['vehicle_id']
-                        # license_plate = current_vehicle['vehicle_license_plate']
-                        ## 车辆信息后面分配 
-                        temp_row['rr_vehicle_license_plate'] = None
-                        temp_row['rr_vehicle'] = None
-                        temp_row['rr_amount_of_day'] = accumulated_sum
-                        temp_row['temp_vehicle_index'] =  current_vehicle_index ## 增加一个唯一标识后面分配时间
-                        result_rows.append(temp_row)
+                            current_vehicle = vehicle_sorted_df.iloc[current_vehicle_index]
+                            vehicle_id = current_vehicle['vehicle_id']
+                            license_plate = current_vehicle['vehicle_license_plate']
+                           
+                            temp_row['rr_vehicle_license_plate'] = license_plate
+                            temp_row['rr_vehicle'] = vehicle_id
+                            temp_row['rr_amount_of_day'] = accumulated_sum
+                            temp_row['temp_vehicle_index'] =  current_vehicle_index ## 增加一个唯一标识后面分配时间
+                            result_rows.append(temp_row)
                             
 
                             
-                        # else: 
-                        #     print(f"Warning: No more vehicles available. Current accumulated: {total_accumulated}, Target: {total_barrels}")
-                        #     should_break = True
-                        #     break
-                    # print(f"分配车辆: {vehicle_id} 车牌: {license_plate} 收油数: {accumulated_sum}")
+                        else: 
+                            print(f"Warning: No more vehicles available. Current accumulated: {total_accumulated}, Target: {total_barrels}")
+                            should_break = True
+                            break
+                    print(f"分配车辆: {vehicle_id} 车牌: {license_plate} 收油数: {accumulated_sum}")
                     current_vehicle_index += 1    
                     accumulated_sum = 0
                     temp_group = []
@@ -700,13 +698,13 @@ class GetReceiveRecordService:
         restaurant_balance_df = restaurant_balance_df.drop(columns=['new_vehicle_id', 'new_vehicle_license_plate'])
         
         
-        ## 回写收油表，将平衡表中的收购时间和流水号回写到收油表,根据temp_vehicle_index关联，只展示分配车辆的收油表和平衡表
+        ## 回写收油表，将平衡表中的收购时间和流水号回写到收油表
         oil_records_df[['rr_date','rr_serial_number','rr_vehicle_license_plate','rr_vehicle_id']] = pd.merge(
             oil_records_df[['rr_cp', 'rr_district', 'rr_vehicle_license_plate', 'rr_amount_of_day', 'temp_vehicle_index']],
             restaurant_balance_df[['balance_date', 'balance_serial_number', 'balance_vehicle_license_plate', 'balance_cp', 'balance_district', 'balance_amount_of_day', 'temp_vehicle_index','balance_vehicle_id']],
             left_on=['rr_cp', 'rr_district', 'rr_amount_of_day', 'temp_vehicle_index'],
             right_on=['balance_cp', 'balance_district', 'balance_amount_of_day', 'temp_vehicle_index'],
-            how='inner'
+            how='left'
         )[['balance_date','balance_serial_number','balance_vehicle_license_plate','balance_vehicle_id']]
         
         ## 将收油表和平衡表转成对应的model

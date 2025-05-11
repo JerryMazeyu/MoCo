@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QFrame, QComboBox, QGroupBox, QFileDialog, 
-                             QMessageBox, QDialog, QTabWidget,QLineEdit, QButtonGroup, QRadioButton, QTreeWidget, QTreeWidgetItem, QInputDialog)
-from PyQt5.QtGui import QPixmap, QColor
+                             QMessageBox, QDialog, QTabWidget,QLineEdit, QButtonGroup, QRadioButton)
+from PyQt5.QtGui import QPixmap
 from app.utils.logger import get_logger
 from app.services.instances.restaurant import Restaurant, RestaurantsGroup
 from app.services.instances.receive_record import BalanceTotal, BalanceTotalGroup,BuyerConfirmation,BuyerConfirmationGroup
@@ -10,15 +10,12 @@ from app.services.functions.get_receive_record_service import GetReceiveRecordSe
 from app.services.instances.cp import CP
 from app.config.config import CONF
 from app.models.receive_record import ReceiveRecordModel,RestaurantTotalModel,BuyerConfirmationModel
-from app.models.restaurant_model import RestaurantModel
 import oss2
 from app.views.tabs.tab2 import CPSelectDialog
 from app.views.components.xlsxviewer import XlsxViewerWidget  # 导入 XlsxViewerWidget
 from app.utils import rp, oss_get_excel_file,oss_put_excel_file,oss_rename_excel_file
 import pandas as pd
 from PyQt5.QtCore import Qt
-import datetime
-import xlsxwriter
 
 # 获取全局日志对象
 LOGGER = get_logger()
@@ -27,121 +24,43 @@ class TransportDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("运输信息")
-        self.setMinimumWidth(420)  # 适当加宽
         
+        # 布局
         layout = QVBoxLayout()
         
-        label_width = 110
-        input_width = 200
-        
-        # 运输天数
-        days_layout = QHBoxLayout()
-        days_label = QLabel("运输天数:")
-        days_label.setFixedWidth(label_width)
-        days_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        days_layout.addWidget(days_label)
+        # 天数输入框
         self.days_input = QLineEdit(self)
         self.days_input.setPlaceholderText("请输入收油天数（1-31）")
-        self.days_input.setFixedWidth(input_width)
-        days_layout.addWidget(self.days_input)
-        days_layout.addStretch()
-        layout.addLayout(days_layout)
+        layout.addWidget(QLabel("运输天数:"))
+        layout.addWidget(self.days_input)
         
-        # 年月
-        month_layout = QHBoxLayout()
-        month_label = QLabel("选择年月:")
-        month_label.setFixedWidth(label_width)
-        month_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        month_layout.addWidget(month_label)
+        # 年月下拉框
         self.month_year_combo = QComboBox(self)
         self.month_year_combo.addItems(self.generate_month_year_options())
-        self.month_year_combo.setFixedWidth(input_width)
-        month_layout.addWidget(self.month_year_combo)
-        month_layout.addStretch()
-        layout.addLayout(month_layout)
-        
-        # 是否全部收油
-        collect_layout = QHBoxLayout()
-        collect_label = QLabel("餐厅信息是否全部收油:")
-        collect_label.setFixedWidth(label_width)
-        collect_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        collect_layout.addWidget(collect_label)
-        self.collect_all_radio = QRadioButton("全部收油", self)
-        self.collect_partial_radio = QRadioButton("部分收油", self)
-        self.collect_all_radio.setChecked(True)
-        collect_layout.addWidget(self.collect_all_radio)
-        collect_layout.addWidget(self.collect_partial_radio)
-        collect_layout.addStretch()
-        layout.addLayout(collect_layout)
-        
-        # 收油重量（整行）
-        self.weight_widget = QWidget()
-        weight_row_layout = QHBoxLayout(self.weight_widget)
-        weight_label = QLabel("收油重量（成品）:")
-        weight_label.setFixedWidth(label_width)
-        weight_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        weight_row_layout.addWidget(weight_label)
-        self.weight_input = QLineEdit()
-        self.weight_input.setPlaceholderText("请输入收油重量")
-        self.weight_input.setFixedWidth(input_width)
-        weight_row_layout.addWidget(self.weight_input)
-        weight_row_layout.addWidget(QLabel("吨"))
-        weight_row_layout.addStretch()
-        self.weight_widget.setVisible(False)
-        layout.addWidget(self.weight_widget)
-        
+        layout.addWidget(QLabel("选择年月:"))
+        layout.addWidget(self.month_year_combo)
+
         # 180KG桶占比
-        bucket_layout = QHBoxLayout()
-        bucket_label = QLabel("180KG桶占比:")
-        bucket_label.setFixedWidth(label_width)
-        bucket_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        bucket_layout.addWidget(bucket_label)
         self.bucket_ratio_input = QLineEdit(self)
-        self.bucket_ratio_input.setText("1")
+        self.bucket_ratio_input.setText("1")  # 设置默认值为1
         self.bucket_ratio_input.setPlaceholderText("请输入180KG桶占比（0-1）")
-        self.bucket_ratio_input.setEnabled(False)
-        self.bucket_ratio_input.setFixedWidth(input_width)
-        bucket_layout.addWidget(self.bucket_ratio_input)
-        bucket_layout.addStretch()
-        layout.addLayout(bucket_layout)
+        self.bucket_ratio_input.setEnabled(False)  # 暂时禁用输入
+        layout.addWidget(QLabel("180KG桶占比:"))
+        layout.addWidget(self.bucket_ratio_input)
         
-        # 按钮
+        # 确认和取消按钮
         button_layout = QHBoxLayout()
         self.confirm_button = QPushButton("确认", self)
         self.confirm_button.clicked.connect(self.accept)
         self.cancel_button = QPushButton("取消", self)
         self.cancel_button.clicked.connect(self.reject)
-        button_layout.addStretch()
+        
         button_layout.addWidget(self.confirm_button)
         button_layout.addWidget(self.cancel_button)
-        layout.addLayout(button_layout)
         
+        layout.addLayout(button_layout)
         self.setLayout(layout)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-
-        # 连接信号
-        self.weight_input.textChanged.connect(self.validate_weight_input)
-        self.collect_all_radio.toggled.connect(self.toggle_weight_input)
-        self.collect_partial_radio.toggled.connect(self.toggle_weight_input)
-
-    def toggle_weight_input(self, checked):
-        """根据单选按钮状态切换收油重量输入框的显示状态"""
-        if self.sender() == self.collect_all_radio and checked:
-            self.weight_widget.setVisible(False)
-            self.weight_input.setText("")  # 清空输入
-        elif self.sender() == self.collect_partial_radio and checked:
-            self.weight_widget.setVisible(True)
-
-    def validate_weight_input(self, text):
-        """验证收油重量输入是否为有效数值"""
-        if text:
-            try:
-                float(text)
-                self.weight_input.setStyleSheet("")
-            except ValueError:
-                self.weight_input.setStyleSheet("background-color: #FFE4E1;")  # 浅红色背景表示错误
-        else:
-            self.weight_input.setStyleSheet("")
 
     def generate_month_year_options(self):
         """生成年月选项"""
@@ -153,80 +72,22 @@ class TransportDialog(QDialog):
 
     def get_input_data(self):
         """获取输入的数据"""
-        weight = self.weight_input.text() if self.collect_partial_radio.isChecked() else ""
-        return self.days_input.text(), self.month_year_combo.currentText(), self.bucket_ratio_input.text(), weight
+        return self.days_input.text(), self.month_year_combo.currentText(), self.bucket_ratio_input.text()
 
 class SalesDaysDialog(QDialog):
-    def __init__(self, parent=None, min_balance_date=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("销售运输天数")
         self.balance_total = None
-        self.min_balance_date = min_balance_date
         
         # 布局
         layout = QVBoxLayout()
         
-        # 开始运输日期：年、月、日下拉框
-        date_layout = QHBoxLayout()
-        date_label = QLabel("开始运输日期:")
-        date_label.setFixedWidth(120)
-        date_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        date_layout.addWidget(date_label)
-
-        self.year_combo = QComboBox(self)
-        self.year_combo.addItems([str(y) for y in range(2020, 2031)])
-        self.year_combo.setFixedWidth(70)
-        date_layout.addWidget(self.year_combo)
-
-        self.month_combo = QComboBox(self)
-        self.month_combo.addItems([f"{m:02d}" for m in range(1, 13)])
-        self.month_combo.setFixedWidth(50)
-        date_layout.addWidget(self.month_combo)
-
-        self.day_combo = QComboBox(self)
-        self.day_combo.addItems([f"{d:02d}" for d in range(1, 32)])
-        self.day_combo.setFixedWidth(50)
-        date_layout.addWidget(self.day_combo)
-
-        date_layout.addStretch()
-        layout.addLayout(date_layout)
-
-        # 红字提示单独一行，左对齐
-        self.date_warn_label = QLabel("")
-        self.date_warn_label.setStyleSheet("color: red;")
-        self.date_warn_label.setVisible(False)
-        warn_layout = QHBoxLayout()
-        warn_layout.addSpacing(120)  # 与上面label对齐
-        warn_layout.addWidget(self.date_warn_label, alignment=Qt.AlignLeft)
-        warn_layout.addStretch()
-        layout.addLayout(warn_layout)
-        
         # 天数输入框
-        days_layout = QHBoxLayout()
-        days_label = QLabel("销售运输天数:")
-        days_label.setFixedWidth(120)
-        days_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        days_layout.addWidget(days_label)
         self.days_input = QLineEdit(self)
         self.days_input.setPlaceholderText("请输入销售运输天数（1-31）")
-        self.days_input.setFixedWidth(150)
-        days_layout.addWidget(self.days_input)
-        days_layout.addStretch()
-        layout.addLayout(days_layout)
-
-        # 是否忽略库存
-        ignore_layout = QHBoxLayout()
-        ignore_label = QLabel("是否忽略库存:")
-        ignore_label.setFixedWidth(120)
-        ignore_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        ignore_layout.addWidget(ignore_label)
-        self.ignore_stock_combo = QComboBox(self)
-        self.ignore_stock_combo.addItems(["否", "是"])
-        self.ignore_stock_combo.setCurrentIndex(0)
-        self.ignore_stock_combo.setFixedWidth(70)
-        ignore_layout.addWidget(self.ignore_stock_combo)
-        ignore_layout.addStretch()
-        layout.addLayout(ignore_layout)
+        layout.addWidget(QLabel("销售运输天数:"))
+        layout.addWidget(self.days_input)
         
         # 上传平衡表总表选项
         layout.addWidget(QLabel("是否上传已有平衡表总表:"))
@@ -270,15 +131,11 @@ class SalesDaysDialog(QDialog):
         # 连接单选按钮信号
         self.upload_yes.toggled.connect(self.toggle_file_button)
         self.upload_no.toggled.connect(self.toggle_oss_options)
-
-        # 连接日期下拉框信号（只做日下拉框更新）
-        self.year_combo.currentIndexChanged.connect(self.update_day_combo)
-        self.month_combo.currentIndexChanged.connect(self.update_day_combo)
         
         # 确认和取消按钮
         button_layout = QHBoxLayout()
         self.confirm_button = QPushButton("确认", self)
-        self.confirm_button.clicked.connect(self.on_confirm_clicked)
+        self.confirm_button.clicked.connect(self.accept)
         self.cancel_button = QPushButton("取消", self)
         self.cancel_button.clicked.connect(self.reject)
         
@@ -288,50 +145,6 @@ class SalesDaysDialog(QDialog):
         layout.addLayout(button_layout)
         self.setLayout(layout)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-
-    def update_day_combo(self):
-        """根据年/月动态更新日下拉框"""
-        year = int(self.year_combo.currentText())
-        month = int(self.month_combo.currentText())
-        import calendar
-        max_day = calendar.monthrange(year, month)[1]
-        current_day = self.day_combo.currentText()
-        self.day_combo.clear()
-        self.day_combo.addItems([f"{d:02d}" for d in range(1, max_day + 1)])
-        if current_day and current_day.isdigit() and int(current_day) <= max_day:
-            self.day_combo.setCurrentText(current_day)
-        else:
-            self.day_combo.setCurrentIndex(0)
-
-    def on_confirm_clicked(self):
-        """点击确认时校验日期"""
-        year = self.year_combo.currentText()
-        month = self.month_combo.currentText()
-        day = self.day_combo.currentText()
-        # 先判断都不为空且为数字
-        if not (year and month and day and year.isdigit() and month.isdigit() and day.isdigit()):
-            self.date_warn_label.setText("请选择完整的运输日期")
-            self.date_warn_label.setVisible(True)
-            return
-
-        if self.min_balance_date:
-            year = int(year)
-            month = int(month)
-            day = int(day)
-            import datetime
-            try:
-                selected_date = datetime.date(year, month, day)
-            except Exception:
-                self.date_warn_label.setText("请选择有效的运输日期")
-                self.date_warn_label.setVisible(True)
-                return
-            if selected_date <= self.min_balance_date:
-                self.date_warn_label.setText(f"运输日期需要在 {self.min_balance_date.strftime('%Y-%m-%d')} 之后")
-                self.date_warn_label.setVisible(True)
-                return
-        # 校验通过，关闭弹窗
-        self.date_warn_label.setVisible(False)
-        self.accept()
 
     def toggle_file_button(self, checked):
         """切换文件上传按钮的可见性"""
@@ -370,17 +183,15 @@ class SalesDaysDialog(QDialog):
     def get_input_data(self):
         """获取输入的数据"""
         days_input = self.days_input.text()
-        year = self.year_combo.currentText()
-        month = self.month_combo.currentText()
-        day = self.day_combo.currentText()
-        start_date = f"{year}-{month}-{day}"
-        ignore_stock = self.ignore_stock_combo.currentText()
+        
         # 如果选择上传文件
         if self.upload_yes.isChecked():
-            return days_input, self.balance_total, start_date, ignore_stock
+            return days_input, self.balance_total
+        
         # 如果选择从OSS读取
         if self.upload_no.isChecked() and self.oss_yes.isChecked():
             try:
+                # 获取父窗口的total_file路径
                 parent = self.parent()
                 if hasattr(parent, 'total_file'):
                     self.balance_total = oss_get_excel_file(parent.total_file)
@@ -389,7 +200,8 @@ class SalesDaysDialog(QDialog):
             except Exception as e:
                 QMessageBox.critical(self, "读取失败", f"从OSS读取总表失败: {str(e)}")
                 self.balance_total = None
-        return days_input, self.balance_total, start_date, ignore_stock
+        
+        return days_input, self.balance_total
 
 class Tab3(QWidget):
     """收油表生成Tab，实现餐厅和车辆信息的加载与收油表生成"""
@@ -540,21 +352,16 @@ class Tab3(QWidget):
         self.check_view = None
         
         self.layout.addWidget(self.tab_widget)
-        # 在添加 tab_widget 之后，添加保存所有按钮的布局
+            # 在添加 tab_widget 之后，添加保存所有按钮的布局
         bottom_layout = QHBoxLayout()
-        # 新增下载模板按钮
-        self.download_template_button = QPushButton("下载模板数据")
-        self.download_template_button.setMinimumWidth(140)
-        self.download_template_button.setStyleSheet("font-size: 15px; font-weight: bold;")
-        self.download_template_button.clicked.connect(self.download_template)
-        bottom_layout.addWidget(self.download_template_button)
-        # 其余按钮
         self.save_all_button = QPushButton("保存所有信息")
         self.save_all_button.clicked.connect(self.save_all_data)
         self.save_all_button.setMinimumWidth(140)
         self.save_all_button.setStyleSheet("font-size: 15px; font-weight: bold;")
         bottom_layout.addStretch()  # 添加弹性空间，使按钮靠右
         bottom_layout.addWidget(self.save_all_button)
+        
+        # 将底部布局添加到主布局
         self.layout.addLayout(bottom_layout)
         # 获取全局日志对象
         self.logger = get_logger()
@@ -747,21 +554,6 @@ class Tab3(QWidget):
     
     def load_vehicles(self):
         """载入车辆信息"""
-        if self.step_status_dict[2] == 'finish':
-            for step in [3, 4]:
-                self.step_status_dict[step] = 'unfinish'
-            for viewer in [self.report_viewer, self.balance_view, self.total_view, self.check_view]:
-                if viewer:
-                    try:
-                        viewer.clear_data()
-                    except AttributeError:
-                        import pandas as pd
-                        viewer.load_data(data=pd.DataFrame())
-            # 重置后续按钮状态和颜色
-            for btn in [self.generate_report_button, self.generate_total_button]:
-                btn.setEnabled(False)
-                btn.setStyleSheet(self.button_style_tpl.format(bg='#BDBDBD', border_color='#E0E0E0'))
-            self.update_step_status(2, 'unfinish')
         self.update_step_status(2, 'dealing')
         try:
             if not hasattr(self, 'vehicle_file'):
@@ -799,9 +591,7 @@ class Tab3(QWidget):
             self.update_step_status(2, 'error')
     
     def generate_report(self):
-        if self.step_status_dict[3] == 'finish':
-            QMessageBox.warning(self, "操作错误", "您需要重新载入车辆信息")
-            return
+        """生成收油表"""
         self.update_step_status(3, 'dealing')
          # 首先从 XlsxViewerWidget 获取最新的数据
         if not self.restaurant_viewer or not self.vehicle_viewer:
@@ -826,10 +616,9 @@ class Tab3(QWidget):
         # 弹出运输信息对话框
         dialog = TransportDialog(self)
         if dialog.exec_() == QDialog.Accepted:
-            days_input, month_year, bucket_ratio, weight = dialog.get_input_data()
+            days_input, month_year, bucket_ratio = dialog.get_input_data()
             year, month = month_year.split('-')
             CONF.runtime.dates_to_trans = f'{year}-{month}-{days_input}'
-            
             # 验证天数输入
             if not days_input.isdigit() or not (1 <= int(days_input) <= 31):
                 QMessageBox.warning(self, "输入错误", "运输天数必须为1到31之间的数字。")
@@ -838,38 +627,11 @@ class Tab3(QWidget):
             
             # 处理输入数据
             days_to_trans = int(days_input)
+            self.logger.info(f"运输天数: {days_to_trans}, 选择的年月: {month_year}")
             
             try:
                 service = GetReceiveRecordService(model=ReceiveRecordModel, conf=CONF)
-                # 设置收油重量到runtime配置中
-                if not hasattr(CONF, 'runtime'):
-                    setattr(CONF, 'runtime', type('RuntimeConfig', (), {}))
-                
-                # 根据是否选择部分收油来设置收油重量
-                if weight:  # 如果选择了部分收油且有输入重量
-                    try:
-                        weight_float = float(weight)
-                        if weight_float <= 0:
-                            QMessageBox.warning(self, "输入错误", "收油重量必须大于0。")
-                            self.update_step_status(3, 'error')
-                            return
-                        CONF.runtime.oil_weight = weight_float
-                        self.logger.info(f"运输天数: {days_to_trans}, 选择的年月: {month_year}, 收油重量: {weight_float}吨")
-                    except ValueError:
-                        QMessageBox.warning(self, "输入错误", "收油重量必须是有效的数字。")
-                        self.update_step_status(3, 'error')
-                        return
-                else:  # 如果选择了全部收油
-                    CONF.runtime.oil_weight = None
-                    self.logger.info(f"运输天数: {days_to_trans}, 选择的年月: {month_year}, 全部收油")
-
-                oil_records_df, restaurant_balance, cp_restaurants_df, cp_vehicle_df = service.get_restaurant_oil_records(
-                    self.restaurants, 
-                    self.vehicles, 
-                    self.current_cp['cp_id'],
-                    days_to_trans, 
-                    month_year
-                )
+                oil_records_df, restaurant_balance, cp_restaurants_df, cp_vehicle_df = service.get_restaurant_oil_records(self.restaurants, self.vehicles, self.current_cp['cp_id'],days_to_trans, month_year)
                 # 更新所有相关页面的数据
                     # 1. 更新收油表
                 self.report_viewer.load_data(data=oil_records_df)
@@ -882,6 +644,9 @@ class Tab3(QWidget):
                 
                 # 4. 更新车辆信息
                 self.vehicle_viewer.load_data(data=cp_vehicle_df)
+                # 验证更新
+                # self.logger.info("更新后的数据:")
+                # self.logger.info(f"显示的数据:\n{self.vehicle_viewer.get_data()}")
                 
                 # 切换到收油表页签
                 self.tab_widget.setCurrentIndex(2)
@@ -897,23 +662,6 @@ class Tab3(QWidget):
     
     def upload_restaurant_file(self):
         """上传餐厅信息文件"""
-        # 如果已完成且不是unfinish，清空后续步骤状态和数据，并重置按钮状态和颜色
-        if self.step_status_dict[1] == 'finish':
-            for step in [2, 3, 4]:
-                self.step_status_dict[step] = 'unfinish'
-            self.vehicles = []
-            # 清空后续viewer数据
-            for viewer in [self.vehicle_viewer, self.report_viewer, self.balance_view, self.total_view, self.check_view]:
-                if viewer:
-                    try:
-                        viewer.clear_data()
-                    except AttributeError:
-                        viewer.load_data(data=pd.DataFrame())
-            # 重置后续按钮状态和颜色
-            for btn in [self.load_vehicles_button, self.generate_report_button, self.generate_total_button]:
-                btn.setEnabled(False)
-                btn.setStyleSheet(self.button_style_tpl.format(bg='#BDBDBD', border_color='#E0E0E0'))
-            self.update_step_status(1, 'unfinish')
         if not hasattr(self, 'vehicle_file'):
             QMessageBox.warning(self, "未选择CP", "请先选择CP")
             return
@@ -1054,9 +802,7 @@ class Tab3(QWidget):
             )
 
     def generate_total(self):
-        if self.step_status_dict[4] == 'finish':
-            QMessageBox.warning(self, "操作错误", "您需要重新载入车辆信息")
-            return
+        """生成总表和收货确认书"""
         self.update_step_status(4, 'dealing')
         try:
             # 获取车辆信息
@@ -1080,33 +826,14 @@ class Tab3(QWidget):
                 self.update_step_status(4, 'error')
                 return
 
-            # 获取min_balance_date
-            min_balance_date = pd.to_datetime(balance_df['balance_date']).min().date() + datetime.timedelta(days=1)
-
             # 弹出销售运输天数输入对话框
-            dialog = SalesDaysDialog(self, min_balance_date=min_balance_date)
+            dialog = SalesDaysDialog(self)
             if dialog.exec_() == QDialog.Accepted:
-                days_input, balance_total, start_date, ignore_stock = dialog.get_input_data()
+                days_input, balance_total = dialog.get_input_data()
+                
                 # 验证天数输入
-                if not days_input.isdigit() or not (1 <= int(days_input)):
-                    QMessageBox.warning(self, "输入错误", "销售运输天数必须大于1的数字。")
-                    self.update_step_status(4, 'error')
-                    return
-                # 校验天数与开始日期不超过当月最后一天
-                try:
-                    start_dt = datetime.datetime.strptime(start_date, "%Y-%m-%d")
-                    days = int(days_input)
-                    # 计算本月最后一天
-                    next_month = start_dt.replace(day=28) + datetime.timedelta(days=4)
-                    last_day = next_month - datetime.timedelta(days=next_month.day)
-                    end_dt = start_dt + datetime.timedelta(days=days-1)
-                    if end_dt > last_day:
-                        QMessageBox.warning(self, "输入错误", f"开始日期+天数已超过{start_dt.strftime('%Y-%m')}月的最后一天({last_day.strftime('%Y-%m-%d')})，请重新选择。")
-                        self.update_step_status(4, 'error')
-                        return
-                    
-                except Exception as e:
-                    QMessageBox.warning(self, "输入错误", f"日期校验失败: {e}")
+                if not days_input.isdigit() or not (1 <= int(days_input) <= 31):
+                    QMessageBox.warning(self, "输入错误", "销售运输天数必须为1到31之间的数字。")
                     self.update_step_status(4, 'error')
                     return
                 
@@ -1141,7 +868,7 @@ class Tab3(QWidget):
                 total_df = service.process_dataframe_with_new_columns(self.current_cp['cp_id'], balance_df, balance_total)
 
                 # 2. 生成收货确认书
-                check_df,cp_vehicle_df = service.generate_df_check(self.current_cp['cp_id'],int(days_input), balance_df, vehicle_df,start_date)
+                check_df,cp_vehicle_df = service.generate_df_check(self.current_cp['cp_id'],int(days_input), balance_df, vehicle_df)
 
                 # 3. 更新总表的售出数量
                 total_df = service.process_check_to_sum(check_df, total_df)
@@ -1164,10 +891,6 @@ class Tab3(QWidget):
                         current_output = row['total_output_quantity'] if pd.notna(row['total_output_quantity']) else 0
                         current_sale = row['total_quantities_sold'] if pd.notna(row['total_quantities_sold']) else 0
                         current_inventory = round(current_output + previous_end_stock - current_sale, 2)
-                        if ignore_stock == '否' and current_inventory < 0:
-                            QMessageBox.critical(self, "库存不足", "当前库存无法满足销售，请确认")
-                            self.update_step_status(4, 'error')
-                            return
                         total_df.at[index, 'total_ending_inventory'] = current_inventory
                         previous_end_stock = current_inventory
 
@@ -1215,91 +938,3 @@ class Tab3(QWidget):
             self.logger.error(f"生成总表和收货确认书时出错: {str(e)}")
             QMessageBox.critical(self, "生成失败", f"生成总表和收货确认书时出错: {str(e)}")
             self.update_step_status(4, 'error')
-
-    def download_template(self):
-        from PyQt5.QtWidgets import QDialogButtonBox, QDialog, QVBoxLayout, QLabel, QComboBox, QFileDialog, QMessageBox
-        from PyQt5.QtCore import Qt
-        # 自定义对话框
-        class TemplateDialog(QDialog):
-            def __init__(self, parent=None):
-                super().__init__(parent)
-                self.setWindowTitle("选择模板类型")
-                self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-                layout = QVBoxLayout(self)
-                label = QLabel("请选择要下载的模板：")
-                layout.addWidget(label)
-                self.combo = QComboBox(self)
-                self.combo.addItems(["餐厅信息模板", "平衡总表模板"])
-                layout.addWidget(self.combo)
-                btn_box = QDialogButtonBox(self)
-                self.ok_btn = btn_box.addButton("确定", QDialogButtonBox.AcceptRole)
-                self.cancel_btn = btn_box.addButton("取消", QDialogButtonBox.RejectRole)
-                btn_box.accepted.connect(self.accept)
-                btn_box.rejected.connect(self.reject)
-                layout.addWidget(btn_box)
-            def get_selected(self):
-                return self.combo.currentText()
-        # 弹出自定义对话框
-        dialog = TemplateDialog(self)
-        if dialog.exec_() != QDialog.Accepted:
-            return
-        item = dialog.get_selected()
-        # 另存为对话框
-        file_dialog = QFileDialog(self)
-        file_dialog.setWindowTitle("另存为")
-        file_dialog.setNameFilter("Excel Files (*.xlsx)")
-        file_dialog.resize(700, 400)
-        if file_dialog.exec_() == QFileDialog.Accepted:
-            file_path = file_dialog.selectedFiles()[0]
-        else:
-            return
-        if not file_path.endswith('.xlsx'):
-            file_path += '.xlsx'
-        import os
-        if os.path.exists(file_path):
-            reply = QMessageBox.question(self, "文件已存在", f"文件 {file_path} 已存在，是否替换？", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply != QMessageBox.Yes:
-                return
-        if item == "餐厅信息模板":
-            self.save_restaurant_template(file_path)
-        elif item == "平衡总表模板":
-            self.save_total_template(file_path)
-        QMessageBox.information(self, "保存成功", f"模板已成功保存到：\n{file_path}")
-
-    def save_restaurant_template(self, file_path):
-        fields = list(RestaurantModel.schema()['properties'].keys())
-        descs = [RestaurantModel.schema()['properties'][f].get('description', '') for f in fields]
-        must_fields = ["rest_belonged_cp", "rest_chinese_name", "rest_city", "rest_chinese_address", "rest_district", "rest_type"]
-        merge_tip = "标红字段为必填字段，上传文件时删除第二行和第三行"
-        workbook = xlsxwriter.Workbook(file_path)
-        worksheet = workbook.add_worksheet()
-        # 标红必填字段
-        for col, field in enumerate(fields):
-            if field in must_fields:
-                worksheet.write(0, col, field, workbook.add_format({'font_color': 'red', 'bold': True}))
-                worksheet.write(1, col, descs[col], workbook.add_format({'font_color': 'red', 'bold': True}))
-            else:
-                worksheet.write(0, col, field)
-                worksheet.write(1, col, descs[col])
-        # 合并蓝色提示
-        worksheet.merge_range(2, 0, 2, len(fields)-1, merge_tip, workbook.add_format({'align': 'center', 'font_color': 'blue', 'bold': True}))
-        workbook.close()
-
-    def save_total_template(self, file_path):
-        fields = list(RestaurantTotalModel.schema()['properties'].keys())
-        descs = [RestaurantTotalModel.schema()['properties'][f].get('description', '') for f in fields]
-        must_fields = ["total_cp", "total_supplied_date", "total_delivery_trucks_vehicle_registration_no", "total_volume_per_trucks", "total_weighbridge_ticket_number", "total_collection_city", "total_ending_inventory", "total_quantities_sold"]
-        merge_tip = "标红字段为必填字段，上传文件时删除第二行和第三行"
-        workbook = xlsxwriter.Workbook(file_path)
-        worksheet = workbook.add_worksheet()
-        # 标红必填字段
-        for col, field in enumerate(fields):
-            if field in must_fields:
-                worksheet.write(0, col, field, workbook.add_format({'font_color': 'red', 'bold': True}))
-                worksheet.write(1, col, descs[col], workbook.add_format({'font_color': 'red', 'bold': True}))
-            else:
-                worksheet.write(0, col, field)
-                worksheet.write(1, col, descs[col])
-        # 合并蓝色提示
-        worksheet.merge_range(2, 0, 2, len(fields)-1, merge_tip, workbook.add_format({'align': 'center', 'font_color': 'blue', 'bold': True}))
-        workbook.close()
