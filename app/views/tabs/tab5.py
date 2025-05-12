@@ -353,9 +353,30 @@ class Tab5(QWidget):
             }
         """)
         
+        # 删除车辆按钮
+        self.delete_vehicle_button = QPushButton("删除车辆")
+        self.delete_vehicle_button.clicked.connect(self.delete_vehicle)
+        self.delete_vehicle_button.setEnabled(False)  # 默认禁用，需要先选择CP
+        self.delete_vehicle_button.setStyleSheet("""
+            QPushButton {
+                background-color: #d9534f;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #c9302c;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """)
+        
         add_button_layout.addWidget(self.add_vehicle_button)
         add_button_layout.addWidget(self.download_template_button)
         add_button_layout.addWidget(self.batch_upload_button)
+        add_button_layout.addWidget(self.delete_vehicle_button)
         add_button_layout.addStretch()
         add_button_layout.addWidget(self.save_to_oss_button)
         
@@ -410,6 +431,7 @@ class Tab5(QWidget):
                     self.add_vehicle_button.setEnabled(True)
                     self.save_to_oss_button.setEnabled(True)
                     self.batch_upload_button.setEnabled(True)
+                    self.delete_vehicle_button.setEnabled(True)
                     
                     # 加载车辆数据
                     self.load_vehicles_data()
@@ -689,6 +711,61 @@ class Tab5(QWidget):
             LOGGER.error(f"批量上传车辆数据时出错: {str(e)}")
             QMessageBox.critical(self, "上传失败", f"批量上传车辆数据时出错: {str(e)}")
     
+    def delete_vehicle(self):
+        """删除选中的车辆"""
+        try:
+            if not self.current_cp:
+                QMessageBox.warning(self, "未选择CP", "请先选择CP")
+                return
+                
+            if self.vehicles_data is None or self.vehicles_data.empty:
+                QMessageBox.warning(self, "没有数据", "没有车辆数据可以删除")
+                return
+            
+            # 获取当前选中的行索引
+            selected_rows = self.xlsx_viewer.table_view.selectionModel().selectedRows()
+            if not selected_rows:
+                QMessageBox.warning(self, "未选择车辆", "请先选择要删除的车辆")
+                return
+            
+            # 获取选中的行索引
+            row_indices = [index.row() for index in selected_rows]
+            
+            # 获取选中车辆的车牌号用于显示
+            selected_plates = []
+            for idx in row_indices:
+                if idx < len(self.vehicles_data):
+                    plate = self.vehicles_data.iloc[idx].get('vehicle_license_plate', f'未知车辆 #{idx}')
+                    selected_plates.append(plate)
+            
+            # 确认删除
+            plates_text = "\n".join(selected_plates)
+            reply = QMessageBox.question(
+                self, '确认删除', 
+                f'确定要删除以下车辆吗？删除后需点击「保存到OSS」按钮同步更改。\n\n{plates_text}',
+                QMessageBox.Yes | QMessageBox.No, 
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                # 从DataFrame中删除选中的行
+                self.vehicles_data = self.vehicles_data.drop(self.vehicles_data.index[row_indices]).reset_index(drop=True)
+                
+                # 更新UI
+                self.xlsx_viewer.load_data(data=self.vehicles_data)
+                
+                QMessageBox.information(
+                    self, 
+                    "删除成功", 
+                    f"已成功删除 {len(row_indices)} 辆车，请点击「保存到OSS」按钮同步更改到OSS"
+                )
+                
+                LOGGER.info(f"已删除 {len(row_indices)} 辆车: {', '.join(selected_plates)}")
+                
+        except Exception as e:
+            LOGGER.error(f"删除车辆时出错: {str(e)}")
+            QMessageBox.critical(self, "删除失败", f"删除车辆时出错: {str(e)}")
+    
     def update_cp(self, cp_id):
         """更新CP选择按钮的文本并更新车辆列表"""
         try:
@@ -716,6 +793,7 @@ class Tab5(QWidget):
                     self.add_vehicle_button.setEnabled(True)
                     self.save_to_oss_button.setEnabled(True)
                     self.batch_upload_button.setEnabled(True)
+                    self.delete_vehicle_button.setEnabled(True)
                     
                     # 加载车辆数据
                     self.load_vehicles_data()
@@ -725,14 +803,17 @@ class Tab5(QWidget):
                     self.add_vehicle_button.setEnabled(False)
                     self.save_to_oss_button.setEnabled(False)
                     self.batch_upload_button.setEnabled(False)
+                    self.delete_vehicle_button.setEnabled(False)
             else:
                 self.cp_button.setText("未选择CP")
                 self.add_vehicle_button.setEnabled(False)
                 self.save_to_oss_button.setEnabled(False)
                 self.batch_upload_button.setEnabled(False)
+                self.delete_vehicle_button.setEnabled(False)
         except Exception as e:
             LOGGER.error(f"更新CP时出错: {str(e)}")
             self.cp_button.setText("未选择CP")
             self.add_vehicle_button.setEnabled(False)
             self.save_to_oss_button.setEnabled(False)
             self.batch_upload_button.setEnabled(False)
+            self.delete_vehicle_button.setEnabled(False)
