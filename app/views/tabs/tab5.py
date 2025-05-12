@@ -95,12 +95,13 @@ class VehicleAddDialog(QDialog):
         self.type_combo = QComboBox()
         self.type_combo.addItem("运油车", "to_rest")  # 运油车对应to_rest类型
         self.type_combo.addItem("送货车", "to_sale")  # 送货车对应to_sale类型
+        self.type_combo.currentIndexChanged.connect(self.update_cooldown_days)  # 添加类型改变事件处理
         form_layout.addRow("车辆类型:", self.type_combo)
 
         #车辆冷冻时间
         self.cooldown_input = QLineEdit()
-        self.cooldown_input.setText("3")  # 设置默认值为3
-        self.cooldown_input.setPlaceholderText("请输入冷却天数（默认为3天）")
+        self.cooldown_input.setText("1")  # 设置默认值为3
+        self.cooldown_input.setPlaceholderText("请输入冷却天数）")
         # 只允许输入数字
         self.cooldown_input.setValidator(QIntValidator(1, 99))
         form_layout.addRow("冷却时间(天):", self.cooldown_input)
@@ -120,6 +121,14 @@ class VehicleAddDialog(QDialog):
         button_layout.addWidget(self.cancel_button)
         
         layout.addLayout(button_layout)
+    
+    def update_cooldown_days(self):
+        """根据车辆类型更新冷却天数"""
+        vehicle_type = self.type_combo.currentData()
+        if vehicle_type == "to_rest":  # 运油车
+            self.cooldown_input.setText("1")
+        else:  # 送货车
+            self.cooldown_input.setText("3")
     
     def get_vehicle_info(self):
         """获取填写的车辆信息"""

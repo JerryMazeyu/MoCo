@@ -617,31 +617,42 @@ class GetReceiveRecordService:
 
         # 步骤4：计算车数car_number_of_day并新增交付日期列
         car_number_of_day = int(np.ceil(len(restaurant_balance_df) // n)) ## 计算每天大概需要多少辆车
-        dates_in_month = pd.date_range(
-                start=datetime.datetime(datetime.datetime.strptime(current_date, '%Y-%m').year, datetime.datetime.strptime(current_date, '%Y-%m').month, 1),
-                end=(datetime.datetime(datetime.datetime.strptime(current_date, '%Y-%m').year, datetime.datetime.strptime(current_date, '%Y-%m').month, 1) + pd.offsets.MonthEnd(0))
-            )
-        delivery_dates = []
-        day_index = 0
-        # 如果 n 大于 restaurant_balance_df 的长度，随机跳过 n - len(restaurant_balance_df) 个日期
-        if n > len(restaurant_balance_df):
-            skip_days = n - len(restaurant_balance_df)
-            random_skip_days = random.sample(range(len(dates_in_month)), skip_days)
-            dates_in_month = [date for i, date in enumerate(dates_in_month) if i not in random_skip_days]
+        all_dates_in_month = pd.date_range(
+        start=datetime.datetime(datetime.datetime.strptime(current_date, '%Y-%m').year, datetime.datetime.strptime(current_date, '%Y-%m').month, 1),
+        end=(datetime.datetime(datetime.datetime.strptime(current_date, '%Y-%m').year, datetime.datetime.strptime(current_date, '%Y-%m').month, 1) + pd.offsets.MonthEnd(0))
+        )
 
-        while day_index < len(dates_in_month):
-            delta = int(car_number_of_day + random.choice([-1, 0, 1]))
-            if delta <= 0:
-                delta = 1  # 确保至少有一辆车
-            for _ in range(min(delta, len(restaurant_balance_df) - len(delivery_dates))):
-                delivery_dates.append(dates_in_month[day_index].date())
-            day_index += 1
-        
-        # 如果生成的交付日期少于新数据框的行数，则用最后一天填充剩余部分
-        if len(delivery_dates) < len(restaurant_balance_df):
-            last_date = delivery_dates[-1] if delivery_dates else dates_in_month[-1].date()
-            delivery_dates.extend([last_date] * (len(restaurant_balance_df) - len(delivery_dates)))
-        
+    # 2. 随机选 n 天并排序
+        if n > len(all_dates_in_month):
+            raise ValueError(f'输入天数n={n}大于当月天数{len(all_dates_in_month)}')
+        dates_in_month = sorted(random.sample(list(all_dates_in_month), n))
+        delivery_dates = []
+        days = len(dates_in_month)
+        total = len(restaurant_balance_df)
+        base = car_number_of_day
+        # 1. 先全部分配 base
+        plan = [base] * days
+        assigned = base * days
+        diff = total - assigned
+        # 2. 需要补 diff 个到 +1 或 -1
+        # 如果 diff > 0，随机 diff 天 +1
+        # 如果 diff < 0，随机 -diff 天 -1
+        if diff > 0:
+            plus_days = random.sample(range(days), diff)
+            for i in plus_days:
+                plan[i] += 1
+        elif diff < 0:
+            minus_days = random.sample(range(days), -diff)
+            for i in minus_days:
+                plan[i] -= 1
+        # 3. 检查所有天数都在 [base-1, base+1] 范围内
+        assert all(base-1 <= x <= base+1 for x in plan)
+        # 4. 生成 delivery_dates
+        for day, count in zip(dates_in_month, plan):
+            delivery_dates.extend([day.date()] * count)
+        # 保证 delivery_dates 长度和 restaurant_balance_df 一致
+        delivery_dates = delivery_dates[:len(restaurant_balance_df)]
+
         restaurant_balance_df['balance_date'] = delivery_dates[:len(restaurant_balance_df)]
         # 用于存储更新后的车辆分配
         updated_vehicle_assignments = []
