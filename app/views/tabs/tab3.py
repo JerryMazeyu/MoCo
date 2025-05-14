@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QFrame, QComboBox, QGroupBox, QFileDialog, 
-                             QMessageBox, QDialog, QTabWidget,QLineEdit, QButtonGroup, QRadioButton, QTreeWidget, QTreeWidgetItem, QInputDialog)
+                             QMessageBox, QDialog, QTabWidget,QLineEdit, QButtonGroup, QRadioButton, QTreeWidget, QTreeWidgetItem, QInputDialog, QTextEdit)
 from PyQt5.QtGui import QPixmap, QColor
 from app.utils.logger import get_logger
 from app.services.instances.restaurant import Restaurant, RestaurantsGroup
@@ -27,18 +27,19 @@ class TransportDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("运输信息")
-        self.setMinimumWidth(420)  # 适当加宽
+        self.setMinimumWidth(500)  # 适当加宽
         
         layout = QVBoxLayout()
         
-        label_width = 110
-        input_width = 200
+        label_width = 150
+        input_width = 200  # 建议再加宽
         
         # 运输天数
         days_layout = QHBoxLayout()
+        days_layout.setAlignment(Qt.AlignLeft)
         days_label = QLabel("运输天数:")
         days_label.setFixedWidth(label_width)
-        days_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        days_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         days_layout.addWidget(days_label)
         self.days_input = QLineEdit(self)
         self.days_input.setPlaceholderText("请输入收油天数（1-31）")
@@ -49,9 +50,10 @@ class TransportDialog(QDialog):
         
         # 年月
         month_layout = QHBoxLayout()
+        month_layout.setAlignment(Qt.AlignLeft)
         month_label = QLabel("选择年月:")
         month_label.setFixedWidth(label_width)
-        month_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        month_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         month_layout.addWidget(month_label)
         self.month_year_combo = QComboBox(self)
         self.month_year_combo.addItems(self.generate_month_year_options())
@@ -62,9 +64,10 @@ class TransportDialog(QDialog):
         
         # 是否全部收油
         collect_layout = QHBoxLayout()
-        collect_label = QLabel("餐厅信息是否全部收油:")
+        collect_layout.setAlignment(Qt.AlignLeft)
+        collect_label = QLabel("是否全部收油:")
         collect_label.setFixedWidth(label_width)
-        collect_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        collect_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         collect_layout.addWidget(collect_label)
         self.collect_all_radio = QRadioButton("全部收油", self)
         self.collect_partial_radio = QRadioButton("部分收油", self)
@@ -79,7 +82,7 @@ class TransportDialog(QDialog):
         weight_row_layout = QHBoxLayout(self.weight_widget)
         weight_label = QLabel("收油重量（成品）:")
         weight_label.setFixedWidth(label_width)
-        weight_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        weight_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         weight_row_layout.addWidget(weight_label)
         self.weight_input = QLineEdit()
         self.weight_input.setPlaceholderText("请输入收油重量")
@@ -92,9 +95,10 @@ class TransportDialog(QDialog):
         
         # 180KG桶占比
         bucket_layout = QHBoxLayout()
+        bucket_layout.setAlignment(Qt.AlignLeft)
         bucket_label = QLabel("180KG桶占比:")
         bucket_label.setFixedWidth(label_width)
-        bucket_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        bucket_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         bucket_layout.addWidget(bucket_label)
         self.bucket_ratio_input = QLineEdit(self)
         self.bucket_ratio_input.setText("1")
@@ -104,6 +108,58 @@ class TransportDialog(QDialog):
         bucket_layout.addWidget(self.bucket_ratio_input)
         bucket_layout.addStretch()
         layout.addLayout(bucket_layout)
+
+        # 区域排序选项
+        sort_layout = QHBoxLayout()
+        sort_layout.setAlignment(Qt.AlignLeft)
+        sort_label = QLabel("按区域首字母排序:")
+        sort_label.setFixedWidth(label_width)
+        sort_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        sort_layout.addWidget(sort_label)
+        self.sort_combo = QComboBox(self)
+        self.sort_combo.addItems(["是", "否"])
+        self.sort_combo.setFixedWidth(input_width)
+        self.sort_combo.currentIndexChanged.connect(self.on_sort_option_changed)
+        sort_layout.addWidget(self.sort_combo)
+        sort_layout.addStretch()
+        layout.addLayout(sort_layout)
+
+        # 自定义区域顺序选择框（初始隐藏）
+        self.custom_order_widget = QWidget()
+        custom_order_layout = QVBoxLayout(self.custom_order_widget)
+        
+        
+        # 已选择的区域显示框
+        self.selected_districts_label = QLabel("自定义区域排序：")
+        self.selected_districts_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.selected_districts_text = QTextEdit("")
+        self.selected_districts_text.setReadOnly(True)
+        self.selected_districts_text.setFixedHeight(60)  # 可根据需要调整高度
+        self.selected_districts_text.setStyleSheet("background-color: #f0f0f0; padding: 5px; border-radius: 3px;")
+        custom_order_layout.addWidget(self.selected_districts_label)
+        custom_order_layout.addWidget(self.selected_districts_text)
+        
+        # 区域选择下拉框
+        district_layout = QHBoxLayout()
+        self.district_combo = QComboBox(self)
+        self.district_combo.setFixedWidth(input_width)
+        self.district_combo.currentIndexChanged.connect(self.on_district_selected)
+        district_layout.addWidget(self.district_combo)
+        
+        # 添加按钮
+        add_button = QPushButton("添加")
+        add_button.clicked.connect(self.add_selected_district)
+        district_layout.addWidget(add_button)
+        
+        # 重置按钮
+        reset_button = QPushButton("重置选择")
+        reset_button.clicked.connect(self.reset_district_selection)
+        district_layout.addWidget(reset_button)
+        
+        custom_order_layout.addLayout(district_layout)
+        
+        self.custom_order_widget.setVisible(False)
+        layout.addWidget(self.custom_order_widget)
         
         # 按钮
         button_layout = QHBoxLayout()
@@ -123,6 +179,53 @@ class TransportDialog(QDialog):
         self.weight_input.textChanged.connect(self.validate_weight_input)
         self.collect_all_radio.toggled.connect(self.toggle_weight_input)
         self.collect_partial_radio.toggled.connect(self.toggle_weight_input)
+        
+        # 初始化区域选择列表
+        self.selected_districts = []
+
+    def on_sort_option_changed(self, index):
+        """当排序选项改变时显示或隐藏自定义顺序输入框"""
+        show_custom = index == 1  # 当选择"否"时显示
+        self.custom_order_widget.setVisible(show_custom)
+        if show_custom:
+            # 获取父窗口的餐厅数据
+            parent = self.parent()
+            if hasattr(parent, 'restaurant_viewer'):
+                restaurant_df = parent.restaurant_viewer.get_data()
+                if restaurant_df is not None and not restaurant_df.empty:
+                    # 获取所有区域并去重
+                    all_districts = sorted(restaurant_df['rest_district'].unique())
+                    self.setup_district_combo(all_districts)
+
+    def setup_district_combo(self, districts):
+        """设置区域选择下拉框"""
+        self.district_combo.clear()
+        self.district_combo.addItems(districts)
+        # 初始化区域选择列表
+        self.selected_districts = []
+
+    def on_district_selected(self, index):
+        """处理区域选择事件"""
+        pass  # 不需要在这里处理，由添加按钮触发
+
+    def add_selected_district(self):
+        """添加选中的区域到列表"""
+        current_district = self.district_combo.currentText()
+        if current_district and current_district not in self.selected_districts:
+            self.selected_districts.append(current_district)
+            self.update_selected_districts_display()
+
+    def update_selected_districts_display(self):
+        """更新已选择区域的显示"""
+        if self.selected_districts:
+            self.selected_districts_text.setPlainText(", ".join(self.selected_districts))
+        else:
+            self.selected_districts_text.setPlainText("")
+
+    def reset_district_selection(self):
+        """重置区域选择"""
+        self.selected_districts.clear()
+        self.update_selected_districts_display()
 
     def toggle_weight_input(self, checked):
         """根据单选按钮状态切换收油重量输入框的显示状态"""
@@ -154,7 +257,9 @@ class TransportDialog(QDialog):
     def get_input_data(self):
         """获取输入的数据"""
         weight = self.weight_input.text() if self.collect_partial_radio.isChecked() else ""
-        return self.days_input.text(), self.month_year_combo.currentText(), self.bucket_ratio_input.text(), weight
+        sort_by_letter = self.sort_combo.currentText() == "是"
+        custom_order = ",".join(self.selected_districts) if not sort_by_letter and self.selected_districts else None
+        return self.days_input.text(), self.month_year_combo.currentText(), self.bucket_ratio_input.text(), weight, sort_by_letter, custom_order
 
 class SalesDaysDialog(QDialog):
     def __init__(self, parent=None, min_balance_date=None):
@@ -685,12 +790,83 @@ class Tab3(QWidget):
                     self.check_file = f"CPs/{cp_data['cp_id']}/check/check.xlsx"
                     
                     # 在选择CP后创建XlsxViewerWidget实例
-                    self.restaurant_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.restaurant_file,show_open=False,show_save=False)
-                    self.vehicle_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.vehicle_file,show_open=False,show_save=False)
-                    self.report_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.receive_record_file,show_open=False,show_save=False)
-                    self.balance_view = XlsxViewerWidget(use_oss=True, oss_path=self.balance_record_file,show_open=False,show_save=False)
-                    self.total_view = XlsxViewerWidget(use_oss=True, oss_path=self.total_file,show_open=False,show_save=False)
-                    self.check_view = XlsxViewerWidget(use_oss=True, oss_path=self.check_file,show_open=False,show_save=False)
+                    # self.restaurant_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.restaurant_file,show_open=False,show_save=False)
+                    # self.vehicle_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.vehicle_file,show_open=False,show_save=False)
+                    # self.report_viewer = XlsxViewerWidget(use_oss=True, oss_path=self.receive_record_file,show_open=False,show_save=False)
+                    # self.balance_view = XlsxViewerWidget(use_oss=True, oss_path=self.balance_record_file,show_open=False,show_save=False)
+                    # self.total_view = XlsxViewerWidget(use_oss=True, oss_path=self.total_file,show_open=False,show_save=False)
+                    # self.check_view = XlsxViewerWidget(use_oss=True, oss_path=self.check_file,show_open=False,show_save=False)
+                    self.restaurant_viewer = XlsxViewerWidget(
+                        use_oss=True, 
+                        oss_path=self.restaurant_file,
+                        show_open=False, 
+                        show_save=False, 
+
+                        display_columns=[
+                            'rest_chinese_name', 'rest_english_name', 'rest_city',
+                            'rest_chinese_address', 'rest_district','rest_street','rest_contact_person',
+                            'rest_contact_phone','rest_location','rest_distance','rest_type'
+                        ]
+                    )
+                    self.vehicle_viewer = XlsxViewerWidget(
+                        use_oss=True, 
+                        oss_path=self.vehicle_file,
+                        show_open=False, 
+                        show_save=False, 
+                        display_columns=[
+                            'vehicle_license_plate', 'vehicle_driver_name', 'vehicle_type',
+                            'vehicle_rough_weight', 'vehicle_tare_weight','vehicle_status',
+                            'vehicle_last_use','vehicle_cooldown_days'
+                        ]
+                    )
+                    self.report_viewer = XlsxViewerWidget(
+                        use_oss=True, 
+                        oss_path=self.receive_record_file,
+                        show_open=False, 
+                        show_save=False, 
+                        display_columns=[
+                            'rr_date', 'rr_restaurant_name', 'rr_restaurant_address','rr_contact_person',
+                            'rr_amount','rr_serial_number', 'rr_vehicle_license_plate', 'rr_district','rr_street',
+                            'rr_sale_number','rr_amount_of_day'
+                        ]
+                    )
+                    self.balance_view = XlsxViewerWidget(
+                        use_oss=True, 
+                        oss_path=self.balance_record_file,
+                        show_open=False, 
+                        show_save=False, 
+                        display_columns=[
+                            'balance_date', 'balance_oil_type', 'balance_tranport_type',
+                            'balance_serial_number', 'balance_vehicle_license_plate', 'balance_weight_of_order',
+                            'balance_order_number', 'balance_district', 'balance_sale_number',
+                            'balance_amount_of_day'
+                        ]
+                    )
+                    self.total_view = XlsxViewerWidget(
+                        use_oss=True, 
+                        oss_path=self.total_file,
+                        show_open=False, 
+                        show_save=False, 
+                        display_columns=[
+                            'total_sale_number_detail', 'total_supplied_date','total_delivery_trucks_vehicle_registration_no',
+                            'total_volume_per_trucks', 'total_weighbridge_ticket_number', 'total_collection_city',
+                            'total_iol_mt', 'total_processing_quantity', 'total_output_quantity',
+                            'total_conversion_coefficient', 'total_customer', 'total_sale_number',
+                            'total_quantities_sold','total_ending_inventory','total_delivery_time','total_delivery_address','total_supplied_weight_of_order'
+                        ]
+                    )
+                    self.check_view = XlsxViewerWidget(
+                        use_oss=True, 
+                        oss_path=self.check_file,
+                        show_open=False, 
+                        show_save=False, 
+                        display_columns=[
+                            'check_date', 'check_name', 'check_description_of_material', 'check_truck_plate_no',
+                            'check_weight', 'check_quantity', 'check_weighbridge_ticket_number',
+                            'check_gross_weight', 'check_tare_weight', 'check_net_weight',
+                            'check_unload_weight','check_difference'
+                        ]
+                    )
                     
                     # 将XlsxViewerWidget实例添加到tab_widget
                     self.tab_widget.addTab(self.restaurant_viewer, "餐厅信息")
@@ -880,10 +1056,11 @@ class Tab3(QWidget):
         
         self.restaurants = restaurant_df.to_dict('records')
         self.vehicles = vehicle_df.to_dict('records')
+        
         # 弹出运输信息对话框
         dialog = TransportDialog(self)
         if dialog.exec_() == QDialog.Accepted:
-            days_input, month_year, bucket_ratio, weight = dialog.get_input_data()
+            days_input, month_year, bucket_ratio, weight, sort_by_letter, custom_order = dialog.get_input_data()
             year, month = month_year.split('-')
             CONF.runtime.dates_to_trans = f'{year}-{month}-{days_input}'
             
@@ -895,6 +1072,27 @@ class Tab3(QWidget):
             
             # 处理输入数据
             days_to_trans = int(days_input)
+            
+            # 获取所有区域并去重
+            all_districts = sorted(restaurant_df['rest_district'].unique())
+            
+            # 如果选择自定义顺序，验证输入的区域是否有效
+            if not sort_by_letter and custom_order:
+                custom_districts = [d.strip() for d in custom_order.split(',')]
+                invalid_districts = [d for d in custom_districts if d not in all_districts]
+                if invalid_districts:
+                    QMessageBox.warning(self, "输入错误", f"以下区域不存在：{', '.join(invalid_districts)}")
+                    self.update_step_status(3, 'error')
+                    return
+                # 使用自定义顺序
+                district_order = custom_districts
+            else:
+                # 使用字母顺序
+                district_order = sorted(all_districts)
+            
+            # 将区域顺序传递给服务层
+            CONF.runtime.district_order = district_order
+            CONF.runtime.sort_by_letter = sort_by_letter
             
             try:
                 service = GetReceiveRecordService(model=ReceiveRecordModel, conf=CONF)
@@ -1060,7 +1258,7 @@ class Tab3(QWidget):
             # 保存总表
             if self.total_view:
                 try:
-                    if self.balance_view.save_file():
+                    if self.total_view.save_file():
                         success_count +=1
                 except Exception as e:
                     error_messages.append(f"保存总表失败: {str(e)}")

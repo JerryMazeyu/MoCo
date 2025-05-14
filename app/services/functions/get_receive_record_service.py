@@ -259,7 +259,7 @@ class GetReceiveRecordService:
         
 
         # 按区域分组
-        grouped = df_restaurants.groupby('rest_district')
+        grouped = df_restaurants.groupby('rest_district',sort=False)
         
         current_vehicle_index = 0
         for area, group in grouped:
@@ -298,13 +298,6 @@ class GetReceiveRecordService:
                         temp_row['temp_vehicle_index'] =  current_vehicle_index ## 增加一个唯一标识后面分配时间
                         result_rows.append(temp_row)
                             
-
-                            
-                        # else: 
-                        #     print(f"Warning: No more vehicles available. Current accumulated: {total_accumulated}, Target: {total_barrels}")
-                        #     should_break = True
-                        #     break
-                    # print(f"分配车辆: {vehicle_id} 车牌: {license_plate} 收油数: {accumulated_sum}")
                     current_vehicle_index += 1    
                     accumulated_sum = 0
                     temp_group = []
@@ -314,18 +307,13 @@ class GetReceiveRecordService:
             # 如果外层循环需要跳出，则不处理剩余数据
             if should_break:
                 break
+                
         # 创建结果DataFrame前检查是否有数据
         if not result_rows:
             raise ValueError("没有符合分配条件的数据，请确保每个区域的收油量达到要求（35-44桶）")
+            
         # 创建结果DataFrame
         result_df = pd.DataFrame(result_rows)
-        
-        # 打印统计信息
-        # print(f"总分配桶数: {total_accumulated}")
-        # print(f"总桶数限制: {total_barrels}")
-        # print(f"已分配车辆数: {len(set(result_df['rr_vehicle_license_plate']))}")
-        # print(f"已处理餐厅数: {len(result_rows)}")
-        # print(f"总餐厅数: {len(df_restaurants)}")
         
         return result_df
     
@@ -502,8 +490,25 @@ class GetReceiveRecordService:
             # 增加一列随机数作为桶数
             cp_restaurants_df['rr_random_barrel_amount'] = np.random.rand(cp_restaurants_df.shape[0])
             
-            # 根据区域，镇/街道、桶数进行排序
-            cp_restaurants_df_sorted = cp_restaurants_df.sort_values(by=['rest_district', 'rest_street', 'rr_random_barrel_amount'])
+            # 区分排序方式，按首字母排序和自定义排序
+            if hasattr(self.conf.runtime, 'sort_by_letter') and self.conf.runtime.sort_by_letter:
+                # 按区域首字母排序
+                cp_restaurants_df_sorted = cp_restaurants_df.sort_values(
+                    by=['rest_district', 'rest_street', 'rr_random_barrel_amount'],
+                    key=lambda col: col.str if col.name in ['rest_district', 'rest_street'] else col
+                )
+            elif hasattr(self.conf.runtime, 'district_order') and self.conf.runtime.district_order:
+                # 按自定义区域顺序排序
+                district_order = self.conf.runtime.district_order
+                # 创建区域顺序的映射
+                order_map = {name: i for i, name in enumerate(district_order)}
+                cp_restaurants_df['district_order_idx'] = cp_restaurants_df['rest_district'].map(lambda x: order_map.get(x, len(order_map)))
+                cp_restaurants_df_sorted = cp_restaurants_df.sort_values(
+                    by=['district_order_idx', 'rest_district', 'rest_street', 'rr_random_barrel_amount']
+                ).drop(columns=['district_order_idx'])
+            else:
+                # 默认排序
+                cp_restaurants_df_sorted = cp_restaurants_df.sort_values(by=['rest_district', 'rest_street', 'rr_random_barrel_amount'])
 
             # 检查总收油数
             total_oil = cp_restaurants_df_sorted['rr_amount'].sum()
@@ -523,10 +528,10 @@ class GetReceiveRecordService:
                 raise ValueError(f"当前收油总桶数为 {total_oil:.1f} 桶，而完成目标收成品油油重量{oil_weight}吨所需的{total_barrels}桶，无法生成收油表")
             
             # 检查可用车辆数量
-            if total_barrels is not None and str(total_barrels).strip() != "":
-                min_car_number = np.ceil(total_barrels/min_barrel_per_car) # 收油总桶数/每车收购量范围[0]
-                if cp_vehicle_df.empty or cp_vehicle_df.shape[0] < min_car_number:
-                    raise ValueError(f"当前可用车辆数量为 {cp_vehicle_df.shape[0]} 辆，而完成目标收成品油重量{oil_weight}吨所需的{min_car_number}辆，无法生成收油表")
+            # if total_barrels is not None and str(total_barrels).strip() != "":
+            #     min_car_number = np.ceil(total_barrels/min_barrel_per_car) # 收油总桶数/每车收购量范围[0]
+            #     if cp_vehicle_df.empty or cp_vehicle_df.shape[0] < min_car_number:
+            #         raise ValueError(f"当前可用车辆数量为 {cp_vehicle_df.shape[0]} 辆，而完成目标收成品油重量{oil_weight}吨所需的{min_car_number}辆，无法生成收油表")
                 
 
 
@@ -782,7 +787,7 @@ class GetReceiveRecordService:
                 'total_ending_inventory': 0.0,  # 这个值会在后面根据 total_quantities_sold 重新计算
                 'total_cp': cp_id,
                 'total_sale_number_detail': None,
-                'total_volume_per_trucks': None,
+                'total_volume_per_trucks': row['total_supplied_weight_of_order'],
                 'total_customer': None,
                 'total_sale_number': None,
                 'total_delivery_time': None,

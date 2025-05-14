@@ -16,7 +16,7 @@ class PandasModel(QAbstractTableModel):
     def __init__(self, data=None):
         super().__init__()
         self._data = pd.DataFrame() if data is None else data
-        self._original_data = self._data.copy()
+        self._original_data = None  # 初始化为None，等待外部设置
         self.modified = False
         
         # 数据缓存，用于提高大数据集显示性能
@@ -25,6 +25,8 @@ class PandasModel(QAbstractTableModel):
         
         # 为大型数据集优化
         self._row_limit = 100000  # 处理的最大行数
+        self._column_mapping = None  # 添加列映射属性
+        self._reverse_mapping = None  # 添加反向映射属性
     
     def rowCount(self, parent=None):
         return len(self._data)
@@ -84,29 +86,36 @@ class PandasModel(QAbstractTableModel):
         row, col = index.row(), index.column()
         
         try:
-            # 尝试转换为原数据类型
-            current_type = type(self._data.iloc[row, col])
-            if current_type == int:
-                value = int(value)
-            elif current_type == float:
-                value = float(value)
-            elif pd.isna(self._data.iloc[row, col]) and value.strip() == "":
-                value = pd.NA
+            # 获取当前列的中文名
+            display_col = self._data.columns[col]
+            # 获取对应的英文字段名
+            original_col = self._reverse_mapping.get(display_col, display_col)
             
-            # 更新数据
+            # 尝试转换为原数据类型
+            if self._original_data is not None:
+                current_type = type(self._original_data.iloc[row, original_col])
+                if current_type == int:
+                    value = int(value)
+                elif current_type == float:
+                    value = float(value)
+                elif pd.isna(self._original_data.iloc[row, original_col]) and value.strip() == "":
+                    value = pd.NA
+            
+            # 更新显示数据
             self._data.iloc[row, col] = value
             
-            # 检查是否与原始数据不同
-            if self._data.iloc[row, col] != self._original_data.iloc[row, col]:
-                self.modified = True
+            # 更新原始数据
+            if self._original_data is not None and original_col in self._original_data.columns:
+                self._original_data.iloc[row, original_col] = value
             
-            # 清除所有缓存，确保显示更新
+            # 标记为已修改
+            self.modified = True
+            
+            # 清除缓存
             self._cache.clear()
             
             # 发出数据更改信号
             self.dataChanged.emit(index, index)
-            
-            # 强制更新显示
             self.layoutChanged.emit()
             
             return True
@@ -131,27 +140,18 @@ class PandasModel(QAbstractTableModel):
     def setDataFrame(self, dataframe):
         """设置新的DataFrame数据"""
         try:
-            # 如果数据过大，可能需要仅保留部分
             if len(dataframe) > self._row_limit:
                 print(f"警告: 数据行数 ({len(dataframe)}) 超过显示限制 ({self._row_limit})，性能可能受影响")
             
             self.beginResetModel()
-            
-            # 清空缓存
             self._cache.clear()
-            
             self._data = dataframe
-            self._original_data = dataframe.copy()
             self.modified = False
-            
-            # 主动进行一次垃圾回收，释放内存
             import gc
             gc.collect()
-            
             self.endResetModel()
         except Exception as e:
             print(f"设置DataFrame时出错: {str(e)}")
-            # 确保即使出错，模型也重置完成
             self.endResetModel()
             raise
     
@@ -168,16 +168,115 @@ class PandasModel(QAbstractTableModel):
         self.modified = False
         self._original_data = self._data.copy()
 
+    def set_column_mapping(self, mapping):
+        """设置列映射"""
+        self._column_mapping = mapping
+        self._reverse_mapping = {v: k for k, v in mapping.items()}
+
+    def get_original_data(self):
+        """获取原始数据"""
+        if self._original_data is None:
+            return self._data
+        return self._original_data
+
 class XlsxViewerWidget(QWidget):
     """Excel表格查看器组件，用于展示和编辑Excel数据"""
     
     def __init__(self, parent=None,use_oss=False,oss_path=None,show_open=True, show_save=True, 
-             show_save_as=True, show_refresh=True):
+             show_save_as=True, show_refresh=True, display_columns=None):
         super().__init__(parent)
         self.current_file = None
         self.use_oss = use_oss
         self.oss_path = oss_path
-         # 保存按钮显示状态
+        self.display_columns = display_columns  # 新增：要显示的列配置
+        self._original_data = None  # 存储原始数据
+        
+        # 添加字段映射配置
+        self.column_mapping = {
+            # 餐厅信息字段映射
+            'rest_chinese_name': '餐厅中文名',
+            'rest_english_name': '餐厅英文名',
+            'rest_city': '城市',
+            'rest_chinese_address': '中文地址',
+            'rest_district': '区域',
+            'rest_street': '街道',
+            'rest_contact_person': '联系人',
+            'rest_contact_phone': '联系电话',
+            'rest_location': '位置',
+            'rest_distance': '距离',
+            'rest_type': '餐厅类型',
+            
+            # 车辆信息字段映射
+            'vehicle_license_plate': '车牌号',
+            'vehicle_driver_name': '司机姓名',
+            'vehicle_type': '车辆类型',
+            'vehicle_rough_weight': '毛重',
+            'vehicle_tare_weight': '皮重',
+            'vehicle_cooldown_days': '冷却天数',
+            'vehicle_status': '车辆状态',
+            'vehicle_last_use': '最后使用日期',
+            
+            # 收油表字段映射
+            'rr_date': '收油日期',
+            'rr_restaurant_name': '餐厅名称',
+            'rr_restaurant_address': '餐厅地址',
+            'rr_district': '区域',
+            'rr_contact_person': '联系人',
+            'rr_street': '街道',
+            'rr_vehicle_license_plate': '车牌号',
+            'rr_amount': '桶数180KG/桶',
+            'rr_amount_of_day': '当日总数',
+            'rr_serial_number': '流水号',
+            'rr_sale_number': '销售单号',
+            
+            # 平衡表字段映射
+            'balance_date': '交付日期',
+            'balance_oil_type': '货物类型',
+            'balance_tranport_type': '运输方式',
+            'balance_serial_number': '流水号',
+            'balance_vehicle_license_plate': '车牌号',
+            'balance_weight_of_order': '榜单净重',
+            'balance_order_number': '磅单编号',
+            'balance_district': '收集城市',
+            'balance_sale_number': '销售合同号',
+            'balance_amount_of_day': '当日收油总数',
+            
+            # 总表字段映射
+            'total_sale_number_detail': '合同分配明细',
+            'total_supplied_date': '供应日期',
+            'total_delivery_trucks_vehicle_registration_no': '车牌号',
+            'total_volume_per_trucks': '每车吨量/吨',
+            'total_weighbridge_ticket_number': '过磅单编号',
+            'total_collection_city': '收集城市',
+            'total_iol_mt': '毛油库存',
+            'total_processing_quantity': '加工量',
+            'total_output_quantity': '产出重量（MT）',
+            'total_conversion_coefficient': '转化系数',
+            'total_customer': '客户',
+            'total_sale_number': '合同分配',
+            'total_quantities_sold': '售出数量(MT)',
+            'total_ending_inventory': '期末库存(MT)',
+            'total_delivery_time': '出厂时间',
+            'total_delivery_address': '出厂去向',
+            'total_supplied_weight_of_order': '榜单净重',
+            
+            # 收货确认书字段映射
+            'check_belong_cp': '所属CP',
+            'check_date': '提货日期',
+            'check_name': '名称',
+            'check_description_of_material': '描述',
+            'check_truck_plate_no': '车牌号',
+            'check_weight': '重量',
+            'check_quantity': '司机',
+            'check_weighbridge_ticket_number': '磅单号',
+            'check_gross_weight': '毛重',
+            'check_tare_weight': '皮重',
+            'check_net_weight': '净重',
+            'check_unload_weight': '卸货重量',
+            'check_difference': '差值'
+        }
+        
+        # 保存按钮显示状态
         self.show_open = show_open
         self.show_save = show_save
         self.show_save_as = show_save_as
@@ -271,6 +370,9 @@ class XlsxViewerWidget(QWidget):
                 self.current_file = file_path
             
             if data is not None:
+                # 保存原始数据
+                self._original_data = data.copy()
+                
                 # 数据行数检查
                 row_count = len(data)
                 
@@ -291,8 +393,25 @@ class XlsxViewerWidget(QWidget):
                     # 确保UI响应
                     QApplication.processEvents()
                     
+                # 如果有显示列配置，只显示指定的列
+                if self.display_columns and isinstance(data, pd.DataFrame):
+                    # 确保所有配置的列都存在
+                    valid_columns = [col for col in self.display_columns if col in data.columns]
+                    if valid_columns:
+                        display_data = data[valid_columns].copy()
+                    else:
+                        display_data = data.copy()
+                else:
+                    display_data = data.copy()
+                
+                # 重命名列名为中文
+                display_data = display_data.rename(columns=self.column_mapping)
+                
                 # 设置数据模型
-                self.model.setDataFrame(data)
+                self.model = PandasModel(display_data)  # 创建新的模型实例
+                self.model.set_column_mapping(self.column_mapping)  # 设置列映射
+                self.model._original_data = self._original_data  # 设置原始数据
+                self.table_view.setModel(self.model)  # 设置模型到视图
                 
                 # 记录结束时间并计算耗时
                 end_time = datetime.now()
@@ -471,14 +590,17 @@ class XlsxViewerWidget(QWidget):
                 self.load_data(self.current_file)
     
     def get_data(self):
-        """获取当前数据"""
-        return self.model.getDataFrame()
+        """获取当前数据，返回原始数据"""
+        if self._original_data is not None:
+            # 获取模型中的原始数据（已包含所有修改）
+            return self.model.get_original_data()
+        return None
     
     def set_data(self, data):
         """设置新数据"""
         if isinstance(data, pd.DataFrame):
-            self.model.setDataFrame(data)
-            self.table_view.resizeColumnsToContents()
+            self._original_data = data.copy()
+            self.load_data(data=data)
 
     def update_table(self):
         """更新表格视图显示当前数据"""
