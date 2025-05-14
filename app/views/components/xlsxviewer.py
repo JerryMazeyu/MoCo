@@ -9,6 +9,35 @@ import platform
 import subprocess
 from app.utils import oss_put_excel_file,oss_rename_excel_file, oss_get_excel_file
 from datetime import datetime
+import openpyxl
+from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.utils import get_column_letter
+
+class CustomTableView(QTableView):
+    """自定义表格视图，支持单元格合并"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._span_func = None
+
+    def setSpan(self, span_func):
+        """设置单元格合并处理函数"""
+        self._span_func = span_func
+
+    def setModel(self, model):
+        """重写setModel方法，添加单元格合并支持"""
+        super().setModel(model)
+        if hasattr(model, 'span'):
+            self._span_func = model.span
+
+    def drawRow(self, painter, options, index):
+        """重写drawRow方法，处理合并单元格的绘制"""
+        if self._span_func:
+            for col in range(self.model().columnCount()):
+                cell_index = self.model().index(index.row(), col)
+                span = self._span_func(cell_index)
+                if span != (1, 1):
+                    self.setSpan(index.row(), col, *span)
+        super().drawRow(painter, options, index)
 
 class PandasModel(QAbstractTableModel):
     """Pandas数据模型，用于在QTableView中显示pandas DataFrame数据"""
@@ -27,6 +56,11 @@ class PandasModel(QAbstractTableModel):
         self._row_limit = 100000  # 处理的最大行数
         self._column_mapping = None  # 添加列映射属性
         self._reverse_mapping = None  # 添加反向映射属性
+        
+        # 合并单元格信息
+        self._merge_info = {}  # 存储合并单元格信息 {(row, col): (rowspan, colspan)}
+        self._merge_key = None  # 合并依据的字段
+        self._merge_columns = []  # 需要合并的列
     
     def rowCount(self, parent=None):
         return len(self._data)
@@ -43,6 +77,11 @@ class PandasModel(QAbstractTableModel):
         # 检查是否超出范围
         if row < 0 or row >= len(self._data) or col < 0 or col >= len(self._data.columns):
             return QVariant()
+        
+        # 检查是否是被合并的单元格
+        for (merge_row, merge_col), (rowspan, colspan) in self._merge_info.items():
+            if col == merge_col and merge_row < row < merge_row + rowspan:
+                return QVariant()  # 返回空值，因为这是被合并的单元格
         
         # 获取单元格的值
         if role == Qt.DisplayRole or role == Qt.EditRole:
@@ -72,10 +111,18 @@ class PandasModel(QAbstractTableModel):
         
         # 文本对齐
         elif role == Qt.TextAlignmentRole:
-            value = self._data.iloc[row, col]
-            if isinstance(value, (int, float)):
-                return Qt.AlignRight | Qt.AlignVCenter  # 数字右对齐
-            return Qt.AlignLeft | Qt.AlignVCenter  # 文本左对齐
+            # 检查是否是合并单元格的起始位置
+            is_merge_start = (row, col) in self._merge_info
+            
+            if is_merge_start:
+                # 合并单元格居中对齐
+                return Qt.AlignCenter
+            else:
+                # 非合并单元格保持原有对齐方式
+                value = self._data.iloc[row, col]
+                if isinstance(value, (int, float)):
+                    return Qt.AlignRight | Qt.AlignVCenter  # 数字右对齐
+                return Qt.AlignLeft | Qt.AlignVCenter  # 文本左对齐
                 
         return QVariant()
     
@@ -178,6 +225,61 @@ class PandasModel(QAbstractTableModel):
         if self._original_data is None:
             return self._data
         return self._original_data
+
+    def set_merge_info(self, merge_key, merge_columns):
+        """设置合并单元格信息"""
+        self._merge_key = merge_key
+        self._merge_columns = merge_columns
+        self._update_merge_info()
+
+    def _update_merge_info(self):
+        """更新合并单元格信息"""
+        self._merge_info.clear()
+        if not self._merge_key or not self._merge_columns:
+            return
+
+        # 获取合并键的列索引
+        try:
+            key_col_idx = list(self._data.columns).index(self._merge_key)
+        except ValueError:
+            return
+
+        # 获取需要合并的列的索引
+        merge_col_indices = []
+        for col in self._merge_columns:
+            try:
+                idx = list(self._data.columns).index(col)
+                merge_col_indices.append(idx)
+            except ValueError:
+                continue
+
+        # 计算合并信息
+        current_key = None
+        merge_start_row = 0
+        for row in range(len(self._data)):
+            key_value = str(self._data.iloc[row, key_col_idx])
+            
+            if current_key != key_value:
+                # 如果有待处理的合并，处理它
+                if current_key is not None and row - merge_start_row > 1:
+                    for col_idx in merge_col_indices:
+                        self._merge_info[(merge_start_row, col_idx)] = (row - merge_start_row, 1)
+                
+                current_key = key_value
+                merge_start_row = row
+            
+            # 处理最后一组
+            if row == len(self._data) - 1 and row - merge_start_row > 0:
+                for col_idx in merge_col_indices:
+                    self._merge_info[(merge_start_row, col_idx)] = (row - merge_start_row + 1, 1)
+
+    def span(self, index):
+        """返回单元格的合并信息"""
+        row, col = index.row(), index.column()
+        merge_info = self._merge_info.get((row, col))
+        if merge_info:
+            return merge_info
+        return (1, 1)  # 默认不合并
 
 class XlsxViewerWidget(QWidget):
     """Excel表格查看器组件，用于展示和编辑Excel数据"""
@@ -289,7 +391,7 @@ class XlsxViewerWidget(QWidget):
         self.layout.setContentsMargins(5, 5, 5, 5)
         
         # 创建表格视图
-        self.table_view = QTableView()
+        self.table_view = CustomTableView()
         self.table_view.setAlternatingRowColors(True)
         self.table_view.setStyleSheet("""
             QTableView {
@@ -351,8 +453,15 @@ class XlsxViewerWidget(QWidget):
         self.layout.addWidget(self.table_view)
         self.layout.addLayout(button_layout)
     
-    def load_data(self, file_path=None, data=None):
-        """加载数据，可以是文件路径或pandas DataFrame"""
+    def load_data(self, file_path=None, data=None, merge_key=None, merge_columns=None):
+        """加载数据，可以是文件路径或pandas DataFrame
+        
+        Args:
+            file_path: Excel文件路径
+            data: pandas DataFrame数据
+            merge_key: 合并单元格的依据字段
+            merge_columns: 需要合并的列列表
+        """
         try:
             # 记录开始时间，用于性能监控
             start_time = datetime.now()
@@ -411,7 +520,17 @@ class XlsxViewerWidget(QWidget):
                 self.model = PandasModel(display_data)  # 创建新的模型实例
                 self.model.set_column_mapping(self.column_mapping)  # 设置列映射
                 self.model._original_data = self._original_data  # 设置原始数据
+                
+                # 设置合并单元格信息
+                if merge_key and merge_columns:
+                    # 将英文字段名转换为中文显示名
+                    display_merge_key = self.column_mapping.get(merge_key, merge_key)
+                    display_merge_columns = [self.column_mapping.get(col, col) for col in merge_columns]
+                    self.model.set_merge_info(display_merge_key, display_merge_columns)
+                
+                # 设置表格视图
                 self.table_view.setModel(self.model)  # 设置模型到视图
+                self.table_view.setSpan = self.model.span  # 设置单元格合并处理函数
                 
                 # 记录结束时间并计算耗时
                 end_time = datetime.now()
@@ -505,8 +624,9 @@ class XlsxViewerWidget(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "保存错误", f"无法保存文件: {str(e)}")
                 return False
-    """另存为文件到本地"""
+    """另存为文件到本地，支持保存合并单元格"""
     def save_file_as(self):
+        """另存为文件到本地，支持保存合并单元格"""
         try:
             file_path, _ = QFileDialog.getSaveFileName(
                 self, "保存Excel文件", "", "Excel文件 (*.xlsx);;CSV文件 (*.csv)"
@@ -524,15 +644,86 @@ class XlsxViewerWidget(QWidget):
             if data is None or data.empty:
                 QMessageBox.warning(self, "保存失败", "没有数据可以保存")
                 return False
-                
+            
+            # 检查是否有合并单元格
+            has_merge, merge_info = self.has_merged_cells()
+            if has_merge and file_path.endswith('.csv'):
+                reply = QMessageBox.question(
+                    self, '确认',
+                    '当前表格包含合并单元格，CSV格式不支持保存合并单元格信息。是否继续？\n'
+                    f'合并信息：\n'
+                    f'- 合并依据：{merge_info["merge_key"]}\n'
+                    f'- 合并的列：{", ".join(merge_info["merge_columns"])}\n'
+                    f'- 合并单元格数：{merge_info["merge_count"]}',
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if reply == QMessageBox.No:
+                    return False
+            
             # 根据文件扩展名选择保存格式
             try:
                 if file_path.endswith('.csv'):
+                    # CSV格式不支持合并单元格，直接保存
                     data.to_csv(file_path, index=False, encoding='utf-8-sig')
                 else:
-                    data.to_excel(file_path, index=False)
+                    # 使用openpyxl保存Excel文件，支持合并单元格
+                    wb = openpyxl.Workbook()
+                    ws = wb.active
+                    
+                    # 写入数据
+                    for r_idx, row in enumerate(dataframe_to_rows(data, index=False, header=True), 1):
+                        for c_idx, value in enumerate(row, 1):
+                            cell = ws.cell(row=r_idx, column=c_idx, value=value)
+                            # 设置默认对齐方式
+                            if isinstance(value, (int, float)):
+                                cell.alignment = openpyxl.styles.Alignment(horizontal='right', vertical='center')
+                            else:
+                                cell.alignment = openpyxl.styles.Alignment(horizontal='left', vertical='center')
+                    
+                    # 处理合并单元格
+                    if has_merge:
+                        for (start_row, start_col), (rowspan, colspan) in self.model._merge_info.items():
+                            # openpyxl的行列索引从1开始，而且包含表头行
+                            start_row = start_row + 2  # 加2是因为：+1是因为openpyxl从1开始，再+1是因为有表头行
+                            start_col = start_col + 1  # 加1是因为openpyxl从1开始
+                            end_row = start_row + rowspan - 1
+                            end_col = start_col + colspan - 1
+                            
+                            # 合并单元格
+                            ws.merge_cells(
+                                start_row=start_row,
+                                start_column=start_col,
+                                end_row=end_row,
+                                end_column=end_col
+                            )
+                            
+                            # 设置合并单元格的对齐方式为居中
+                            merged_cell = ws.cell(row=start_row, column=start_col)
+                            merged_cell.alignment = openpyxl.styles.Alignment(
+                                horizontal='center',
+                                vertical='center'
+                            )
+                    
+                    # 调整列宽
+                    for column in ws.columns:
+                        max_length = 0
+                        column_letter = get_column_letter(column[0].column)
+                        for cell in column:
+                            try:
+                                if len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))
+                            except:
+                                pass
+                        adjusted_width = (max_length + 2)
+                        ws.column_dimensions[column_letter].width = adjusted_width
+                    
+                    # 保存文件
+                    wb.save(file_path)
                 
-                QMessageBox.information(self, "保存成功", f"文件已保存到：{file_path}")
+                QMessageBox.information(self, "保存成功", 
+                    f"文件已保存到：{file_path}\n" + 
+                    ("(包含合并单元格)" if has_merge and not file_path.endswith('.csv') else ""))
                 return True
                 
             except PermissionError:
@@ -617,6 +808,13 @@ class XlsxViewerWidget(QWidget):
         empty_df = pd.DataFrame()
         self.model.setDataFrame(empty_df)
         self.table_view.resizeColumnsToContents()
+
+    def has_merged_cells(self):
+        """检查是否有合并单元格"""
+        if hasattr(self.model, '_merge_info') and self.model._merge_info:
+            return True, self.model._merge_info
+        return False, {}
+
 # Example usage:
 
 if __name__ == '__main__':

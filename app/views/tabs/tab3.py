@@ -441,7 +441,7 @@ class SalesDaysDialog(QDialog):
                 self.date_warn_label.setText("请选择有效的运输日期")
                 self.date_warn_label.setVisible(True)
                 return
-            if selected_date <= self.min_balance_date:
+            if selected_date < self.min_balance_date:
                 self.date_warn_label.setText(f"运输日期需要在 {self.min_balance_date.strftime('%Y-%m-%d')} 之后")
                 self.date_warn_label.setVisible(True)
                 return
@@ -827,7 +827,7 @@ class Tab3(QWidget):
                         display_columns=[
                             'rr_date', 'rr_restaurant_name', 'rr_restaurant_address','rr_contact_person',
                             'rr_amount','rr_serial_number', 'rr_vehicle_license_plate', 'rr_district','rr_street',
-                            'rr_sale_number','rr_amount_of_day'
+                            'rr_sale_number','rr_amount_of_day','temp_vehicle_index'
                         ]
                     )
                     self.balance_view = XlsxViewerWidget(
@@ -1454,7 +1454,9 @@ class Tab3(QWidget):
                 # 更新总表和收货确认书、收油表、平衡表视图
                 self.total_view.load_data(data=total_df)
                 self.check_view.load_data(data=check_df)
-                self.report_viewer.load_data(data=oil_records_df)
+                self.report_viewer.load_data(data=oil_records_df,
+                    merge_key='temp_vehicle_index',
+                    merge_columns=['rr_date', 'rr_serial_number', 'rr_vehicle_license_plate','rr_amount_of_day'])
                 self.balance_view.load_data(data=balance_current_month)
                 ## 更新车辆信息
                 self.vehicle_viewer.load_data(data=cp_vehicle_df)
