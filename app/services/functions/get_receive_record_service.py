@@ -495,7 +495,7 @@ class GetReceiveRecordService:
                 # 按区域首字母排序
                 cp_restaurants_df_sorted = cp_restaurants_df.sort_values(
                     by=['rest_district', 'rest_street', 'rr_random_barrel_amount'],
-                    key=lambda col: col.str if col.name in ['rest_district', 'rest_street'] else col
+                    key=lambda col: col.astype(str) if col.name in ['rest_district', 'rest_street'] else col
                 )
             elif hasattr(self.conf.runtime, 'district_order') and self.conf.runtime.district_order:
                 # 按自定义区域顺序排序
