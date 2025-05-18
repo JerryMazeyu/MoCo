@@ -1081,6 +1081,19 @@ class Tab3(QWidget):
                 QMessageBox.critical(self, "读取失败", f"从OSS读取车辆信息失败: {str(e)}")
                 return
             
+            # 获取列名映射关系
+            reverse_mapping = {v: k for k, v in self.vehicle_viewer.column_mapping.items() if k.startswith('vehicle_')}
+            
+            # 检查并转换中文列名到英文字段名
+            columns_to_rename = {}
+            for col in vehicle_data.columns:
+                if col in reverse_mapping:
+                    columns_to_rename[col] = reverse_mapping[col]
+            
+            # 如果有需要重命名的列，进行重命名
+            if columns_to_rename:
+                vehicle_data = vehicle_data.rename(columns=columns_to_rename)
+            
             # 转换为Vehicle对象列表
             self.vehicles = [Vehicle(info) for info in vehicle_data.to_dict('records')]
             

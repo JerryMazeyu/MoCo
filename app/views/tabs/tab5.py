@@ -650,6 +650,19 @@ class Tab5(QWidget):
             try:
                 upload_data = pd.read_excel(file_path)
                 
+                # 获取列名映射关系
+                reverse_mapping = {v: k for k, v in self.xlsx_viewer.column_mapping.items() if k.startswith('vehicle_')}
+                
+                # 检查并转换中文列名到英文字段名
+                columns_to_rename = {}
+                for col in upload_data.columns:
+                    if col in reverse_mapping:
+                        columns_to_rename[col] = reverse_mapping[col]
+                
+                # 如果有需要重命名的列，进行重命名
+                if columns_to_rename:
+                    upload_data = upload_data.rename(columns=columns_to_rename)
+                
                 # 检查数据
                 if upload_data.empty:
                     QMessageBox.warning(self, "数据为空", "上传的Excel文件中没有数据")
