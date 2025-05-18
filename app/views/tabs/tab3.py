@@ -1248,12 +1248,25 @@ class Tab3(QWidget):
         file_name, _ = QFileDialog.getOpenFileName(self, "选择餐厅信息文件", "", "Excel Files (*.xlsx);;All Files (*)", options=options)
         if file_name:
             try:
-            # 直接使用pandas读取本地Excel文件
+                # 直接使用pandas读取本地Excel文件
                 restaurant_data = pd.read_excel(file_name)
                 if restaurant_data.empty:
                     QMessageBox.warning(self, "文件为空", "所选文件没有数据")
                     self.update_step_status(1, 'error')
                     return
+                
+                # 获取列名映射关系
+                reverse_mapping = {v: k for k, v in self.restaurant_viewer.column_mapping.items() if k.startswith('rest_')}
+                
+                # 检查并转换中文列名到英文字段名
+                columns_to_rename = {}
+                for col in restaurant_data.columns:
+                    if col in reverse_mapping:
+                        columns_to_rename[col] = reverse_mapping[col]
+                
+                # 如果有需要重命名的列，进行重命名
+                if columns_to_rename:
+                    restaurant_data = restaurant_data.rename(columns=columns_to_rename)
                 
                 # 转换为Restaurant对象列表
                 self.restaurants = [Restaurant(info) for info in restaurant_data.to_dict('records')]
@@ -1268,8 +1281,6 @@ class Tab3(QWidget):
                 
                 # 切换到餐厅信息页签
                 self.tab_widget.setCurrentIndex(0)
-                
-
                 
                 self.logger.info(f"成功载入餐厅信息，共 {len(self.restaurants)} 条记录")
                 self.update_step_status(1, 'finish')
@@ -1441,6 +1452,19 @@ class Tab3(QWidget):
                 # 如果上传了总表数据，先进行验证和转换
                 if balance_total is not None:
                     try:
+                        # 获取列名映射关系
+                        reverse_mapping = {v: k for k, v in self.total_view.column_mapping.items() if k.startswith('total_')}
+                        
+                        # 检查并转换中文列名到英文字段名
+                        columns_to_rename = {}
+                        for col in balance_total.columns:
+                            if col in reverse_mapping:
+                                columns_to_rename[col] = reverse_mapping[col]
+                        
+                        # 如果有需要重命名的列，进行重命名
+                        if columns_to_rename:
+                            balance_total = balance_total.rename(columns=columns_to_rename)
+
                         # 转换为RestaurantTotal对象列表
                         total_records = [BalanceTotal(info) for info in balance_total.to_dict('records')]
                         

@@ -296,10 +296,13 @@ class XlsxViewerWidget(QWidget):
         # 添加字段映射配置
         self.column_mapping = {
             # 餐厅信息字段映射
+            "rest_id": "餐厅ID",
+            "rest_belonged_cp": "所属CP",
             'rest_chinese_name': '餐厅中文名',
             'rest_english_name': '餐厅英文名',
             'rest_city': '城市',
             'rest_chinese_address': '中文地址',
+            'rest_english_address': '英文地址',
             'rest_district': '区域',
             'rest_street': '街道',
             'rest_contact_person': '联系人',
