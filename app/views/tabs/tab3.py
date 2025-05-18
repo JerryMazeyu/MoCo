@@ -319,9 +319,21 @@ class SalesDaysDialog(QDialog):
         self.days_input = QLineEdit(self)
         self.days_input.setPlaceholderText("请输入销售运输天数（1-31）")
         self.days_input.setFixedWidth(150)
+        self.days_input.textChanged.connect(self.validate_days)  # 添加验证
         days_layout.addWidget(self.days_input)
         days_layout.addStretch()
         layout.addLayout(days_layout)
+
+        # 天数警告提示
+        self.days_warn_label = QLabel("")
+        self.days_warn_label.setStyleSheet("color: red;")
+        self.days_warn_label.setVisible(False)
+        days_warn_layout = QHBoxLayout()
+        days_warn_layout.setAlignment(Qt.AlignLeft)
+        days_warn_layout.addSpacing(120)  # 与上面label对齐
+        days_warn_layout.addWidget(self.days_warn_label, alignment=Qt.AlignLeft)
+        days_warn_layout.addStretch()
+        layout.addLayout(days_warn_layout)
 
         # 是否忽略库存
         ignore_layout = QHBoxLayout()
@@ -419,15 +431,66 @@ class SalesDaysDialog(QDialog):
         else:
             self.day_combo.setCurrentIndex(0)
 
+    def validate_days(self):
+        """验证销售运输天数"""
+        try:
+            # 获取当前选择的年月日
+            year = int(self.year_combo.currentText())
+            month = int(self.month_combo.currentText())
+            day = int(self.day_combo.currentText())
+            
+            # 获取输入的天数
+            days_text = self.days_input.text()
+            if not days_text:
+                self.days_warn_label.setVisible(False)
+                self.confirm_button.setEnabled(True)
+                return
+                
+            days = int(days_text)
+            if days <= 0:
+                self.days_warn_label.setText("销售运输天数必须大于0")
+                self.days_warn_label.setVisible(True)
+                self.confirm_button.setEnabled(False)
+                return
+            
+            # 计算当月最后一天
+            import calendar
+            last_day = calendar.monthrange(year, month)[1]
+            
+            # 计算运输结束日期
+            end_day = day + days - 1
+            
+            # 如果结束日期超过当月最后一天
+            if end_day > last_day:
+                max_allowed_days = last_day - day + 1
+                self.days_warn_label.setText(f"运输天数过多，从{day}号开始最多可选{max_allowed_days}天")
+                self.days_warn_label.setVisible(True)
+                self.confirm_button.setEnabled(False)
+            else:
+                self.days_warn_label.setVisible(False)
+                self.confirm_button.setEnabled(True)
+                
+        except ValueError:
+            self.days_warn_label.setText("请输入有效的数字")
+            self.days_warn_label.setVisible(True)
+            self.confirm_button.setEnabled(False)
+
     def on_confirm_clicked(self):
-        """点击确认时校验日期"""
+        """点击确认时校验日期和天数"""
         year = self.year_combo.currentText()
         month = self.month_combo.currentText()
         day = self.day_combo.currentText()
+        days = self.days_input.text()
+        
         # 先判断都不为空且为数字
         if not (year and month and day and year.isdigit() and month.isdigit() and day.isdigit()):
             self.date_warn_label.setText("请选择完整的运输日期")
             self.date_warn_label.setVisible(True)
+            return
+            
+        if not days or not days.isdigit():
+            self.days_warn_label.setText("请输入有效的销售运输天数")
+            self.days_warn_label.setVisible(True)
             return
 
         if self.min_balance_date:
@@ -445,8 +508,15 @@ class SalesDaysDialog(QDialog):
                 self.date_warn_label.setText(f"运输日期需要在 {self.min_balance_date.strftime('%Y-%m-%d')} 之后")
                 self.date_warn_label.setVisible(True)
                 return
-        # 校验通过，关闭弹窗
+                
+        # 再次验证天数（以防万一）
+        self.validate_days()
+        if self.days_warn_label.isVisible():
+            return
+            
+        # 所有校验通过，关闭弹窗
         self.date_warn_label.setVisible(False)
+        self.days_warn_label.setVisible(False)
         self.accept()
 
     def toggle_file_button(self, checked):

@@ -267,42 +267,100 @@ class GetReceiveRecordService:
             temp_group = []
             
             for index, row in group.iterrows():
-                temp_group.append(row)
-                accumulated_sum += row['rr_amount']
+                # 先计算如果加上当前行的桶数会是多少
+                potential_sum = accumulated_sum + row['rr_amount']
                 
-                # 如果累计值达到在35-44之间，则分配车牌号并重置累计值
-                if accumulated_sum >= random_barrel_per_car:
-                    # 检查添加这组数据是否会超过总桶数限制
-                    print(f"当前累计桶数: {total_accumulated}, 目标桶数: {total_barrels}")
-                    if total_barrels not in (None, "") and isinstance(total_barrels, (int, float)):
-                        if total_accumulated > total_barrels:
-                            should_break = True  # 设置跳出标志
-                            break
+                # 如果加上当前行会超过max_barrel_per_car，先处理当前temp_group
+                if potential_sum > max_barrel_per_car:
+                    # 只有当accumulated_sum达到min_barrel_per_car才处理
+                    if accumulated_sum >= min_barrel_per_car:
+                        # 检查添加这组数据是否会超过总桶数限制
+                        print(f"当前累计桶数: {total_accumulated}, 目标桶数: {total_barrels}")
+                        if total_barrels not in (None, "") and isinstance(total_barrels, (int, float)):
+                            # 先检查加上这组是否会超过目标桶数
+                            if total_accumulated + accumulated_sum > total_barrels:
+                                should_break = True  # 设置跳出标志
+                                break
                         
-                    # 分配车牌号
-                    total_accumulated += accumulated_sum
+                        # 分配车牌号
+                        total_accumulated += accumulated_sum
 
-                    for temp_row in temp_group:
-                        temp_row = temp_row.copy()  # 防止修改原DataFrame
-                        ## 不判断车辆，因为这里没有分配车辆，后面再分配
-                        # if current_vehicle_index < len(vehicle_sorted_df):
-                            # 正确获取vehicle_id和license_plate
-                        # current_vehicle = vehicle_sorted_df.iloc[current_vehicle_index]
-                        # vehicle_id = current_vehicle['vehicle_id']
-                        # vehicle_id = current_vehicle['vehicle_id']
-                        # license_plate = current_vehicle['vehicle_license_plate']
-                        ## 车辆信息后面分配 
-                        temp_row['rr_vehicle_license_plate'] = None
-                        temp_row['rr_vehicle'] = None
-                        temp_row['rr_amount_of_day'] = accumulated_sum
-                        temp_row['temp_vehicle_index'] =  current_vehicle_index ## 增加一个唯一标识后面分配时间
-                        result_rows.append(temp_row)
-                            
-                    current_vehicle_index += 1    
-                    accumulated_sum = 0
-                    temp_group = []
-                    ## 每次收油完后重新随机每辆车的收油数
-                    random_barrel_per_car = random.randint(min_barrel_per_car, max_barrel_per_car)
+                        for temp_row in temp_group:
+                            temp_row = temp_row.copy()  # 防止修改原DataFrame
+                            temp_row['rr_vehicle_license_plate'] = None
+                            temp_row['rr_vehicle'] = None
+                            temp_row['rr_amount_of_day'] = accumulated_sum
+                            temp_row['temp_vehicle_index'] = current_vehicle_index
+                            result_rows.append(temp_row)
+                                
+                        current_vehicle_index += 1    
+                        # 重置累计值和临时组
+                        accumulated_sum = 0
+                        temp_group = []
+                        # 重新生成随机目标桶数
+                        random_barrel_per_car = random.randint(min_barrel_per_car, max_barrel_per_car)
+                        
+                        # 如果加入当前行超过最大的桶数限制，那么之前的先处理，当前行作为下一组的第一条数据
+                        temp_group.append(row)
+                        accumulated_sum = row['rr_amount']
+                    else:
+                        # 如果accumulated_sum小于min_barrel_per_car，继续累加即使会超过max_barrel_per_car
+                        temp_group.append(row)
+                        accumulated_sum = potential_sum
+                else:
+                    # 如果加上当前行不会超过max_barrel_per_car，继续累加
+                    temp_group.append(row)
+                    accumulated_sum = potential_sum
+                    
+                    # 如果累计值在min和max之间，且达到或超过随机目标值，处理当前组
+                    if min_barrel_per_car <= accumulated_sum <= max_barrel_per_car and accumulated_sum >= random_barrel_per_car:
+                        # 检查添加这组数据是否会超过总桶数限制
+                        print(f"当前累计桶数: {total_accumulated}, 目标桶数: {total_barrels}")
+                        if total_barrels not in (None, "") and isinstance(total_barrels, (int, float)):
+                            # 先检查加上这组是否会超过目标桶数
+                            if total_accumulated + accumulated_sum > total_barrels:
+                                should_break = True  # 设置跳出标志
+                                break
+                        
+                        # 分配车牌号
+                        total_accumulated += accumulated_sum
+
+                        for temp_row in temp_group:
+                            temp_row = temp_row.copy()  # 防止修改原DataFrame
+                            temp_row['rr_vehicle_license_plate'] = None
+                            temp_row['rr_vehicle'] = None
+                            temp_row['rr_amount_of_day'] = accumulated_sum
+                            temp_row['temp_vehicle_index'] = current_vehicle_index
+                            result_rows.append(temp_row)
+                                
+                        current_vehicle_index += 1    
+                        # 重置累计值和临时组
+                        accumulated_sum = 0
+                        temp_group = []
+                        # 重新生成随机目标桶数
+                        random_barrel_per_car = random.randint(min_barrel_per_car, max_barrel_per_car)
+            
+            # 处理最后一组数据（如果达到最小桶数要求）
+            if accumulated_sum >= min_barrel_per_car and not should_break:
+                # 检查添加这组数据是否会超过总桶数限制
+                print(f"当前累计桶数: {total_accumulated}, 目标桶数: {total_barrels}")
+                if total_barrels not in (None, "") and isinstance(total_barrels, (int, float)):
+                    # 先检查加上这组是否会超过目标桶数
+                    if total_accumulated + accumulated_sum > total_barrels:
+                        break
+                
+                # 分配车牌号
+                total_accumulated += accumulated_sum
+
+                for temp_row in temp_group:
+                    temp_row = temp_row.copy()
+                    temp_row['rr_vehicle_license_plate'] = None
+                    temp_row['rr_vehicle'] = None
+                    temp_row['rr_amount_of_day'] = accumulated_sum
+                    temp_row['temp_vehicle_index'] = current_vehicle_index
+                    result_rows.append(temp_row)
+                    
+                current_vehicle_index += 1
             
             # 如果外层循环需要跳出，则不处理剩余数据
             if should_break:
@@ -473,7 +531,7 @@ class GetReceiveRecordService:
 
                 # 获取收油日期
                 single_restaurant = ReceiveRecord(info=restaurant,conf=self.conf)
-                ## 生成收油表必须的字段
+                ## 生成收油表必须的字段，分配每个餐厅的桶数
                 single_restaurant.generate()
                 ## 汇总每行
                 all_records.append(single_restaurant.to_dict())
@@ -1091,8 +1149,8 @@ class GetReceiveRecordService:
         """
         处理两个DataFrame并生成一个新的DataFrame。
         
-        :param df_generate_sum: 包含供应日期、产出重量、期末库存等信息的DataFrame
-        :param df_generate_check: 包含重量列的DataFrame
+        :param df_generate_sum:总表 包含供应日期、产出重量、期末库存等信息的DataFrame
+        :param df_generate_check: 收油表 包含重量列的DataFrame
         :param df_generate_balance_last_month: 上月的平衡表DataFrame，可以为空
         :param df_generate_balance_current_month: 当月的平衡表DataFrame
         :param coeff_number: 浮点型数据，用于后续计算
@@ -1150,10 +1208,15 @@ class GetReceiveRecordService:
         # 步骤5：求出剩余的原料remaining_materia= （month_quantity  -sum_quantity）/coeff_number,
         remaining_material = (month_quantity - sum_quantity) / coeff_number
         
-        # 依次对df_generate_sum中供应日期大于stop_date的行的每车吨量累加求和，直到累加和>remaining_materia停止，记录对应的行索引stop_index
+        # 依次对df_generate_sum中供应日期大于等于stop_date的行的每车吨量累加求和，直到累加和>remaining_materia停止，记录对应的行索引stop_index
         mask_after_stop_date = (df_generate_sum['total_supplied_date'] >= stop_date) #大于等于，因为stop_date上面是已经大于剩余量的日期
         cumulative_weight = 0
         stop_index = None
+        
+        # 先获取小于stop_date的最大索引
+        mask_before_stop_date = (df_generate_sum['total_supplied_date'] < stop_date)
+        last_index_before_stop = df_generate_sum[mask_before_stop_date].index.max() if not df_generate_sum[mask_before_stop_date].empty else None
+        
         for idx, row in df_generate_sum[mask_after_stop_date].iterrows():
             cumulative_weight += row['total_output_quantity']
             if cumulative_weight > remaining_material:
@@ -1164,17 +1227,23 @@ class GetReceiveRecordService:
         
         # 步骤6：填充df_generate_sum表中分配明细列，
         # 填充规则为1：供应日期的月份=current_date减1个月的合同分配明细列为空的分配明细列；
-        # 2：供应日期的月份=current_date对应月份行索引<=stop_index的分配明细列。
-        # 填充值为BWD-JC开头，加current_date年份的后2位数字，加current_date月份的第一天，
-        # 例如current_date='2024-05-06'，则填充值为BWD-JC240501
+        # 2：供应日期的月份=current_date对应月份的行：
+        #    - 所有小于stop_date的行
+        #    - 行索引<=stop_index的行
         fill_value = f"BWD-JC{str(current_date.year)[-2:]}{current_date.month:02d}01"
         
-        # 规则1
+        # 规则1：上个月的空值
         mask_last_month = df_generate_sum['total_supplied_date'].dt.to_period('M') == last_month.to_period('M')
         df_generate_sum.loc[mask_last_month & df_generate_sum['total_sale_number_detail'].isna(), 'total_sale_number_detail'] = fill_value
         
-        # 规则2
+        # 规则2：当月的行
         mask_current_month = df_generate_sum['total_supplied_date'].dt.to_period('M') == current_date.to_period('M')
+        # 填充所有小于stop_date的行
+        if last_index_before_stop is not None:
+            mask_before_stop = df_generate_sum.index <= last_index_before_stop
+            df_generate_sum.loc[mask_current_month & mask_before_stop & df_generate_sum['total_sale_number_detail'].isna(), 'total_sale_number_detail'] = fill_value
+        
+        # 填充大于等于stop_date且索引<=stop_index的行
         mask_until_stop_index = df_generate_sum.index <= stop_index
         df_generate_sum.loc[mask_current_month & mask_until_stop_index & df_generate_sum['total_sale_number_detail'].isna(), 'total_sale_number_detail'] = fill_value
 
