@@ -204,7 +204,7 @@ class TransportDialog(QDialog):
                 restaurant_df = parent.restaurant_viewer.get_data()
                 if restaurant_df is not None and not restaurant_df.empty:
                     # 获取所有区域并去重
-                    all_districts = sorted(restaurant_df['rest_district'].unique())
+                    all_districts = sorted(restaurant_df['rest_district'].astype(str).unique())
                     self.setup_district_combo(all_districts)
 
     def setup_district_combo(self, districts):
@@ -413,9 +413,40 @@ class SalesDaysDialog(QDialog):
         oss_radio_layout.addWidget(self.oss_no)
         layout.addLayout(oss_radio_layout)
         
+        # 添加初始库存输入框（初始隐藏）
+        inventory_layout = QHBoxLayout()
+        inventory_layout.setAlignment(Qt.AlignLeft)
+        self.inventory_label = QLabel("当月初始库存:")
+        self.inventory_label.setVisible(False)
+        self.inventory_label.setFixedWidth(120)
+        self.inventory_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        inventory_layout.addWidget(self.inventory_label)
+        
+        self.inventory_input = QLineEdit(self)
+        self.inventory_input.setPlaceholderText("请输入数值")
+        self.inventory_input.setFixedWidth(150)
+        self.inventory_input.setVisible(False)
+        self.inventory_input.textChanged.connect(self.validate_inventory)
+        inventory_layout.addWidget(self.inventory_input)
+        inventory_layout.addStretch()
+        layout.addLayout(inventory_layout)
+        
+        # 初始库存警告提示
+        self.inventory_warn_label = QLabel("")
+        self.inventory_warn_label.setStyleSheet("color: red;")
+        self.inventory_warn_label.setVisible(False)
+        inventory_warn_layout = QHBoxLayout()
+        inventory_warn_layout.setAlignment(Qt.AlignLeft)
+        inventory_warn_layout.addSpacing(120)
+        inventory_warn_layout.addWidget(self.inventory_warn_label, alignment=Qt.AlignLeft)
+        inventory_warn_layout.addStretch()
+        layout.addLayout(inventory_warn_layout)
+        
         # 连接单选按钮信号
         self.upload_yes.toggled.connect(self.toggle_file_button)
         self.upload_no.toggled.connect(self.toggle_oss_options)
+        self.oss_yes.toggled.connect(self.toggle_inventory_input)
+        self.oss_no.toggled.connect(self.toggle_inventory_input)
 
         # 连接日期下拉框信号（只做日下拉框更新）
         self.year_combo.currentIndexChanged.connect(self.update_day_combo)
@@ -580,9 +611,18 @@ class SalesDaysDialog(QDialog):
         day = self.day_combo.currentText()
         start_date = f"{year}-{month}-{day}"
         ignore_stock = self.ignore_stock_combo.currentText()
+        
+        # 获取初始库存（如果输入框可见）
+        print("inventory_input visible:", self.inventory_input.isVisible(), "text:", self.inventory_input.text())
+        text = self.inventory_input.text()
+        if text:
+            initial_inventory = float(text)
+        else:
+            initial_inventory = None
+        
         # 如果选择上传文件
         if self.upload_yes.isChecked():
-            return days_input, self.balance_total, start_date, ignore_stock
+            return days_input, self.balance_total, start_date, ignore_stock, initial_inventory
         # 如果选择从OSS读取
         if self.upload_no.isChecked() and self.oss_yes.isChecked():
             try:
@@ -594,7 +634,43 @@ class SalesDaysDialog(QDialog):
             except Exception as e:
                 QMessageBox.critical(self, "读取失败", f"从OSS读取总表失败: {str(e)}")
                 self.balance_total = None
-        return days_input, self.balance_total, start_date, ignore_stock
+        return days_input, self.balance_total, start_date, ignore_stock, initial_inventory
+
+    def toggle_inventory_input(self, checked):
+        """切换初始库存输入框的可见性"""
+        # 只有当两个选项都选择"否"时才显示
+        show_inventory = self.upload_no.isChecked() and self.oss_no.isChecked()
+        self.inventory_label.setVisible(show_inventory)
+        self.inventory_input.setVisible(show_inventory)
+        if not show_inventory:
+            self.inventory_warn_label.setVisible(False)
+            self.inventory_input.clear()
+
+    def validate_inventory(self):
+        """验证初始库存输入"""
+        if not self.inventory_input.isVisible():
+            return
+            
+        text = self.inventory_input.text()
+        if not text:
+            self.inventory_warn_label.setText("请输入初始库存")
+            self.inventory_warn_label.setVisible(True)
+            self.confirm_button.setEnabled(False)
+            return
+            
+        try:
+            value = float(text)
+            if value < 0:
+                self.inventory_warn_label.setText("初始库存不能为负数")
+                self.inventory_warn_label.setVisible(True)
+                self.confirm_button.setEnabled(False)
+            else:
+                self.inventory_warn_label.setVisible(False)
+                self.confirm_button.setEnabled(True)
+        except ValueError:
+            self.inventory_warn_label.setText("请输入有效的数值")
+            self.inventory_warn_label.setVisible(True)
+            self.confirm_button.setEnabled(False)
 
 class Tab3(QWidget):
     """收油表生成Tab，实现餐厅和车辆信息的加载与收油表生成"""
@@ -1176,7 +1252,7 @@ class Tab3(QWidget):
             days_to_trans = int(days_input)
             
             # 获取所有区域并去重
-            all_districts = sorted(restaurant_df['rest_district'].unique())
+            all_districts = sorted(restaurant_df['rest_district'].astype(str).unique())
             
             # 如果选择自定义顺序，验证输入的区域是否有效
             if not sort_by_letter and custom_order:
@@ -1455,7 +1531,7 @@ class Tab3(QWidget):
             # 弹出销售运输天数输入对话框
             dialog = SalesDaysDialog(self, min_balance_date=min_balance_date)
             if dialog.exec_() == QDialog.Accepted:
-                days_input, balance_total, start_date, ignore_stock = dialog.get_input_data()
+                days_input, balance_total, start_date, ignore_stock, initial_inventory = dialog.get_input_data()
                 # 验证天数输入
                 if not days_input.isdigit() or not (1 <= int(days_input)):
                     QMessageBox.warning(self, "输入错误", "销售运输天数必须大于1的数字。")
@@ -1498,6 +1574,26 @@ class Tab3(QWidget):
                         if columns_to_rename:
                             balance_total = balance_total.rename(columns=columns_to_rename)
 
+                        # 验证日期
+                        try:
+                            # 确保日期列是datetime类型，处理可能的多种日期格式
+                            balance_total['total_supplied_date'] = pd.to_datetime(balance_total['total_supplied_date'], format='mixed')
+                            start_dt = datetime.datetime.strptime(start_date, "%Y-%m-%d")
+                            
+                            # 检查是否有大于start_date的记录
+                            future_records = balance_total[balance_total['total_supplied_date'].dt.date > start_dt.date()]
+                            if not future_records.empty:
+                                future_dates = future_records['total_supplied_date'].dt.strftime('%Y-%m-%d').unique()
+                                error_msg = f"总表中存在大于开始日期({start_date})的记录:\n"
+                                error_msg += "\n".join(future_dates)
+                                QMessageBox.critical(self, "日期验证失败", error_msg)
+                                self.update_step_status(4, 'error')
+                                return
+                        except Exception as e:
+                            QMessageBox.critical(self, "日期验证失败", f"验证日期时出错: {str(e)}")
+                            self.update_step_status(4, 'error')
+                            return
+
                         ## 默认上传的餐厅为所选择的餐厅
                         balance_total['total_cp'] = self.current_cp['cp_id']
 
@@ -1525,8 +1621,29 @@ class Tab3(QWidget):
                 # 1. 先生成总表的基础结构
                 total_df = service.process_dataframe_with_new_columns(self.current_cp['cp_id'], balance_df, balance_total)
 
+                 # 获取上个月的期末库存
+                # 确保 start_date 和 total_supplied_date 类型一致
+                if isinstance(start_date, str):
+                    start_date_dt = pd.to_datetime(start_date)
+                else:
+                    start_date_dt = start_date
+                # 如果 total_supplied_date 是日期字符串，先转为 datetime
+                if total_df['total_supplied_date'].dtype == 'O':
+                    total_df['total_supplied_date'] = pd.to_datetime(total_df['total_supplied_date'])
+                previous_month_end = total_df[total_df['total_supplied_date'].dt.to_period('M') < start_date_dt.to_period('M')]
+                previous_end_stock = 0.0
+                if not previous_month_end.empty:
+                    previous_end_stock = previous_month_end.iloc[-1]['total_ending_inventory']
+                elif initial_inventory is not None:  # 如果提供了期初库存
+                    previous_end_stock = initial_inventory
+                # 将库存保存到配置文件
+                if not hasattr(CONF.runtime, 'total_ending_inventory'):
+                    CONF.runtime.total_ending_inventory = previous_end_stock
+                else:
+                    CONF.runtime.total_ending_inventory = previous_end_stock
+                
                 # 2. 生成收货确认书
-                check_df,cp_vehicle_df = service.generate_df_check(self.current_cp['cp_id'],int(days_input), balance_df, vehicle_df,start_date)
+                check_df,cp_vehicle_df = service.generate_df_check(self.current_cp['cp_id'],int(days_input), total_df, vehicle_df,start_date)
 
                 # 3. 更新总表的售出数量
                 total_df = service.process_check_to_sum(check_df, total_df)
@@ -1537,11 +1654,6 @@ class Tab3(QWidget):
                 year, month = current_date.split('-')
                 start_date = pd.to_datetime(f'{year}-{month}-01')
                 
-                # 获取上个月的期末库存
-                previous_month_end = total_df[total_df['total_supplied_date'] < start_date]
-                previous_end_stock = 0.0
-                if not previous_month_end.empty:
-                    previous_end_stock = previous_month_end.iloc[-1]['total_ending_inventory']
                 
                 # 只计算从指定月份开始的库存
                 for index, row in total_df.iterrows():
@@ -1549,6 +1661,9 @@ class Tab3(QWidget):
                         current_output = row['total_output_quantity'] if pd.notna(row['total_output_quantity']) else 0
                         current_sale = row['total_quantities_sold'] if pd.notna(row['total_quantities_sold']) else 0
                         current_inventory = round(current_output + previous_end_stock - current_sale, 2)
+                        print('当前产油重量：',current_output)
+                        print('当前库存：',previous_end_stock)
+                        print('当前销售：',current_sale)
                         if ignore_stock == '否' and current_inventory < 0:
                             QMessageBox.critical(self, "库存不足", "当前库存无法满足销售，请确认")
                             self.update_step_status(4, 'error')

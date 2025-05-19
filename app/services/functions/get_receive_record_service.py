@@ -276,7 +276,7 @@ class GetReceiveRecordService:
                     if accumulated_sum >= min_barrel_per_car:
                         # 检查添加这组数据是否会超过总桶数限制
                         print(f"当前累计桶数: {total_accumulated}, 目标桶数: {total_barrels}")
-                        if total_barrels not in (None, "") and isinstance(total_barrels, (int, float)):
+                        if isinstance(total_barrels, (int, float)) and not pd.isna(total_barrels):
                             # 先检查加上这组是否会超过目标桶数
                             if total_accumulated + accumulated_sum > total_barrels:
                                 should_break = True  # 设置跳出标志
@@ -316,7 +316,7 @@ class GetReceiveRecordService:
                     if min_barrel_per_car <= accumulated_sum <= max_barrel_per_car and accumulated_sum >= random_barrel_per_car:
                         # 检查添加这组数据是否会超过总桶数限制
                         print(f"当前累计桶数: {total_accumulated}, 目标桶数: {total_barrels}")
-                        if total_barrels not in (None, "") and isinstance(total_barrels, (int, float)):
+                        if isinstance(total_barrels, (int, float)) and not pd.isna(total_barrels):
                             # 先检查加上这组是否会超过目标桶数
                             if total_accumulated + accumulated_sum > total_barrels:
                                 should_break = True  # 设置跳出标志
@@ -344,7 +344,7 @@ class GetReceiveRecordService:
             if accumulated_sum >= min_barrel_per_car and not should_break:
                 # 检查添加这组数据是否会超过总桶数限制
                 print(f"当前累计桶数: {total_accumulated}, 目标桶数: {total_barrels}")
-                if total_barrels not in (None, "") and isinstance(total_barrels, (int, float)):
+                if isinstance(total_barrels, (int, float)) and not pd.isna(total_barrels):
                     # 先检查加上这组是否会超过目标桶数
                     if total_accumulated + accumulated_sum > total_barrels:
                         break
@@ -369,6 +369,7 @@ class GetReceiveRecordService:
         # 创建结果DataFrame前检查是否有数据
         if not result_rows:
             raise ValueError("没有符合分配条件的数据，请确保每个区域的收油量达到要求（35-44桶）")
+            
             
         # 创建结果DataFrame
         result_df = pd.DataFrame(result_rows)
@@ -802,7 +803,7 @@ class GetReceiveRecordService:
     总表：生成毛油库存 期末库存、辅助列、转化系数、产出重量、售出数量、加工量
     传入平衡表_5月表和平衡表总表
     售出数量需要修改，规则没确定
-    步骤1：复制日期、车牌号、榜单净重、榜单编号、收集城市;
+    步骤1：从平衡表复制日期、车牌号、榜单净重、榜单编号、收集城市到总表;
     步骤2：新增一列加工量，如果当前日期为相同日期的最后一行，则加工量等于每个日期的榜单净重和，否则等于0 ；
         新增一列毛油库存，公式为当前行的榜单净重+上一行的毛油库存-当前行的加工量；
         新增一列辅助列，值为当前日期如果等于下一行的日期，则为空值，否则为1；
@@ -877,13 +878,28 @@ class GetReceiveRecordService:
         # 计算产出重量
         new_df['total_output_quantity'] = round(new_df['total_processing_quantity'] * new_df['total_conversion_coefficient'] / 100, 2)
         
+        # 计算产出重量总和并保存到runtime配置
+        total_output_quantity = new_df['total_output_quantity'].sum()
+        if not hasattr(self.conf, 'runtime'):
+            self.conf.runtime = type('Runtime', (), {})()
+        self.conf.runtime.total_output_quantity = total_output_quantity
+        
         # 计算辅助列
         new_df['辅助列'] = new_df['total_supplied_date'].ne(new_df['total_supplied_date'].shift(-1)).astype(int)
         new_df['辅助列'] = new_df['辅助列'].replace({1: 1, 0: None})
 
         # 如果提供了总表，则合并数据
         if total_df is not None:
-            # 直接使用concat合并两个DataFrame
+            # 以new_df的列为标准
+            for col in new_df.columns:
+                if col not in total_df.columns:
+                    # 如果total_df中不存在该列，添加该列并填充空值
+                    total_df[col] = None
+            
+            # 确保两个DataFrame的列顺序一致
+            total_df = total_df[new_df.columns]
+            
+            # 使用concat合并，保持total_df的顺序
             result_df = pd.concat([total_df, new_df], ignore_index=True)
             return result_df
         
@@ -896,7 +912,7 @@ class GetReceiveRecordService:
         生成检查数据表
         
         :param days: 天数
-        :param df_balance: 当月平衡表DataFrame
+        :param df_balance: 平衡总表DataFrame
         :param df_car: 销售车牌表DataFrame
         :return: 生成的检查数据表DataFrame
         """
@@ -930,10 +946,10 @@ class GetReceiveRecordService:
         # 从runtime配置中获取收油重量
         change_rate = self.conf.get("BUSINESS.REST2CP.比率")
         weight_of_barrel = self.conf.get("BUSINESS.REST2CP.吨每桶") #设置的每桶重量
-        sum_balance_weight = df_balance['balance_amount_of_day'].sum()*weight_of_barrel*change_rate #平衡表的总收油成品重量
-        oil_weight = self.conf.runtime.oil_weight
+        # sum_balance_weight = df_balance['balance_amount_of_day'].sum()*weight_of_barrel*change_rate #平衡表的总收油成品重量
+        oil_weight = self.conf.runtime.total_output_quantity
         ## 如果选择的是部分餐厅生成，那么用部分餐厅时输入的收油成品数量，如果选择的是全部餐厅生成，那么用平衡表的总收油的成品重量
-        oil_weight = oil_weight if oil_weight not in (None, "") and isinstance(oil_weight, (int, float)) else sum_balance_weight
+        # oil_weight = oil_weight if oil_weight not in (None, "") and isinstance(oil_weight, (int, float)) else sum_balance_weight
         
         # 创建BuyerConfirmationModel对象列表
         check_records = []
@@ -985,63 +1001,73 @@ class GetReceiveRecordService:
             date_str = date.strftime('%Y-%m-%d')
             daily_cars[date_str] = daily_cars.get(date_str, 0) + 1
 
-        for i in range(rows_count):
-            current_date = dates[i]
-            current_date_str = current_date.strftime('%Y-%m-%d')
-            
-            # 获取当天可用的车辆
-            available_vehicles = cp_vehicle_group.filter_available(current_date_str)
-            available_vehicles = available_vehicles.filter_by_type(vehicle_type="to_sale")
-            
-            # 如果没有可用车辆，抛出异常
-            if available_vehicles.count() == 0:
-                needed = daily_cars[current_date_str]  # 使用当天实际需要的车辆数
-                raise ValueError(f"日期 {current_date_str} 没有可用车辆，该日期需要 {needed} 辆车进行收油作业")
-            
-            # 分配一辆可用车辆
-            allocated_vehicle = available_vehicles.allocate(date=current_date_str)
-            if allocated_vehicle is None:
-                needed = daily_cars[current_date_str]  # 使用当天实际需要的车辆数
-                available = available_vehicles.count()
-                raise ValueError(f"日期 {current_date_str} 车辆分配失败，需要 {needed} 辆车，但只有 {available} 辆可用车辆")
-            
-            # 更新车辆最后使用时间，注意是更新原始数据
-            vehicle_group.update_vehicle_info(
-                allocated_vehicle.info['vehicle_id'],
-                {'vehicle_last_use': current_date_str}
-            )
-            
-            # 获取车辆信息
-            weight = weights[i]
-            tare_weight = allocated_vehicle.info['vehicle_tare_weight'] + np.random.randint(1, 14) * 10
-            net_weight = int(weight * 1000)
-            gross_weight = tare_weight + net_weight
-            difference = get_difference_value()
-            unload_weight = weight + difference
-            
-            # 创建完整的记录字典
-            record_dict = {
-                'check_date': current_date,
-                'check_name': "工业级混合油",
-                'check_truck_plate_no': allocated_vehicle.info['vehicle_license_plate'],
-                'check_weight': weight,
-                'check_quantity': allocated_vehicle.info['vehicle_driver_name'],
-                'check_weighbridge_ticket_number': f"BD{current_date.strftime('%Y%m')}{str(i+1).zfill(3)}",
-                'check_gross_weight': gross_weight,
-                'check_tare_weight': tare_weight,
-                'check_net_weight': net_weight,
-                'check_unload_weight':  round(unload_weight,2),
-                'check_difference': round(difference,2),
-                'check_belong_cp': cp_id,
-                'check_description_of_material': None
-            }
-            
-            record = BuyerConfirmationModel(**record_dict)
-            check_records.append(record)
+        ## 如果weights和dates的长度不一致，则取最小的长度
+        min_len = min(len(weights), len(dates))
+        weights = weights[:min_len]
+        dates = dates[:min_len]
+        rows_count = min_len
+        for i, (current_date, weight) in enumerate(zip(dates, weights)):
+            try:
+                current_date = dates[i]
+                current_date_str = current_date.strftime('%Y-%m-%d')
+                
+                # 获取当天可用的车辆
+                available_vehicles = cp_vehicle_group.filter_available(current_date_str)
+                available_vehicles = available_vehicles.filter_by_type(vehicle_type="to_sale")
+                
+                # 如果没有可用车辆，抛出异常
+                if available_vehicles.count() == 0:
+                    needed = daily_cars[current_date_str]  # 使用当天实际需要的车辆数
+                    raise ValueError(f"日期 {current_date_str} 没有可用车辆，该日期需要 {needed} 辆车进行收油作业")
+                
+                # 分配一辆可用车辆
+                allocated_vehicle = available_vehicles.allocate(date=current_date_str)
+                if allocated_vehicle is None:
+                    needed = daily_cars[current_date_str]  # 使用当天实际需要的车辆数
+                    available = available_vehicles.count()
+                    raise ValueError(f"日期 {current_date_str} 车辆分配失败，需要 {needed} 辆车，但只有 {available} 辆可用车辆")
+                
+                # 更新车辆最后使用时间，注意是更新原始数据
+                vehicle_group.update_vehicle_info(
+                    allocated_vehicle.info['vehicle_id'],
+                    {'vehicle_last_use': current_date_str}
+                )
+                
+                # 获取车辆信息
+                weight = weights[i]
+                tare_weight = allocated_vehicle.info['vehicle_tare_weight'] + np.random.randint(1, 14) * 10
+                net_weight = int(weight * 1000)
+                gross_weight = tare_weight + net_weight
+                difference = get_difference_value()
+                unload_weight = weight + difference
+                
+                # 创建完整的记录字典
+                record_dict = {
+                    'check_date': current_date,
+                    'check_name': "工业级混合油",
+                    'check_truck_plate_no': allocated_vehicle.info['vehicle_license_plate'],
+                    'check_weight': weight,
+                    'check_quantity': allocated_vehicle.info['vehicle_driver_name'],
+                    'check_weighbridge_ticket_number': f"BD{current_date.strftime('%Y%m')}{str(i+1).zfill(3)}",
+                    'check_gross_weight': gross_weight,
+                    'check_tare_weight': tare_weight,
+                    'check_net_weight': net_weight,
+                    'check_unload_weight':  round(unload_weight,2),
+                    'check_difference': round(difference,2),
+                    'check_belong_cp': cp_id,
+                    'check_description_of_material': None
+                }
+                
+                record = BuyerConfirmationModel(**record_dict)
+                check_records.append(record)
+            except IndexError:
+                print(f"IndexError at i={i}, dates={len(dates)}, weights={len(weights)}, rows_count={rows_count}")
+                raise
         
         # 将模型对象列表转换为DataFrame
         df_check = pd.DataFrame([record.dict() for record in check_records])
         cp_vehicle_df = vehicle_group.to_dataframe()
+        print('generate_df_check运行结束')
         return df_check,cp_vehicle_df
     
     """
