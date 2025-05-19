@@ -19,6 +19,7 @@ import pandas as pd
 from PyQt5.QtCore import Qt
 import datetime
 import xlsxwriter
+import calendar
 
 # 获取全局日志对象
 LOGGER = get_logger()
@@ -34,20 +35,6 @@ class TransportDialog(QDialog):
         label_width = 150
         input_width = 200  # 建议再加宽
         
-        # 运输天数
-        days_layout = QHBoxLayout()
-        days_layout.setAlignment(Qt.AlignLeft)
-        days_label = QLabel("运输天数:")
-        days_label.setFixedWidth(label_width)
-        days_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        days_layout.addWidget(days_label)
-        self.days_input = QLineEdit(self)
-        self.days_input.setPlaceholderText("请输入收油天数（1-31）")
-        self.days_input.setFixedWidth(input_width)
-        days_layout.addWidget(self.days_input)
-        days_layout.addStretch()
-        layout.addLayout(days_layout)
-        
         # 年月
         month_layout = QHBoxLayout()
         month_layout.setAlignment(Qt.AlignLeft)
@@ -61,6 +48,20 @@ class TransportDialog(QDialog):
         month_layout.addWidget(self.month_year_combo)
         month_layout.addStretch()
         layout.addLayout(month_layout)
+        
+        # 运输天数
+        days_layout = QHBoxLayout()
+        days_layout.setAlignment(Qt.AlignLeft)
+        days_label = QLabel("运输天数:")
+        days_label.setFixedWidth(label_width)
+        days_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        days_layout.addWidget(days_label)
+        self.days_input = QLineEdit(self)
+        self.days_input.setPlaceholderText("请输入收油天数（1-31）")
+        self.days_input.setFixedWidth(input_width)
+        days_layout.addWidget(self.days_input)
+        days_layout.addStretch()
+        layout.addLayout(days_layout)
         
         # 是否全部收油
         collect_layout = QHBoxLayout()
@@ -179,9 +180,18 @@ class TransportDialog(QDialog):
         self.weight_input.textChanged.connect(self.validate_weight_input)
         self.collect_all_radio.toggled.connect(self.toggle_weight_input)
         self.collect_partial_radio.toggled.connect(self.toggle_weight_input)
+        self.month_year_combo.currentIndexChanged.connect(self.update_days_input)
         
         # 初始化区域选择列表
         self.selected_districts = []
+        
+        # 设置默认选择当前月份并更新天数
+        current_date = datetime.datetime.now()
+        default_month_year = f"{current_date.year}-{current_date.month:02d}"
+        index = self.month_year_combo.findText(default_month_year)
+        if index >= 0:
+            self.month_year_combo.setCurrentIndex(index)
+            self.update_days_input()  # 手动调用一次更新天数
 
     def on_sort_option_changed(self, index):
         """当排序选项改变时显示或隐藏自定义顺序输入框"""
@@ -260,6 +270,15 @@ class TransportDialog(QDialog):
         sort_by_letter = self.sort_combo.currentText() == "是"
         custom_order = ",".join(self.selected_districts) if not sort_by_letter and self.selected_districts else None
         return self.days_input.text(), self.month_year_combo.currentText(), self.bucket_ratio_input.text(), weight, sort_by_letter, custom_order
+
+    def update_days_input(self):
+        """根据选择的年月更新运输天数的默认值"""
+        selected_date = self.month_year_combo.currentText()
+        year, month = map(int, selected_date.split('-'))
+        # 获取该月的最后一天
+        last_day = calendar.monthrange(year, month)[1]
+        self.days_input.setPlaceholderText(f"请输入收油天数（1-{last_day}）")
+        self.days_input.setText(str(last_day))  # 设置默认值为该月的天数
 
 class SalesDaysDialog(QDialog):
     def __init__(self, parent=None, min_balance_date=None):
@@ -1281,6 +1300,7 @@ class Tab3(QWidget):
                 if columns_to_rename:
                     restaurant_data = restaurant_data.rename(columns=columns_to_rename)
                 
+                restaurant_data['rest_belonged_cp'] = self.current_cp['cp_id']
                 # 转换为Restaurant对象列表
                 self.restaurants = [Restaurant(info) for info in restaurant_data.to_dict('records')]
                 
@@ -1477,6 +1497,9 @@ class Tab3(QWidget):
                         # 如果有需要重命名的列，进行重命名
                         if columns_to_rename:
                             balance_total = balance_total.rename(columns=columns_to_rename)
+
+                        ## 默认上传的餐厅为所选择的餐厅
+                        balance_total['total_cp'] = self.current_cp['cp_id']
 
                         # 转换为RestaurantTotal对象列表
                         total_records = [BalanceTotal(info) for info in balance_total.to_dict('records')]

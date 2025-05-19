@@ -943,18 +943,12 @@ class GetReceiveRecordService:
         weights = []
         while True:
             weight = random_weight()
-            weights.append(weight)
-            total_weight = sum(weights)
-            ## TODO 原步骤为达到收油重量的前后5%则结束，否则重新生成，但是现在随机每辆车的数量会造成有些填的重量一直达不到
-            ## 如50吨，随机数为30-35，两辆车的话就是60-70，50前后5%为47.5-52.5，一直达不到
-            if total_weight >= oil_weight:
-                # lower_bound = oil_weight * 0.95
-                # upper_bound = oil_weight * 1.05
-                # if lower_bound <= total_weight <= upper_bound:
+            potential_total = total_weight + weight
+            # 如果加上这个重量会超过目标重量，就停止
+            if potential_total > oil_weight:
                 break
-                # else:
-                #     weights = []
-                #     total_weight = 0
+            weights.append(weight)
+            total_weight = potential_total
         rows_count = len(weights)
 
         # 步骤2：分配日期
