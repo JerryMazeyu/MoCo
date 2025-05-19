@@ -810,6 +810,7 @@ def main():
     return 0 if success else 1
 
 if __name__ == '__main__':
-    # 设置当前工作目录为项目根目录
-    os.chdir(project_root)
-    sys.exit(main())
+    # # 设置当前工作目录为项目根目录
+    # os.chdir(project_root)
+    # sys.exit(main())
+    main()

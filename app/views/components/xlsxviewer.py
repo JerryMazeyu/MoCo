@@ -45,7 +45,10 @@ class PandasModel(QAbstractTableModel):
     def __init__(self, data=None):
         super().__init__()
         self._data = pd.DataFrame() if data is None else data
-        self._original_data = None  # 初始化为None，等待外部设置
+        if data is not None:
+            self._original_data = self._data.copy()  # Initialize _original_data for diffing
+        else:
+            self._original_data = pd.DataFrame()
         self.modified = False
         
         # 数据缓存，用于提高大数据集显示性能
@@ -133,27 +136,35 @@ class PandasModel(QAbstractTableModel):
         row, col = index.row(), index.column()
         
         try:
-            # 获取当前列的中文名
-            display_col = self._data.columns[col]
-            # 获取对应的英文字段名
-            original_col = self._reverse_mapping.get(display_col, display_col)
+            # self._data now has original (e.g., English) column names
+            original_col_name = self._data.columns[col]
             
             # 尝试转换为原数据类型
-            if self._original_data is not None:
-                current_type = type(self._original_data.iloc[row, original_col])
-                if current_type == int:
-                    value = int(value)
+            if self._original_data is not None and original_col_name in self._original_data.columns:
+                # Find the actual column index in _original_data 
+                # (should be same as col if columns haven't been reordered, but safer to look up by name)
+                original_data_col_idx = self._original_data.columns.get_loc(original_col_name)
+                original_value_for_type = self._original_data.iloc[row, original_data_col_idx]
+                current_type = type(original_value_for_type)
+
+                if pd.isna(original_value_for_type) and isinstance(value, str) and value.strip() == "":
+                    value = pd.NA 
+                elif current_type == int:
+                    try:
+                        value = int(value)
+                    except ValueError:
+                        pass # Keep as string if conversion fails, or handle error
                 elif current_type == float:
-                    value = float(value)
-                elif pd.isna(self._original_data.iloc[row, original_col]) and value.strip() == "":
-                    value = pd.NA
+                    try:
+                        value = float(value)
+                    except ValueError:
+                        pass # Keep as string if conversion fails
             
-            # 更新显示数据
+            # 更新显示数据 (_data has original column names)
             self._data.iloc[row, col] = value
             
-            # 更新原始数据
-            if self._original_data is not None and original_col in self._original_data.columns:
-                self._original_data.iloc[row, original_col] = value
+            # _original_data is the baseline for comparison and should not be updated here.
+            # It's updated by resetModified().
             
             # 标记为已修改
             self.modified = True
@@ -175,7 +186,12 @@ class PandasModel(QAbstractTableModel):
             return QVariant()
         
         if orientation == Qt.Horizontal:
-            return str(self._data.columns[section])
+            if section < 0 or section >= len(self._data.columns):
+                return QVariant()
+            original_col_name = str(self._data.columns[section])
+            if hasattr(self, '_column_mapping') and self._column_mapping and original_col_name in self._column_mapping:
+                return str(self._column_mapping[original_col_name])
+            return original_col_name # Fallback to original name
         else:
             return str(section + 1)  # 行号从1开始
     
@@ -516,20 +532,20 @@ class XlsxViewerWidget(QWidget):
                 else:
                     display_data = data.copy()
                 
+                # Jerry: 这里修改为英文的，如果访问self.xlsx_viewer.model._data，直接访问到的是原始列名
                 # 重命名列名为中文
-                display_data = display_data.rename(columns=self.column_mapping)
+                # display_data = display_data.rename(columns=self.column_mapping) 
                 
-                # 设置数据模型
-                self.model = PandasModel(display_data)  # 创建新的模型实例
-                self.model.set_column_mapping(self.column_mapping)  # 设置列映射
-                self.model._original_data = self._original_data  # 设置原始数据
+                # 设置数据模型 - pass data with original column names
+                self.model = PandasModel(display_data)  # display_data now has original names
+                self.model.set_column_mapping(self.column_mapping)  # Pass mapping for header display
+                # PandasModel's __init__ now handles its _original_data and modified status
                 
                 # 设置合并单元格信息
                 if merge_key and merge_columns:
-                    # 将英文字段名转换为中文显示名
-                    display_merge_key = self.column_mapping.get(merge_key, merge_key)
-                    display_merge_columns = [self.column_mapping.get(col, col) for col in merge_columns]
-                    self.model.set_merge_info(display_merge_key, display_merge_columns)
+                    # merge_key and merge_columns are original field names
+                    # The model's _update_merge_info will use these original names directly from its _data
+                    self.model.set_merge_info(merge_key, merge_columns)
                 
                 # 设置表格视图
                 self.table_view.setModel(self.model)  # 设置模型到视图
