@@ -1963,7 +1963,7 @@ class Tab2(QWidget):
                 
                 # 使用当前表格中的数据并保存到临时文件
                 try:
-                    restaurant_data = self.xlsx_viewer.model._data.copy()
+                    restaurant_data = self.xlsx_viewer.model._original_data.copy()
                     LOGGER.info(f"从当前表格中获取 {len(restaurant_data)} 条餐厅记录")
                     
                     # 保存到临时文件
