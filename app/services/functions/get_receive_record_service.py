@@ -1008,7 +1008,6 @@ class GetReceiveRecordService:
         rows_count = min_len
         for i, (current_date, weight) in enumerate(zip(dates, weights)):
             try:
-                current_date = dates[i]
                 current_date_str = current_date.strftime('%Y-%m-%d')
                 
                 # 获取当天可用的车辆
@@ -1034,7 +1033,6 @@ class GetReceiveRecordService:
                 )
                 
                 # 获取车辆信息
-                weight = weights[i]
                 tare_weight = allocated_vehicle.info['vehicle_tare_weight'] + np.random.randint(1, 14) * 10
                 net_weight = int(weight * 1000)
                 gross_weight = tare_weight + net_weight
@@ -1100,7 +1098,7 @@ class GetReceiveRecordService:
             if mask.sum() > 0:  # 确保有数据
                 last_index = df_merged[mask].index[-1]  # 获取相同日期中的最后一行索引
                 value = df_merged.loc[last_index, '汇总重量'] if pd.notna(df_merged.loc[last_index, '汇总重量']) else 0
-                df_merged.at[last_index, 'total_quantities_sold'] = float(value)
+                df_merged.at[last_index, 'total_quantities_sold'] = round(float(value),2)
         
         # 删除不必要的列
         df_final = df_merged.drop(columns=['check_date', '汇总重量'])
