@@ -1,4 +1,9 @@
 @echo off
+REM ======== 配置部分 ========
+REM 设置虚拟环境名称（按需修改）
+set ENV_NAME=py310
+
+REM ======== 脚本开始 ========
 REM 设置中文编码
 chcp 65001 > nul
 REM 设置窗口标题
@@ -39,26 +44,34 @@ if "%FOUND_FILE%"=="false" (
     exit /b 1
 )
 
+REM 检查Python是否安装
+where python >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo 错误: 找不到Python! 请确保Python已安装并添加到PATH中。
+    pause
+    exit /b 1
+)
+
 REM 激活Conda环境
-@REM echo 正在尝试激活conda环境...
-@REM call conda activate moco
-@REM if %ERRORLEVEL% NEQ 0 (
-@REM     echo conda activate moco 命令失败，尝试其他方式...
+echo 正在尝试激活conda环境 %ENV_NAME% ...
+call conda activate %ENV_NAME% 2>nul
+if %ERRORLEVEL% NEQ 0 (
+    echo conda activate %ENV_NAME% 命令失败，尝试其他方式...
     
-@REM     REM 尝试其他可能的conda激活路径
-@REM     if exist C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat (
-@REM         echo 尝试路径: C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat
-@REM         call C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat moco
-@REM     ) else if exist C:\ProgramData\Anaconda3\Scripts\activate.bat (
-@REM         echo 尝试路径: C:\ProgramData\Anaconda3\Scripts\activate.bat
-@REM         call C:\ProgramData\Anaconda3\Scripts\activate.bat moco
-@REM     ) else if exist C:\Users\%USERNAME%\miniconda3\Scripts\activate.bat (
-@REM         echo 尝试路径: C:\Users\%USERNAME%\miniconda3\Scripts\activate.bat
-@REM         call C:\Users\%USERNAME%\miniconda3\Scripts\activate.bat moco
-@REM     ) else (
-@REM         echo 警告: 无法找到conda环境，将使用系统Python
-@REM     )
-@REM )
+    REM 尝试其他可能的conda激活路径
+    if exist C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat (
+        echo 尝试路径: C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat
+        call C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat %ENV_NAME%
+    ) else if exist C:\ProgramData\Anaconda3\Scripts\activate.bat (
+        echo 尝试路径: C:\ProgramData\Anaconda3\Scripts\activate.bat
+        call C:\ProgramData\Anaconda3\Scripts\activate.bat %ENV_NAME%
+    ) else if exist C:\Users\%USERNAME%\miniconda3\Scripts\activate.bat (
+        echo 尝试路径: C:\Users\%USERNAME%\miniconda3\Scripts\activate.bat
+        call C:\Users\%USERNAME%\miniconda3\Scripts\activate.bat %ENV_NAME%
+    ) else (
+        echo 警告: 无法找到conda环境，将使用系统Python
+    )
+)
 
 echo 环境准备完成，开始运行应用程序...
 
@@ -67,6 +80,10 @@ echo 正在启动应用: python %APP_PATH%
 python "%APP_PATH%"
 if %ERRORLEVEL% NEQ 0 (
     echo 应用程序执行失败，错误代码: %ERRORLEVEL%
+    echo 可能的原因:
+    echo 1. Python无法找到所需模块
+    echo 2. 应用程序代码存在错误
+    echo 3. 环境配置不正确
 )
 
 echo 程序执行完毕
