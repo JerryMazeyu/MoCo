@@ -130,7 +130,7 @@ class ReceiveRecord(BaseInstance):
             
             return True
         except Exception as e:
-            LOGGER.error(f"设置收油记录默认值失败: {e}")
+            LOGGER.error(f"设置收油记录默认值失败: {e},餐厅类型: {self.inst.rest_type}")
             return False
     
     def generate(self) -> bool:

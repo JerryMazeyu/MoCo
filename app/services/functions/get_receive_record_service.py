@@ -907,13 +907,15 @@ class GetReceiveRecordService:
     """
     收货确认书:传入收油表、销售车牌信息、收油重量、收货确认天数
     """
-    def generate_df_check(self,cp_id: str, days: int, df_balance: pd.DataFrame, df_car: pd.DataFrame,start_date:str) -> pd.DataFrame:
+    def generate_df_check(self,cp_id: str, days: int, df_balance: pd.DataFrame, df_car: pd.DataFrame,start_date:str,error_range:tuple) -> pd.DataFrame:
         """
         生成检查数据表
         
         :param days: 天数
         :param df_balance: 平衡总表DataFrame
         :param df_car: 销售车牌表DataFrame
+        :param start_date: 开始日期
+        :param error_range: 误差区间元组 (min, max)，单位为万分之
         :return: 生成的检查数据表DataFrame
         """
         def random_weight():
@@ -924,16 +926,15 @@ class GetReceiveRecordService:
             return np.random.randint(3050, 3496) / 100
         
         def get_difference_value():
-            """查表获取差值"""
-            lookup_keys = [0,3,6,10,15,30,60,90,150,200,300,350,480,550,700,800,850,900,940,970,990,995,1001]
-            lookup_values = [-15,-14,-13,-12,-11,-7,-6,-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,11,12]
-            random_num = np.random.randint(1, 1001)
-            
-            # 找到对应区间
-            for i, key in enumerate(lookup_keys):
-                if random_num <= key:
-                    return lookup_values[i] / 100
-            return 0
+            """根据误差区间生成随机差值"""
+            if error_range is None:
+                return 0
+            min_error, max_error = error_range
+            # 将万分之转换为小数
+            min_error = min_error / 10000
+            max_error = max_error / 10000
+            # 生成随机差值
+            return round(np.random.uniform(min_error, max_error), 6)
         
         # 将DataFrame的每一行转换为字典，然后创建Vehicle对象
         vehicles = [Vehicle(row.to_dict(), model=VehicleModel) for _, row in df_car.iterrows()]
@@ -1037,7 +1038,7 @@ class GetReceiveRecordService:
                 net_weight = int(weight * 1000)
                 gross_weight = tare_weight + net_weight
                 difference = get_difference_value()
-                unload_weight = weight + difference
+                unload_weight = weight - weight*difference
                 
                 # 创建完整的记录字典
                 record_dict = {
@@ -1050,8 +1051,8 @@ class GetReceiveRecordService:
                     'check_gross_weight': gross_weight,
                     'check_tare_weight': tare_weight,
                     'check_net_weight': net_weight,
-                    'check_unload_weight':  round(unload_weight,2),
-                    'check_difference': round(difference,2),
+                    'check_unload_weight':  round(unload_weight,6),
+                    'check_difference': round(difference,6),
                     'check_belong_cp': cp_id,
                     'check_description_of_material': None
                 }

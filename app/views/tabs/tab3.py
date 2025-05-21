@@ -287,6 +287,9 @@ class SalesDaysDialog(QDialog):
         self.balance_total = None
         self.min_balance_date = min_balance_date
         
+        # 设置对话框最小宽度
+        self.setMinimumWidth(500)
+        
         # 布局
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignLeft)  # 主布局左对齐
@@ -353,6 +356,47 @@ class SalesDaysDialog(QDialog):
         days_warn_layout.addWidget(self.days_warn_label, alignment=Qt.AlignLeft)
         days_warn_layout.addStretch()
         layout.addLayout(days_warn_layout)
+
+        # 误差区间输入框
+        error_range_layout = QHBoxLayout()
+        error_range_layout.setAlignment(Qt.AlignLeft)
+        error_range_label = QLabel("输入误差区间:")
+        error_range_label.setFixedWidth(120)
+        error_range_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        error_range_layout.addWidget(error_range_label)
+        
+        self.error_range_min = QLineEdit(self)
+        self.error_range_min.setPlaceholderText("最小值")
+        self.error_range_min.setFixedWidth(70)
+        self.error_range_min.setText("5")  # Set default value to 5
+        self.error_range_min.textChanged.connect(self.validate_error_range)
+        
+        error_range_layout.addWidget(self.error_range_min)
+        
+        error_range_layout.addWidget(QLabel("-"))
+        
+        self.error_range_max = QLineEdit(self)
+        self.error_range_max.setPlaceholderText("最大值")
+        self.error_range_max.setFixedWidth(70)
+        self.error_range_max.setText("10")  # Set default value to 10
+        self.error_range_max.textChanged.connect(self.validate_error_range)
+        
+        error_range_layout.addWidget(self.error_range_max)
+        # 在最大值输入框后面加单位
+        error_range_layout.addWidget(QLabel("（万分之）"))
+        error_range_layout.addStretch()
+        layout.addLayout(error_range_layout)
+
+        # 误差区间警告提示
+        self.error_range_warn_label = QLabel("")
+        self.error_range_warn_label.setStyleSheet("color: red;")
+        self.error_range_warn_label.setVisible(False)
+        error_range_warn_layout = QHBoxLayout()
+        error_range_warn_layout.setAlignment(Qt.AlignLeft)
+        error_range_warn_layout.addSpacing(120)  # 与上面label对齐
+        error_range_warn_layout.addWidget(self.error_range_warn_label, alignment=Qt.AlignLeft)
+        error_range_warn_layout.addStretch()
+        layout.addLayout(error_range_warn_layout)
 
         # 是否忽略库存
         ignore_layout = QHBoxLayout()
@@ -525,6 +569,42 @@ class SalesDaysDialog(QDialog):
             self.days_warn_label.setVisible(True)
             self.confirm_button.setEnabled(False)
 
+    def validate_error_range(self):
+        """验证误差区间输入"""
+        min_text = self.error_range_min.text()
+        max_text = self.error_range_max.text()
+        
+        # 如果两个输入框都为空，不显示警告
+        if not min_text and not max_text:
+            self.error_range_warn_label.setVisible(False)
+            self.confirm_button.setEnabled(True)
+            return
+            
+        try:
+            # 如果只有一个输入框有值，显示警告
+            if (min_text and not max_text) or (not min_text and max_text):
+                self.error_range_warn_label.setText("请输入完整的误差区间")
+                self.error_range_warn_label.setVisible(True)
+                self.confirm_button.setEnabled(False)
+                return
+                
+            # 如果两个输入框都有值，验证数值
+            min_value = float(min_text)
+            max_value = float(max_text)
+            
+            if min_value >= max_value:
+                self.error_range_warn_label.setText("最小值必须小于最大值")
+                self.error_range_warn_label.setVisible(True)
+                self.confirm_button.setEnabled(False)
+            else:
+                self.error_range_warn_label.setVisible(False)
+                self.confirm_button.setEnabled(True)
+                
+        except ValueError:
+            self.error_range_warn_label.setText("请输入有效的数值")
+            self.error_range_warn_label.setVisible(True)
+            self.confirm_button.setEnabled(False)
+
     def on_confirm_clicked(self):
         """点击确认时校验日期和天数"""
         year = self.year_combo.currentText()
@@ -542,6 +622,22 @@ class SalesDaysDialog(QDialog):
             self.days_warn_label.setText("请输入有效的销售运输天数")
             self.days_warn_label.setVisible(True)
             return
+
+        # 验证误差区间
+        min_text = self.error_range_min.text()
+        max_text = self.error_range_max.text()
+        if min_text and max_text:
+            try:
+                min_value = float(min_text)
+                max_value = float(max_text)
+                if min_value >= max_value:
+                    self.error_range_warn_label.setText("最小值必须小于最大值")
+                    self.error_range_warn_label.setVisible(True)
+                    return
+            except ValueError:
+                self.error_range_warn_label.setText("请输入有效的数值")
+                self.error_range_warn_label.setVisible(True)
+                return
 
         if self.min_balance_date:
             year = int(year)
@@ -612,6 +708,13 @@ class SalesDaysDialog(QDialog):
         start_date = f"{year}-{month}-{day}"
         ignore_stock = self.ignore_stock_combo.currentText()
         
+        # 获取误差区间
+        error_range_min = self.error_range_min.text()
+        error_range_max = self.error_range_max.text()
+        error_range = None
+        if error_range_min and error_range_max:
+            error_range = (float(error_range_min), float(error_range_max))
+        
         # 获取初始库存（如果输入框可见）
         print("inventory_input visible:", self.inventory_input.isVisible(), "text:", self.inventory_input.text())
         text = self.inventory_input.text()
@@ -622,7 +725,7 @@ class SalesDaysDialog(QDialog):
         
         # 如果选择上传文件
         if self.upload_yes.isChecked():
-            return days_input, self.balance_total, start_date, ignore_stock, initial_inventory
+            return days_input, self.balance_total, start_date, ignore_stock, initial_inventory, error_range
         # 如果选择从OSS读取
         if self.upload_no.isChecked() and self.oss_yes.isChecked():
             try:
@@ -634,7 +737,7 @@ class SalesDaysDialog(QDialog):
             except Exception as e:
                 QMessageBox.critical(self, "读取失败", f"从OSS读取总表失败: {str(e)}")
                 self.balance_total = None
-        return days_input, self.balance_total, start_date, ignore_stock, initial_inventory
+        return days_input, self.balance_total, start_date, ignore_stock, initial_inventory, error_range
 
     def toggle_inventory_input(self, checked):
         """切换初始库存输入框的可见性"""
@@ -1531,7 +1634,7 @@ class Tab3(QWidget):
             # 弹出销售运输天数输入对话框
             dialog = SalesDaysDialog(self, min_balance_date=min_balance_date)
             if dialog.exec_() == QDialog.Accepted:
-                days_input, balance_total, start_date, ignore_stock, initial_inventory = dialog.get_input_data()
+                days_input, balance_total, start_date, ignore_stock, initial_inventory, error_range = dialog.get_input_data()
                 # 验证天数输入
                 if not days_input.isdigit() or not (1 <= int(days_input)):
                     QMessageBox.warning(self, "输入错误", "销售运输天数必须大于1的数字。")
@@ -1643,7 +1746,7 @@ class Tab3(QWidget):
                     CONF.runtime.total_ending_inventory = previous_end_stock
                 
                 # 2. 生成收货确认书
-                check_df,cp_vehicle_df = service.generate_df_check(self.current_cp['cp_id'],int(days_input), total_df, vehicle_df,start_date)
+                check_df,cp_vehicle_df = service.generate_df_check(self.current_cp['cp_id'],int(days_input), total_df, vehicle_df,start_date,error_range)
 
                 # 3. 更新总表的售出数量
                 total_df = service.process_check_to_sum(check_df, total_df)
