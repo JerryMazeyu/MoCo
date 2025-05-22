@@ -27,6 +27,11 @@ except ImportError:
 # 设置日志
 LOGGER = setup_logger("moco.log")
 
+# 相似度和距离阈值
+NAME_SIMILARITY_THRESHOLD = 0.6  # 名称相似度阈值
+ADDRESS_SIMILARITY_THRESHOLD = 0.6  # 地址相似度阈值
+DISTANCE_THRESHOLD = 1000  # 距离阈值（米）
+
 class GetRestaurantService:
     """
     餐厅信息获取服务，用于从各种API中获取餐厅信息
@@ -298,26 +303,105 @@ class GetRestaurantService:
         for word in blocked_words:
             self.blocked_list.append(word)
         
+    def _calculate_text_similarity(self, text1, text2):
+        """
+        计算两段文本的相似度（使用Levenshtein距离）
+        返回值范围: 0-1，1表示完全相同
+        """
+        if not text1 or not text2:
+            return 0
+        
+        from Levenshtein import ratio
+        return ratio(text1, text2)
+
+    def _calculate_distance(self, lat1, lon1, lat2, lon2):
+        """
+        使用Haversine公式计算两个经纬度点之间的距离（米）
+        """
+        import math
+        
+        # 如果经纬度不存在，返回一个很大的距离
+        if None in (lat1, lon1, lat2, lon2):
+            return float('inf')
+        
+        # 将经纬度转换为弧度
+        lat1, lon1, lat2, lon2 = map(math.radians, [float(lat1), float(lon1), float(lat2), float(lon2)])
+        
+        # Haversine公式
+        dlon = lon2 - lon1
+        dlat = lat2 - lat1
+        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        r = 6371000  # 地球半径（米）
+        return c * r
+
     def _dedup(self, restaurant_list=None) -> None:
         """
         对获取到的餐厅信息进行去重
+        优化标准:
+        1. 门店名相似度>=60%
+        2. 地址相似度>=60%
+        3. 位置距离<=1000米
         """
         if restaurant_list is None:
             restaurant_list = self.info
-        # 创建一个唯一标识符集合
-        unique_identifiers = set()
+        LOGGER.info(f"开始基于相似度和距离去重...")
         deduped_info = []
+        duplicate_count = 0
         
-        for item in restaurant_list:
-            # 创建唯一标识符（使用餐厅名称和地址组合）
-            name = item.get('rest_chinese_name', '')
-            address = item.get('rest_chinese_address', '')
-            identifier = f"{name}|{address}"
+        # 首先对列表进行排序，保留评分更高或更新的餐厅信息
+        # 可以根据实际需求调整排序标准
+        sorted_list = sorted(restaurant_list, 
+                             key=lambda x: (x.get('rest_chinese_name', ''), x.get('updated_time', '')), 
+                             reverse=True)
+        
+        for i, item1 in enumerate(sorted_list):
+            # 假设当前项不是重复项
+            is_duplicate = False
+            name1 = item1.get('rest_chinese_name', '')
+            address1 = item1.get('rest_chinese_address', '')
+            location1 = item1.get('rest_location', '')
             
-            # 如果标识符不在集合中，添加到去重结果
-            if identifier not in unique_identifiers:
-                unique_identifiers.add(identifier)
-                deduped_info.append(item)
+            # 解析经纬度
+            lat1, lon1 = None, None
+            if location1 and isinstance(location1, str) and ',' in location1:
+                try:
+                    lat_str, lon_str = location1.split(',', 1)
+                    lat1, lon1 = float(lat_str.strip()), float(lon_str.strip())
+                except (ValueError, TypeError):
+                    pass
+            
+            # 与已保留的项比较
+            for item2 in deduped_info:
+                name2 = item2.get('rest_chinese_name', '')
+                address2 = item2.get('rest_chinese_address', '')
+                location2 = item2.get('rest_location', '')
+                
+                # 解析经纬度
+                lat2, lon2 = None, None
+                if location2 and isinstance(location2, str) and ',' in location2:
+                    try:
+                        lat_str, lon_str = location2.split(',', 1)
+                        lat2, lon2 = float(lat_str.strip()), float(lon_str.strip())
+                    except (ValueError, TypeError):
+                        pass
+                
+                # 计算相似度和距离
+                name_similarity = self._calculate_text_similarity(name1, name2)
+                address_similarity = self._calculate_text_similarity(address1, address2)
+                distance = self._calculate_distance(lat1, lon1, lat2, lon2)
+                
+                # 判断是否为重复项
+                if (name_similarity >= NAME_SIMILARITY_THRESHOLD and 
+                    address_similarity >= ADDRESS_SIMILARITY_THRESHOLD and 
+                    distance <= DISTANCE_THRESHOLD):
+                    is_duplicate = True
+                    duplicate_count += 1
+                    break
+            
+            # 如果不是重复项，加入去重后的列表
+            if not is_duplicate:
+                deduped_info.append(item1)
         
         # 更新信息列表
         count_before = len(self.info)
@@ -325,6 +409,7 @@ class GetRestaurantService:
         count_after = len(self.info)
         
         LOGGER.info(f"去重前餐厅信息: {count_before}条，去重后: {count_after}条，去除了 {count_before - count_after} 条重复信息")
+        LOGGER.info(f"其中基于相似度和距离去重: {duplicate_count}条")
 
     def _haversine(self,coord1, coord2):
         """计算两个经纬度之间的距离（单位：公里）"""

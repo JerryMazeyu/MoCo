@@ -1754,6 +1754,7 @@ class Tab2(QWidget):
                 warning_msg = f"数据量过大，仅显示前 {max_display_rows} 条记录（共 {row_count} 条）"
             else:
                 restaurant_data_display = restaurant_data
+                warning_msg = ""
             
             # 确保在主线程中更新UI
             QApplication.processEvents()
