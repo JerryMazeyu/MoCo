@@ -2,7 +2,7 @@ Markdown==3.8
 mingzi==1.2.3
 numpy==2.2.5
 openai==1.76.0
-# oss2==2.19.1
+oss2==2.19.1
 pandas==2.2.3
 psutil==7.0.0
 pydantic==2.11.3

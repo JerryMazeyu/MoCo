@@ -2491,15 +2491,12 @@ class Tab2(QWidget):
             LOGGER.error(f"处理补全错误事件时出错: {str(e)}")
     
     def verify_restaurant_status(self):
-        """验证餐厅营业状态 (模拟功能)"""
+        """验证餐厅营业状态"""
         try:
             # 检查是否有数据
-            if not hasattr(self.xlsx_viewer, 'data') or self.xlsx_viewer.data is None or len(self.xlsx_viewer.data) == 0:
+            if not hasattr(self.xlsx_viewer.model, '_original_data') or self.xlsx_viewer.model._original_data is None or len(self.xlsx_viewer.model._original_data) == 0:
                 QMessageBox.warning(self, "无数据", "请先获取或导入餐厅数据")
                 return
-            
-            # 模拟验证过程
-            QApplication.setOverrideCursor(Qt.WaitCursor)
             
             # 显示进度信息
             if not hasattr(self, 'progress_label'):
@@ -2513,31 +2510,190 @@ class Tab2(QWidget):
             # 更新UI
             QApplication.processEvents()
             
-            # 模拟处理时间
-            time.sleep(random.uniform(1.0, 2.5))
+            # 禁用验证按钮，防止重复点击
+            self.verify_status_button.setEnabled(False)
             
-            # 恢复光标并隐藏进度标签
+            # 百度地图API密钥
+            baidu_ak = "IL2u8jUMS7mTa57VDISCAxXeYbDpihKs"
+            
+            # 准备数据统计
+            import requests
+            import json
+            import time
+            rows_count = len(self.xlsx_viewer.model._original_data)
+            verified_count = 0
+            open_count = 0
+            closed_count = 0
+            not_found_count = 0
+            
+            # 获取数据
+            restaurant_data = self.xlsx_viewer.model._original_data.copy()
+            
+            # 添加状态列
+            if 'operating_status' not in restaurant_data.columns:
+                restaurant_data['operating_status'] = None
+            
+            # 进度更新间隔
+            update_interval = max(1, min(10, rows_count // 10))  # 每处理10%的数据更新一次，但最少1个，最多10个
+            
+            # 设置超时和重试次数
+            timeout = 5  # 请求超时时间(秒)
+            max_retries = 2  # 最大重试次数
+            
+            # 批处理以避免API限制
+            batch_size = 20  # 每批处理20条
+            wait_time = 1  # 每批之间等待1秒
+            
+            # 创建会话对象
+            session = requests.Session()
+            
+            # 开始验证
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            
+            for i in range(0, rows_count, batch_size):
+                # 处理当前批次
+                end_idx = min(i + batch_size, rows_count)
+                
+                for j in range(i, end_idx):
+                    try:
+                        # 获取餐厅信息
+                        restaurant = restaurant_data.iloc[j]
+                        rest_name = restaurant.get('rest_chinese_name', '')
+                        rest_city = restaurant.get('rest_city', '')
+                        
+                        if not rest_name or not rest_city:
+                            # 跳过无效数据
+                            LOGGER.warning(f"跳过第{j+1}行：餐厅名称或城市为空")
+                            continue
+                        
+                        # 更新进度
+                        if j % update_interval == 0 or j == rows_count - 1:
+                            self.progress_label.setText(f"正在验证：{j+1}/{rows_count} - {rest_name}")
+                            QApplication.processEvents()
+                        
+                        # 构建API请求URL
+                        url = f"https://api.map.baidu.com/place/v2/search?query={rest_name}&tag=美食&region={rest_city}&output=json&ak={baidu_ak}"
+                        
+                        # 发送请求并重试
+                        response = None
+                        for attempt in range(max_retries + 1):
+                            try:
+                                response = session.get(url, timeout=timeout)
+                                if response.status_code == 200:
+                                    break
+                            except requests.RequestException as e:
+                                if attempt < max_retries:
+                                    time.sleep(1)  # 重试前等待1秒
+                                else:
+                                    LOGGER.error(f"API请求失败: {e}")
+                                    continue
+                        
+                        if not response or response.status_code != 200:
+                            LOGGER.error(f"验证 {rest_name} 失败: 无法连接到API")
+                            continue
+                        
+                        # 解析响应
+                        result = response.json()
+                        
+                        if result.get('status') != 0:
+                            LOGGER.warning(f"API返回错误: {result.get('message', '未知错误')}")
+                            continue
+                        
+                        results = result.get('results', [])
+                        verified_count += 1
+                        
+                        if not results:
+                            # 没有找到结果
+                            LOGGER.info(f"未找到餐厅 {rest_name} 的信息")
+                            not_found_count += 1
+                            restaurant_data.at[restaurant_data.index[j], 'operating_status'] = "非营业状态"
+                            continue
+
+                        if len(results) > 0:
+                            results = results[0]
+                        
+                        # 检查营业状态
+                        is_open = True
+                        flag = results.get('status', '')
+                        if flag == '':
+                            is_open = True
+                        else:
+                            LOGGER.info(f"找到餐厅 {rest_name} 的信息: {flag} => 非营业状态")
+                            is_open = False
+                        
+                        
+                        # 更新计数和数据
+                        if is_open:
+                            open_count += 1
+                            restaurant_data.at[restaurant_data.index[j], 'operating_status'] = "正常营业"
+                        else:
+                            closed_count += 1
+                            restaurant_data.at[restaurant_data.index[j], 'operating_status'] = "非营业状态"
+                        
+                    except Exception as e:
+                        LOGGER.error(f"处理第{j+1}行数据时出错: {str(e)}")
+                        continue
+                
+                # 批次间等待
+                if i + batch_size < rows_count:
+                    time.sleep(wait_time)
+            
+            # 恢复光标
             QApplication.restoreOverrideCursor()
-            if hasattr(self, 'progress_label'):
-                self.progress_label.setVisible(False)
             
-            # 生成模拟结果
-            rows_count = len(self.xlsx_viewer.data)
-            verified_count = random.randint(max(1, rows_count // 2), rows_count)
-            open_count = random.randint(max(1, verified_count // 2), verified_count)
-            closed_count = verified_count - open_count
+            # 更新表格
+            self.xlsx_viewer.load_data(data=restaurant_data)
             
-            # 显示模拟结果
+            # 显示验证结果
             QMessageBox.information(
                 self, 
                 "验证完成", 
                 f"已验证 {verified_count}/{rows_count} 家餐厅的营业状态：\n\n"
                 f"• 正常营业: {open_count} 家\n"
-                f"• 已关闭: {closed_count} 家\n"
+                f"• 非营业状态: {closed_count} 家\n"
+                f"• 未找到: {not_found_count} 家\n"
                 f"• 未验证: {rows_count - verified_count} 家"
             )
             
-            LOGGER.info(f"模拟验证了 {verified_count} 家餐厅的营业状态，{open_count} 家正常营业，{closed_count} 家已关闭")
+            LOGGER.info(f"验证了 {verified_count} 家餐厅的营业状态，{open_count} 家正常营业，{closed_count} 家非营业状态，{not_found_count} 家未找到")
+            
+            # 关闭会话
+            session.close()
+            
+            # 保存验证结果
+            try:
+                # 创建临时目录
+                temp_dir = tempfile.gettempdir()
+                if not hasattr(self, 'timestamp'):
+                    self.timestamp = time.strftime("%Y%m%d_%H%M%S")
+                temp_dir = os.path.join(temp_dir, self.timestamp)
+                os.makedirs(temp_dir, exist_ok=True)
+                
+                # 保存文件
+                result_file = os.path.join(temp_dir, f"restaurant_status_{time.strftime('%Y%m%d_%H%M%S')}.xlsx")
+                restaurant_data.to_excel(result_file, index=False)
+                
+                # 记录临时文件
+                self.temp_files.append(result_file)
+                if hasattr(self.conf.runtime, 'temp_files'):
+                    self.conf.runtime.temp_files.append(result_file)
+                
+                LOGGER.info(f"验证结果已保存到: {result_file}")
+                
+                # 询问是否打开文件
+                reply = QMessageBox.question(
+                    self, 
+                    "已保存验证结果", 
+                    f"验证结果已保存到:\n{result_file}\n\n是否打开此文件？",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+                
+                if reply == QMessageBox.Yes:
+                    self.open_file_external(result_file)
+            except Exception as e:
+                LOGGER.error(f"保存验证结果时出错: {str(e)}")
+                QMessageBox.warning(self, "保存失败", f"保存验证结果时出错: {str(e)}")
             
         except Exception as e:
             QApplication.restoreOverrideCursor()
@@ -2545,6 +2701,13 @@ class Tab2(QWidget):
                 self.progress_label.setVisible(False)
             LOGGER.error(f"验证餐厅营业状态时出错: {str(e)}")
             QMessageBox.critical(self, "操作失败", f"验证餐厅营业状态时出错: {str(e)}")
+        finally:
+            # 隐藏进度标签
+            if hasattr(self, 'progress_label'):
+                self.progress_label.setVisible(False)
+            
+            # 重新启用验证按钮
+            self.verify_status_button.setEnabled(True)
     
     def view_current_log(self):
         """打开当前任务的输出目录"""
