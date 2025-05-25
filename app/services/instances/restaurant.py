@@ -126,6 +126,76 @@ def query_gaode(key, city):
         print(f"查询城市 '{city}' 时发生错误: {str(e)}")
         return None
 
+def query_gaode_poi(key, keywords, city_code, types="050000"):
+    """
+    查询高德地图POI信息
+    
+    :param key: 高德地图API密钥
+    :param keywords: 搜索关键词（餐厅名称）
+    :param city_code: 城市代码
+    :param types: POI类型，默认为050000（餐饮服务）
+    :return: API响应结果或None
+    """
+    if not key or not keywords or not city_code:
+        print("参数不完整")
+        return None
+        
+    api_url = f"https://restapi.amap.com/v3/place/text?key={key}&keywords={keywords}&types={types}&city={city_code}"
+    try:
+        response = requests.get(api_url, timeout=10)
+        if response.status_code != 200:
+            print(f"高德地图POI API请求失败: {response.status_code}")
+            return None
+            
+        result = response.json()
+        if result.get('status') != '1':
+            print(f"高德地图POI API返回状态错误: {result.get('info', '未知错误')}")
+            return None
+            
+        return result
+    except Exception as e:
+        print(f"查询POI '{keywords}' 时发生错误: {str(e)}")
+        return None
+
+def get_city_code_from_excel(city_name, excel_path="app/config/citycode.xlsx"):
+    """
+    从Excel文件中查询城市对应的citycode（支持模糊查询）
+    
+    :param city_name: 城市名称
+    :param excel_path: Excel文件路径
+    :return: citycode或None
+    """
+    try:
+        df = pd.read_excel(excel_path)
+        
+        # 清理城市名称，去掉"市"字
+        clean_city_name = city_name.replace("市", "")
+        
+        # 首先尝试精确匹配
+        exact_match = df[df['中文名'] == city_name]
+        if not exact_match.empty and exact_match.iloc[0]['citycode'] != '\\N':
+            return exact_match.iloc[0]['citycode']
+        
+        # 尝试去掉"市"字的精确匹配
+        exact_match_clean = df[df['中文名'] == clean_city_name]
+        if not exact_match_clean.empty and exact_match_clean.iloc[0]['citycode'] != '\\N':
+            return exact_match_clean.iloc[0]['citycode']
+        
+        # 模糊匹配：包含城市名称
+        fuzzy_match = df[df['中文名'].str.contains(clean_city_name, na=False)]
+        if not fuzzy_match.empty:
+            # 过滤掉citycode为\N的记录
+            valid_matches = fuzzy_match[fuzzy_match['citycode'] != '\\N']
+            if not valid_matches.empty:
+                return valid_matches.iloc[0]['citycode']
+        
+        print(f"未找到城市 '{city_name}' 对应的citycode")
+        return None
+        
+    except Exception as e:
+        print(f"查询citycode时发生错误: {str(e)}")
+        return None
+
 
 # ===========KIMI Utils==========
 
@@ -653,6 +723,162 @@ class Restaurant(BaseInstance):
         
         return result
     
+    def _extract_district_and_street_v2(self) -> bool:
+        """
+        从地址中提取区域和街道信息（v2版本）
+        使用POI搜索API获取区域信息，街道提取逻辑保持不变
+        
+        :return: 是否提取成功
+        """
+        result = True
+        city = self.inst.rest_city.split("市")[0]
+        address = self.inst.rest_chinese_address
+        # ================== Geoinfo ==================
+        geoinfo = None
+        if hasattr(self.conf, 'runtime') and hasattr(self.conf.runtime, 'geoinfo') and city in self.conf.runtime.geoinfo.keys():
+            # self.logger.info(f"从self.conf.runtime.geoinfo中获取{city}的地理信息")
+            geoinfo = self.conf.runtime.geoinfo[city]
+        else:
+            # 调用高德地图API获取地理信息
+            # self.logger.info(f"调用高德地图API获取{city}的地理信息")
+            geoinfo = robust_query(query_gaode, self.conf.KEYS.gaode_keys, city=city)
+            # 确保geoinfo不为None
+            if geoinfo is None:
+                # self.logger.error(f"无法获取城市 {city} 的地理信息")
+                self.inst.rest_district = city + "区"  # 设置默认区域
+                result = False
+                return result
+            # 确保runtime存在
+            if not hasattr(self.conf, 'runtime'):
+                setattr(self.conf, 'runtime', type('RuntimeConfig', (), {}))
+            # 确保geoinfo存在
+            if not hasattr(self.conf.runtime, 'geoinfo'):
+                setattr(self.conf.runtime, 'geoinfo', {})
+            self.conf.runtime.geoinfo[city] = geoinfo  # 将获取到的地理信息保存到self.conf.runtime.geoinfo中
+
+
+        # ================== 提取区域 ==================
+        try:
+            # city = convert_to_pinyin(self.inst.rest_city.split("市")[0])  # 城市变成中文了
+            city = self.inst.rest_city.split("市")[0]
+            
+            # 检查是否已有区域信息
+            if not hasattr(self.inst, 'rest_district') or not self.inst.rest_district or pd.isna(self.inst.rest_district):
+                
+                # 1. 从citycode.xlsx查询城市对应的citycode
+                city_code = get_city_code_from_excel(self.inst.rest_city)
+                if not city_code:
+                    # self.logger.error(f"无法获取城市 {self.inst.rest_city} 的citycode")
+                    self.inst.rest_district = "未知区"  # 设置默认区域
+                    result = False
+                else:
+                    # 2. 使用POI搜索API查询餐厅信息
+                    def poi_query_func(key):
+                        return query_gaode_poi(key, self.inst.rest_chinese_name, city_code, "050000")
+                    
+                    poi_result = robust_query(poi_query_func, self.conf.KEYS.gaode_keys)
+                    
+                    if poi_result and poi_result.get('pois') and len(poi_result['pois']) > 0:
+                        # 3. 从第一个POI结果中提取adname作为区域
+                        first_poi = poi_result['pois'][0]
+                        adname = first_poi.get('adname', '')
+                        if adname:
+                            self.inst.rest_district = adname
+                            self.logger.info(f"已通过POI搜索为餐厅提取区域: {adname}")
+                        else:
+                            self.logger.warning(f"POI搜索结果中没有adname字段")
+                            self.inst.rest_district = "未知区"  # 设置默认区域
+                            result = False
+                    else:
+                        self.logger.warning(f"POI搜索未找到餐厅 {self.inst.rest_chinese_name} 的信息")
+                        self.inst.rest_district = "未知区"  # 设置默认区域
+                        result = False
+        except Exception as e:
+            result = False
+            # self.logger.error(f"提取区域失败: {e}")
+            # 设置默认区域
+            if hasattr(self.inst, 'rest_city'):
+                self.inst.rest_district = self.inst.rest_city.split("市")[0] + "区"
+            else:
+                self.inst.rest_district = "未知区"
+        
+        # ================== 提取街道（逻辑保持不变）==================
+        try:
+            target_district = getattr(self.inst, 'rest_district', None)
+            city = self.inst.rest_city.split("市")[0]
+            address = self.inst.rest_chinese_address
+            
+            if not hasattr(self.inst, 'rest_street') or pd.isna(self.inst.rest_street) or not self.inst.rest_street:  # 如果没有，则生成
+               
+                try:
+                    geoinfo = self.conf.runtime.geoinfo[city]
+                except: # 如果没有geoinfo则生成
+                    # 调用高德地图API获取地理信息
+                    # self.logger.info(f"调用高德地图API获取{city}的地理信息")
+                    geoinfo = robust_query(query_gaode, self.conf.KEYS.gaode_keys, city=city)
+                    # 确保geoinfo不为None
+                    if geoinfo is None:
+                        # self.logger.error(f"无法获取城市 {city} 的地理信息")
+                        self.inst.rest_street = "未知街道"  # 设置默认街道
+                        result = False
+                        return result
+                    # 确保runtime存在
+                    if not hasattr(self.conf, 'runtime'):
+                        setattr(self.conf, 'runtime', type('RuntimeConfig', (), {}))
+                    # 确保geoinfo存在
+                    if not hasattr(self.conf.runtime, 'geoinfo'):
+                        setattr(self.conf.runtime, 'geoinfo', {})
+                    self.conf.runtime.geoinfo[city] = geoinfo  # 将获取到的地理信息保存到self.conf.runtime.geoinfo中
+                    # self.logger.info(f"已将{city}的地理信息保存到self.conf.runtime.geoinfo中")
+                
+                if target_district:
+                    cand_street = get_geo_data_by_level(geoinfo, 'street', {'name': target_district, 'level': 'district'})
+                else:
+                    cand_street = get_geo_data_by_level(geoinfo, 'street')
+
+                flag = False
+                # 从cand_street中提取街道信息
+                for street in cand_street:
+                    if street['name'] in address:
+                        self.inst.rest_street = street['name']
+                        # self.logger.info(f"已为餐厅提取街道: {street['name']}")
+                        flag = True
+                        break
+                if not flag:
+                    # self.logger.info(f"未找到街道, 尝试基于地理信息距离获取街道信息")
+                    if not hasattr(self.inst, 'rest_location') or not self.inst.rest_location:
+                        # self.logger.info(f"未找到经纬度，无法判断其所属街道，使用默认街道")
+                        self.inst.rest_street = "未知街道"  # 设置默认街道
+                    else:
+                        try:
+                            rest_lng, rest_lat = self.inst.rest_location.split(',')
+                            rest_lng = float(rest_lng)
+                            rest_lat = float(rest_lat)
+                            min_distance = float('inf')
+                            target_street = None
+                            for street in cand_street:
+                                street_lng, street_lat = street['center'].split(',')
+                                street_lng = float(street_lng)
+                                street_lat = float(street_lat)
+                                distance = ((rest_lng - street_lng) ** 2 + (rest_lat - street_lat) ** 2) ** 0.5
+                                if distance < min_distance:
+                                    min_distance = distance
+                                    target_street = street['name']  
+                            # self.logger.info(f"已通过经纬度计算为餐厅找到最近街道: {target_street}")
+                            self.inst.rest_street = target_street
+                            result &= True
+                        except Exception as e:
+                            # self.logger.error(f"计算餐厅街道距离时出错: {e}")
+                            self.inst.rest_street = "未知街道"  # 设置默认街道
+                            result &= False
+        except Exception as e:
+            result &= False
+            # self.logger.error(f"提取街道失败: {e}")
+            # 设置默认街道
+            self.inst.rest_street = "未知街道"
+        
+        return result
+    
     def _generate_type(self) -> bool:
         """
         使用KIMI分析餐厅类型
@@ -914,7 +1140,7 @@ class Restaurant(BaseInstance):
         success &= self._generate_english_address()
         
         # 提取区域和街道
-        success &= self._extract_district_and_street()
+        success &= self._extract_district_and_street_v2()
         
         # 分析餐厅类型
         success &= self._generate_type()
