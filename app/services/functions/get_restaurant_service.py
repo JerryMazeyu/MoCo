@@ -880,9 +880,12 @@ class GetRestaurantService:
         if file_path:
             self._load_from_file(file_path)
         
-        # 加载关键词和屏蔽词
-        self.load_keywords()
-        self.load_blocked_words()
+        # 加载关键词和屏蔽词（如果还没有加载过）
+        if not hasattr(self, '_keywords_already_loaded'):
+            self.load_keywords()
+            self.load_blocked_words()
+        else:
+            LOGGER.info("关键词已预先加载，跳过重新加载")
 
 
         # 如果使用API获取，并且提供了城市

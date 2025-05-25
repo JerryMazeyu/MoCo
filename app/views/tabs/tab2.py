@@ -1247,6 +1247,23 @@ class Tab2(QWidget):
             }
         """)
         
+        # 餐厅获取（低资源版）按钮
+        self.get_restaurant_low_resource_button = QPushButton("餐厅获取（低资源版）")
+        self.get_restaurant_low_resource_button.clicked.connect(self.get_restaurants_low_resource)
+        self.get_restaurant_low_resource_button.setEnabled(False)
+        self.get_restaurant_low_resource_button.setStyleSheet("""
+            QPushButton {
+                background-color: #5cb85c;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 5px 15px;
+            }
+            QPushButton:hover {
+                background-color: #4cae4c;
+            }
+        """)
+        
         # 导入按钮
         self.import_button = QPushButton("导入已有餐厅")
         self.import_button.clicked.connect(self.import_restaurants)
@@ -1324,10 +1341,30 @@ class Tab2(QWidget):
         control_layout.addWidget(self.use_llm_checkbox)  # 添加复选框
         control_layout.addSpacing(10)
         control_layout.addWidget(self.get_restaurant_button)
+        control_layout.addWidget(self.get_restaurant_low_resource_button)
         control_layout.addWidget(self.import_button)
         control_layout.addWidget(self.complete_info_button)
         control_layout.addWidget(self.verify_status_button)
         control_layout.addWidget(self.download_template_button)  # 添加下载模版按钮
+        
+        # 创建加载搜索结果按钮（初始隐藏）
+        self.load_search_results_button = QPushButton("加载搜索结果")
+        self.load_search_results_button.clicked.connect(self.load_low_resource_results)
+        self.load_search_results_button.setStyleSheet("""
+            QPushButton {
+                background-color: #337ab7;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 5px 15px;
+            }
+            QPushButton:hover {
+                background-color: #286090;
+            }
+        """)
+        self.load_search_results_button.setVisible(False)  # 初始隐藏
+        control_layout.addWidget(self.load_search_results_button)
+        
         control_layout.addStretch()
         
         self.layout.addWidget(control_frame)
@@ -1512,6 +1549,7 @@ class Tab2(QWidget):
                     self.city_input.setEnabled(True)  # 启用城市输入框
                     self.use_llm_checkbox.setEnabled(True)  # 启用复选框
                     self.get_restaurant_button.setEnabled(True)  # 启用获取餐厅按钮
+                    self.get_restaurant_low_resource_button.setEnabled(True)  # 启用低资源版按钮
                     self.search_by_cp_button.setEnabled(True)  # 启用根据CP位置搜索按钮
                     
                     # 通知主窗口更新CP
@@ -2764,3 +2802,327 @@ class Tab2(QWidget):
     def set_cleaned_in_close_event(self):
         """设置已在关闭事件中处理过临时文件的标志"""
         self.cleaned_in_close_event = True
+    
+    def get_restaurants_low_resource(self):
+        """低资源版餐厅获取 - 在独立进程中运行"""
+        try:
+            # 获取城市名称
+            city = self.city_input.text().strip()
+            if not city:
+                QMessageBox.warning(self, "请输入城市", "请先输入餐厅城市")
+                return
+            
+            # 获取是否使用大模型
+            use_llm = self.use_llm_checkbox.isChecked()
+            
+            # 创建临时目录 - 每次都创建新的唯一目录
+            temp_base_dir = tempfile.gettempdir()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            unique_id = str(uuid.uuid4())[:8]  # 添加唯一ID确保目录唯一
+            city_safe = city.replace(" ", "_").replace("/", "_")
+            output_dir = os.path.join(temp_base_dir, f"restaurants_{city_safe}_{timestamp}_{unique_id}")
+            os.makedirs(output_dir, exist_ok=True)  # 立即创建目录
+            
+            # 检查是否存在同城市的已有结果
+            existing_dirs = self.check_existing_city_results(city, temp_base_dir)
+            
+            keywords_to_search = []
+            loaded_keywords = set()
+            
+            if existing_dirs:
+                # 显示选择对话框
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("发现已有数据")
+                msg_box.setText(f"发现 {len(existing_dirs)} 个同城市的已有搜索结果，是否加载？")
+                msg_box.setIcon(QMessageBox.Question)
+                
+                # 列出已有目录信息
+                details = "\n".join([f"- {d['name']} ({len(d['keywords'])} 个关键词)" for d in existing_dirs])
+                msg_box.setDetailedText(details)
+                
+                load_button = msg_box.addButton("加载已有数据", QMessageBox.AcceptRole)
+                skip_button = msg_box.addButton("跳过", QMessageBox.RejectRole)
+                cancel_button = msg_box.addButton("取消", QMessageBox.RejectRole)
+                
+                msg_box.exec_()
+                
+                if msg_box.clickedButton() == cancel_button:
+                    return
+                elif msg_box.clickedButton() == load_button:
+                    # 加载已有关键词
+                    for dir_info in existing_dirs:
+                        loaded_keywords.update(dir_info['keywords'])
+                    LOGGER.info(f"已加载 {len(loaded_keywords)} 个已搜索的关键词")
+            
+            # 获取要搜索的关键词（这里暂时使用一些默认关键词，实际应该从配置或用户输入获取）
+            all_keywords = self.get_search_keywords()  # 需要实现这个方法
+            
+            # 过滤掉已经搜索过的关键词
+            keywords_to_search = [kw for kw in all_keywords if kw not in loaded_keywords]
+            
+            if not keywords_to_search and not loaded_keywords:
+                # 如果没有关键词，执行全量搜索
+                keywords_to_search = None
+                LOGGER.info("执行全量餐厅搜索")
+            else:
+                LOGGER.info(f"需要搜索 {len(keywords_to_search)} 个新关键词")
+            
+            # 创建运行时配置文件
+            runtime_config = {}
+            if hasattr(self.conf, 'runtime'):
+                for attr in dir(self.conf.runtime):
+                    if not attr.startswith('_'):
+                        try:
+                            value = getattr(self.conf.runtime, attr)
+                            if not callable(value) and (isinstance(value, (int, float, bool, str, list, dict)) or value is None):
+                                runtime_config[attr] = value
+                        except:
+                            pass
+            
+            config_file = os.path.join(output_dir, "runtime_config.json")
+            os.makedirs(output_dir, exist_ok=True)
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(runtime_config, f, ensure_ascii=False, indent=2)
+            
+            # 记录临时文件
+            self.temp_files.append(output_dir)
+            self.temp_files.append(config_file)
+            if hasattr(self.conf.runtime, 'temp_files'):
+                self.conf.runtime.temp_files.append(output_dir)
+                self.conf.runtime.temp_files.append(config_file)
+            
+            # 构建命令
+            script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
+                                     'services', 'scripts', 'search_restaurants.py')
+            
+            cmd = [
+                sys.executable,
+                script_path,
+                f"--city={city}",
+                f"--cp_id={self.current_cp['cp_id']}",
+                f"--use_llm={use_llm}",
+                f"--output_dir={output_dir}",
+                f"--config_file={config_file}"
+            ]
+            
+            # 添加关键词参数
+            if keywords_to_search:
+                cmd.append("--keywords")
+                cmd.extend(keywords_to_search)
+            
+            # 将命令转换为字符串
+            cmd_str = ' '.join(f'"{arg}"' if ' ' in arg else arg for arg in cmd)
+            
+            # 保存任务信息
+            self.current_low_resource_task = {
+                'output_dir': output_dir,
+                'city': city,
+                'keywords': keywords_to_search,
+                'loaded_dirs': [d['path'] for d in existing_dirs] if existing_dirs else [],
+                'timestamp': timestamp
+            }
+            
+            # 根据平台启动命令
+            if sys.platform == 'win32':
+                # Windows
+                title = f"餐厅搜索 - {city}"
+                start_cmd = f'start "{title}" cmd /k "{cmd_str} & echo. & echo 搜索完成，按任意键关闭窗口... & pause > nul"'
+                os.system(start_cmd)
+            elif sys.platform == 'darwin':
+                # macOS
+                script_content = f"""#!/bin/bash
+cd "{os.getcwd()}"
+{cmd_str}
+echo ""
+echo "搜索完成，按任意键关闭窗口..."
+read -n 1
+"""
+                script_file = os.path.join(output_dir, "run_search.sh")
+                with open(script_file, 'w') as f:
+                    f.write(script_content)
+                os.chmod(script_file, 0o755)
+                os.system(f"open -a Terminal {script_file}")
+                self.temp_files.append(script_file)
+            else:
+                # Linux
+                os.system(f"xterm -e '{cmd_str}; echo \"搜索完成，按回车键关闭窗口...\"; read'")
+            
+            LOGGER.info(f"已启动低资源版餐厅搜索: {cmd_str}")
+            
+            # 显示提示信息
+            message = (
+                f"餐厅搜索已在新窗口中启动。\n"
+                f"搜索城市: {city}\n"
+                f"输出目录: {output_dir}\n\n"
+                "搜索完成后，点击'加载搜索结果'按钮查看结果。"
+            )
+            QMessageBox.information(self, "搜索已启动", message)
+            
+            # 显示加载结果按钮
+            if hasattr(self, 'load_search_results_button'):
+                self.load_search_results_button.setVisible(True)
+            
+        except Exception as e:
+            LOGGER.error(f"启动低资源版餐厅搜索时出错: {str(e)}")
+            QMessageBox.critical(self, "启动失败", f"启动低资源版餐厅搜索时出错: {str(e)}")
+    
+    def check_existing_city_results(self, city, temp_base_dir):
+        """检查临时目录中是否有同城市的已有结果"""
+        existing_dirs = []
+        
+        try:
+            if os.path.exists(temp_base_dir):
+                for item in os.listdir(temp_base_dir):
+                    item_path = os.path.join(temp_base_dir, item)
+                    if os.path.isdir(item_path) and f"restaurants_{city}" in item:
+                        # 检查目录中的状态文件
+                        keywords = set()
+                        status_files = [f for f in os.listdir(item_path) if f.startswith("status_") and f.endswith(".json")]
+                        
+                        for status_file in status_files:
+                            try:
+                                with open(os.path.join(item_path, status_file), 'r', encoding='utf-8') as f:
+                                    status_data = json.load(f)
+                                    if status_data.get('keyword'):
+                                        keywords.add(status_data['keyword'])
+                            except:
+                                pass
+                        
+                        if status_files:  # 只添加有状态文件的目录
+                            existing_dirs.append({
+                                'path': item_path,
+                                'name': item,
+                                'keywords': keywords,
+                                'file_count': len([f for f in os.listdir(item_path) if f.endswith('.xlsx')])
+                            })
+        except Exception as e:
+            LOGGER.error(f"检查已有结果时出错: {str(e)}")
+        
+        return existing_dirs
+    
+    def get_search_keywords(self):
+        """获取要搜索的关键词列表"""
+        try:
+            # 从配置中获取关键词
+            keywords = self.conf.get("BUSINESS.RESTAURANT.关键词", default=[])
+            if keywords:
+                LOGGER.info(f"从配置中获取到 {len(keywords)} 个关键词: {keywords}")
+                return keywords
+            else:
+                # 如果配置中没有关键词，使用默认关键词
+                default_keywords = [
+                    "火锅", "烧烤", "中餐", "西餐", "快餐", 
+                    "面馆", "粉店", "小吃", "咖啡", "茶饮",
+                    "日料", "韩餐", "烤肉", "海鲜", "素食"
+                ]
+                LOGGER.info(f"配置中无关键词，使用默认关键词: {default_keywords}")
+                return default_keywords
+        except Exception as e:
+            LOGGER.error(f"获取搜索关键词时出错: {str(e)}")
+            # 返回默认关键词
+            return ["火锅", "烧烤", "中餐", "西餐", "快餐"]
+    
+    def load_low_resource_results(self):
+        """加载低资源版搜索结果"""
+        try:
+            if not hasattr(self, 'current_low_resource_task') or not self.current_low_resource_task:
+                QMessageBox.warning(self, "无任务信息", "没有找到搜索任务信息")
+                return
+            
+            task_info = self.current_low_resource_task
+            output_dir = task_info['output_dir']
+            
+            if not os.path.exists(output_dir):
+                QMessageBox.warning(self, "目录不存在", f"输出目录不存在: {output_dir}")
+                return
+            
+            # 收集所有结果文件
+            all_result_files = []
+            
+            # 从当前任务目录收集
+            for file_name in os.listdir(output_dir):
+                if file_name.endswith('.xlsx') and file_name.startswith('restaurants_'):
+                    all_result_files.append(os.path.join(output_dir, file_name))
+            
+            # 从已加载的目录收集
+            for loaded_dir in task_info.get('loaded_dirs', []):
+                if os.path.exists(loaded_dir):
+                    for file_name in os.listdir(loaded_dir):
+                        if file_name.endswith('.xlsx') and file_name.startswith('restaurants_'):
+                            all_result_files.append(os.path.join(loaded_dir, file_name))
+            
+            if not all_result_files:
+                QMessageBox.warning(self, "无结果文件", "未找到任何搜索结果文件")
+                return
+            
+            LOGGER.info(f"找到 {len(all_result_files)} 个结果文件")
+            
+            # 合并所有结果
+            all_data = []
+            for file_path in all_result_files:
+                try:
+                    data = pd.read_excel(file_path)
+                    all_data.append(data)
+                    LOGGER.info(f"已加载 {len(data)} 条记录从: {file_path}")
+                except Exception as e:
+                    LOGGER.error(f"加载文件失败 {file_path}: {e}")
+            
+            if not all_data:
+                QMessageBox.warning(self, "加载失败", "无法加载任何结果文件")
+                return
+            
+            # 合并数据
+            merged_data = pd.concat(all_data, ignore_index=True)
+            
+            # 去重
+            if 'rest_chinese_name' in merged_data.columns and 'rest_chinese_address' in merged_data.columns:
+                merged_data = merged_data.drop_duplicates(
+                    subset=['rest_chinese_name', 'rest_chinese_address'], 
+                    keep='first'
+                )
+            
+            LOGGER.info(f"合并后共 {len(merged_data)} 条记录")
+            
+            # 保存合并结果
+            merged_file = os.path.join(output_dir, f"merged_restaurants_{task_info['city']}_{task_info['timestamp']}.xlsx")
+            merged_data.to_excel(merged_file, index=False)
+            self.temp_files.append(merged_file)
+            if hasattr(self.conf.runtime, 'temp_files'):
+                self.conf.runtime.temp_files.append(merged_file)
+            
+            # 显示前10条记录
+            display_data = merged_data.head(10).copy()
+            self.xlsx_viewer.load_data(data=display_data)
+            
+            # 保存为最后查询文件
+            self.last_query_file = merged_file
+            
+            # 显示成功消息
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("加载成功")
+            msg_box.setText(
+                f"餐厅数据加载完成！\n\n"
+                f"总记录数: {len(merged_data)}\n"
+                f"合并自 {len(all_result_files)} 个文件\n\n"
+                f"完整数据已保存到:\n{merged_file}"
+            )
+            msg_box.setIcon(QMessageBox.Information)
+            
+            open_button = msg_box.addButton("打开完整数据", QMessageBox.ActionRole)
+            view_dir_button = msg_box.addButton("打开输出目录", QMessageBox.ActionRole)
+            close_button = msg_box.addButton("关闭", QMessageBox.RejectRole)
+            
+            msg_box.exec_()
+            
+            if msg_box.clickedButton() == open_button:
+                self.open_file_external(merged_file)
+            elif msg_box.clickedButton() == view_dir_button:
+                self.open_file_external(output_dir)
+            
+            # 隐藏加载按钮
+            if hasattr(self, 'load_search_results_button'):
+                self.load_search_results_button.setVisible(False)
+            
+        except Exception as e:
+            LOGGER.error(f"加载搜索结果时出错: {str(e)}")
+            QMessageBox.critical(self, "加载失败", f"加载搜索结果时出错: {str(e)}")
