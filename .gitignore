@@ -22,3 +22,5 @@ app/var/
 build*/
 dist*/
 
+!app/config/citycode.xlsx
+

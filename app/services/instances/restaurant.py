@@ -1114,6 +1114,9 @@ class Restaurant(BaseInstance):
                     self.inst.rest_belonged_cp = self.conf.runtime.CP['cp_id']
                     # self.logger.info(f"已生成所属CP: {self.inst.rest_belonged_cp}")
                     return True
+                else:
+                    # self.logger.warning("警告: CP信息未设置，跳过所属CP生成")
+                    return False
             else:
                 # self.logger.warning("警告: CP信息未设置，跳过所属CP生成")
                 return False
