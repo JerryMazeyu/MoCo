@@ -743,18 +743,21 @@ class Restaurant(BaseInstance):
             # self.logger.info(f"调用高德地图API获取{city}的地理信息")
             geoinfo = robust_query(query_gaode, self.conf.KEYS.gaode_keys, city=city)
             # 确保geoinfo不为None
-            if geoinfo is None:
-                # self.logger.error(f"无法获取城市 {city} 的地理信息")
-                self.inst.rest_district = city + "区"  # 设置默认区域
-                result = False
-                return result
+            # if geoinfo is None:
+            #     # self.logger.error(f"无法获取城市 {city} 的地理信息")
+            #     # self.inst.rest_district = city + "区"  # 设置默认区域
+            #     result = False
+            #     return result
             # 确保runtime存在
             if not hasattr(self.conf, 'runtime'):
                 setattr(self.conf, 'runtime', type('RuntimeConfig', (), {}))
             # 确保geoinfo存在
             if not hasattr(self.conf.runtime, 'geoinfo'):
                 setattr(self.conf.runtime, 'geoinfo', {})
-            self.conf.runtime.geoinfo[city] = geoinfo  # 将获取到的地理信息保存到self.conf.runtime.geoinfo中
+            if geoinfo is not None:
+                self.conf.runtime.geoinfo[city] = geoinfo  # 将获取到的地理信息保存到self.conf.runtime.geoinfo中
+            else:
+                LOGGER.error(f"无法获取城市 {city} 的地理信息")
 
 
         # ================== 提取区域 ==================
@@ -768,33 +771,36 @@ class Restaurant(BaseInstance):
                 # 1. 从citycode.xlsx查询城市对应的citycode
                 city_code = get_city_code_from_excel(self.inst.rest_city)
                 if not city_code:
+                    print(f"无法获取城市 {self.inst.rest_city} 的citycode")
                     # self.logger.error(f"无法获取城市 {self.inst.rest_city} 的citycode")
                     self.inst.rest_district = "未知区"  # 设置默认区域
                     result = False
                 else:
                     # 2. 使用POI搜索API查询餐厅信息
                     def poi_query_func(key):
-                        return query_gaode_poi(key, self.inst.rest_chinese_name, city_code, "050000")
+                        return query_gaode_poi(key, self.inst.rest_chinese_address, city_code, "050000")
                     
                     poi_result = robust_query(poi_query_func, self.conf.KEYS.gaode_keys)
-                    
+
                     if poi_result and poi_result.get('pois') and len(poi_result['pois']) > 0:
                         # 3. 从第一个POI结果中提取adname作为区域
                         first_poi = poi_result['pois'][0]
                         adname = first_poi.get('adname', '')
                         if adname:
                             self.inst.rest_district = adname
-                            self.logger.info(f"已通过POI搜索为餐厅提取区域: {adname}")
+                            # print(f"已通过POI搜索为餐厅提取区域: {adname}")
+                            # self.logger.info(f"已通过POI搜索为餐厅提取区域: {adname}")
                         else:
-                            self.logger.warning(f"POI搜索结果中没有adname字段")
+                            # self.logger.warning(f"POI搜索结果中没有adname字段")
                             self.inst.rest_district = "未知区"  # 设置默认区域
                             result = False
                     else:
-                        self.logger.warning(f"POI搜索未找到餐厅 {self.inst.rest_chinese_name} 的信息")
+                        # self.logger.warning(f"POI搜索未找到餐厅 {self.inst.rest_chinese_name} 的信息")
                         self.inst.rest_district = "未知区"  # 设置默认区域
                         result = False
         except Exception as e:
             result = False
+            # print(f"提取区域失败: {e}")
             # self.logger.error(f"提取区域失败: {e}")
             # 设置默认区域
             if hasattr(self.inst, 'rest_city'):
@@ -1033,6 +1039,9 @@ class Restaurant(BaseInstance):
                     # 给所有餐厅设置一个默认距离
                     self.inst.rest_distance = 0
                     return False
+            else:
+                # self.logger.info(f"餐厅 '{self.inst.rest_chinese_name}' 已存在距离: {self.inst.rest_distance}")
+                return True
             
         except Exception as e:
             # self.logger.error(f"计算餐厅距离失败: {e}")
