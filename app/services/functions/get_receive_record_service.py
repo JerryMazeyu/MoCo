@@ -874,7 +874,13 @@ class GetReceiveRecordService:
                     processing_amount = new_df.at[idx, 'total_processing_quantity']
                     new_df.at[idx, 'total_iol_mt'] = round(current_weight + previous_inventory - processing_amount,2)
                     running_total = new_df.at[idx, 'total_iol_mt']
-                    
+                
+                # 将除最后一行外的其他行的三个字段设为 NaN
+                for idx in new_df[mask].index[:-1]:  # 除了最后一行
+                    new_df.at[idx, 'total_processing_quantity'] = None
+                    new_df.at[idx, 'total_output_quantity'] = None
+                    new_df.at[idx, 'total_conversion_coefficient'] = None
+        
         # 计算产出重量
         new_df['total_output_quantity'] = round(new_df['total_processing_quantity'] * new_df['total_conversion_coefficient'] / 100, 2)
         

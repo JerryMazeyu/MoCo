@@ -638,7 +638,7 @@ class SalesDaysDialog(QDialog):
                 self.error_range_warn_label.setText("请输入有效的数值")
                 self.error_range_warn_label.setVisible(True)
                 return
-
+        ##验证运输日期是否在最小平衡日期之后
         if self.min_balance_date:
             year = int(year)
             month = int(month)
@@ -1085,6 +1085,9 @@ class Tab3(QWidget):
                             'vehicle_license_plate', 'vehicle_driver_name', 'vehicle_type',
                             'vehicle_rough_weight', 'vehicle_tare_weight','vehicle_status',
                             'vehicle_last_use','vehicle_cooldown_days'
+                        ],
+                        datetime_columns=[
+                            'vehicle_last_use'
                         ]
                     )
                     self.report_viewer = XlsxViewerWidget(
@@ -1096,6 +1099,9 @@ class Tab3(QWidget):
                             'rr_date', 'rr_restaurant_name', 'rr_restaurant_address','rr_contact_person',
                             'rr_amount','rr_serial_number', 'rr_vehicle_license_plate', 'rr_district','rr_street',
                             'rr_sale_number','rr_amount_of_day','temp_vehicle_index'
+                        ],
+                        datetime_columns=[
+                            'rr_date'
                         ]
                     )
                     self.balance_view = XlsxViewerWidget(
@@ -1108,6 +1114,9 @@ class Tab3(QWidget):
                             'balance_serial_number', 'balance_vehicle_license_plate', 'balance_weight_of_order',
                             'balance_order_number', 'balance_district', 'balance_sale_number',
                             'balance_amount_of_day'
+                        ],
+                        datetime_columns=[
+                            'balance_date'
                         ]
                     )
                     self.total_view = XlsxViewerWidget(
@@ -1121,6 +1130,9 @@ class Tab3(QWidget):
                             'total_iol_mt', 'total_processing_quantity', 'total_output_quantity',
                             'total_conversion_coefficient', 'total_customer', 'total_sale_number',
                             'total_quantities_sold','total_ending_inventory','total_delivery_time','total_delivery_address','total_supplied_weight_of_order'
+                        ],
+                        datetime_columns=[
+                            'total_delivery_time','total_supplied_date'
                         ]
                     )
                     self.check_view = XlsxViewerWidget(
@@ -1133,6 +1145,9 @@ class Tab3(QWidget):
                             'check_weight', 'check_quantity', 'check_weighbridge_ticket_number',
                             'check_gross_weight', 'check_tare_weight', 'check_net_weight',
                             'check_unload_weight','check_difference'
+                        ],
+                        datetime_columns=[
+                            'check_date'
                         ]
                     )
                     
@@ -1629,8 +1644,8 @@ class Tab3(QWidget):
                 return
 
             # 获取min_balance_date
-            min_balance_date = pd.to_datetime(balance_df['balance_date']).min().date() + datetime.timedelta(days=1)
-
+            # min_balance_date = pd.to_datetime(balance_df['balance_date']).min().date() + datetime.timedelta(days=1)
+            min_balance_date = pd.to_datetime(balance_df['balance_date']).min().date() 
             # 弹出销售运输天数输入对话框
             dialog = SalesDaysDialog(self, min_balance_date=min_balance_date)
             if dialog.exec_() == QDialog.Accepted:

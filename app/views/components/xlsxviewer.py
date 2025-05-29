@@ -285,14 +285,15 @@ class XlsxViewerWidget(QWidget):
     """Excel表格查看器组件，用于展示和编辑Excel数据"""
     
     def __init__(self, parent=None,use_oss=False,oss_path=None,show_open=True, show_save=True, 
-             show_save_as=True, show_refresh=True, display_columns=None):
+             show_save_as=True, show_refresh=True, display_columns=None,datetime_columns=None):
         super().__init__(parent)
         self.current_file = None
         self.use_oss = use_oss
         self.oss_path = oss_path
         self.display_columns = display_columns  # 新增：要显示的列配置
         self._original_data = None  # 存储原始数据
-        
+        self.datetime_columns = datetime_columns  # 新增：要转换为日期的列配置
+
         # 添加字段映射配置
         self.column_mapping = {
             # 餐厅信息字段映射
@@ -515,6 +516,15 @@ class XlsxViewerWidget(QWidget):
                         display_data = data.copy()
                 else:
                     display_data = data.copy()
+                
+                # 如果存在要转换为日期的列，进行日期转换
+                if self.datetime_columns:
+                    for col in self.datetime_columns:
+                        if col in display_data.columns:
+                            try:
+                                display_data[col] = pd.to_datetime(display_data[col]).dt.strftime('%Y-%m-%d')
+                            except:
+                                pass
                 
                 # 重命名列名为中文
                 display_data = display_data.rename(columns=self.column_mapping)
