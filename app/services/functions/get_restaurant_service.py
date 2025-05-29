@@ -27,27 +27,31 @@ except ImportError:
 # 设置日志
 LOGGER = setup_logger("moco.log")
 
-# 相似度和距离阈值
-NAME_SIMILARITY_THRESHOLD = 0.6  # 名称相似度阈值
-ADDRESS_SIMILARITY_THRESHOLD = 0.6  # 地址相似度阈值
-DISTANCE_THRESHOLD = 1000  # 距离阈值（米）
-
 class GetRestaurantService:
     """
     餐厅信息获取服务，用于从各种API中获取餐厅信息
     """
-    def __init__(self, conf=CONF, benchmark_path=None):
+    def __init__(self, conf=CONF, benchmark_path=None, name_similarity_threshold=0.6, 
+                 address_similarity_threshold=0.6, distance_threshold=1000):
         """
         初始化餐厅获取服务
         
         :param conf: 配置服务实例
         :param benchmark_path: 基准数据文件路径，可选
+        :param name_similarity_threshold: 名称相似度阈值，默认0.6
+        :param address_similarity_threshold: 地址相似度阈值，默认0.6
+        :param distance_threshold: 距离阈值（米），默认1000
         """
         self.conf = conf  # 配置服务
         self.info = []  # 存储获取到的餐厅信息
         self.n = 30 ## 获取页数
         self.restaurants = []  # 最终处理后的餐厅列表
         self.backends = ['gaode', 'baidu', 'serp', 'tripadvisor']  # 支持的后端
+        
+        # 相似度和距离阈值
+        self.name_similarity_threshold = name_similarity_threshold
+        self.address_similarity_threshold = address_similarity_threshold
+        self.distance_threshold = distance_threshold
         
         # 如果提供了基准数据，则加载
         self.benchmark = []
@@ -345,7 +349,7 @@ class GetRestaurantService:
         """
         if restaurant_list is None:
             restaurant_list = self.info
-        LOGGER.info(f"开始基于相似度和距离去重...")
+        LOGGER.info(f"开始基于相似度和距离去重, 距离相似度阈值为{self.name_similarity_threshold}, 地址相似度阈值为{self.address_similarity_threshold}, 距离阈值为{self.distance_threshold}")
         deduped_info = []
         duplicate_count = 0
         
@@ -391,10 +395,11 @@ class GetRestaurantService:
                 address_similarity = self._calculate_text_similarity(address1, address2)
                 distance = self._calculate_distance(lat1, lon1, lat2, lon2)
                 
+                
                 # 判断是否为重复项
-                if (name_similarity >= NAME_SIMILARITY_THRESHOLD and 
-                    address_similarity >= ADDRESS_SIMILARITY_THRESHOLD and 
-                    distance <= DISTANCE_THRESHOLD):
+                if (name_similarity >= self.name_similarity_threshold and 
+                    address_similarity >= self.address_similarity_threshold and 
+                    distance <= self.distance_threshold):
                     is_duplicate = True
                     duplicate_count += 1
                     break

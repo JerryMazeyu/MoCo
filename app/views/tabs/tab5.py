@@ -81,32 +81,46 @@ class VehicleAddDialog(QDialog):
         # 创建表单
         form_layout = QFormLayout()
         
-        # 车牌号
+        # 车牌号（必填）
         self.plate_input = QLineEdit()
         self.plate_input.setPlaceholderText("请输入车牌号")
-        form_layout.addRow("车牌号:", self.plate_input)
+        plate_label = QLabel("车牌号<span style='color: red;'>*</span>:")
+        plate_label.setStyleSheet("QLabel { color: black; }")
+        form_layout.addRow(plate_label, self.plate_input)
         
-        # 司机姓名
+        # 司机姓名（必填）
         self.driver_input = QLineEdit()
         self.driver_input.setPlaceholderText("请输入司机姓名")
-        form_layout.addRow("司机姓名:", self.driver_input)
+        driver_label = QLabel("司机姓名<span style='color: red;'>*</span>:")
+        driver_label.setStyleSheet("QLabel { color: black; }")
+        form_layout.addRow(driver_label, self.driver_input)
         
-        # 车辆类型
+        # 车辆类型（必填）
         self.type_combo = QComboBox()
-        self.type_combo.addItem("运油车", "to_rest")  # 运油车对应to_rest类型
-        self.type_combo.addItem("送货车", "to_sale")  # 送货车对应to_sale类型
+        self.type_combo.addItem("餐厅收集车(to_rest)", "to_rest")  # 餐厅收集车对应to_rest类型
+        self.type_combo.addItem("销售运输车(to_sale)", "to_sale")  # 销售运输车对应to_sale类型
         self.type_combo.currentIndexChanged.connect(self.update_cooldown_days)  # 添加类型改变事件处理
-        form_layout.addRow("车辆类型:", self.type_combo)
+        type_label = QLabel("车辆类型<span style='color: red;'>*</span>:")
+        type_label.setStyleSheet("QLabel { color: black; }")
+        type_label.setToolTip("车辆类型（目前有餐厅收集车to_rest、销售运输车to_sale两种）")
+        form_layout.addRow(type_label, self.type_combo)
 
-        #车辆冷冻时间
+        # 车辆冷却时间（可选）
         self.cooldown_input = QLineEdit()
-        self.cooldown_input.setText("1")  # 设置默认值为3
-        self.cooldown_input.setPlaceholderText("请输入冷却天数）")
+        self.cooldown_input.setText("1")  # 设置默认值为1
+        self.cooldown_input.setPlaceholderText("请输入冷却天数")
         # 只允许输入数字
         self.cooldown_input.setValidator(QIntValidator(1, 99))
-        form_layout.addRow("冷却时间(天):", self.cooldown_input)
+        cooldown_label = QLabel("冷却时间(天):")
+        cooldown_label.setToolTip("车辆完成一次任务后需要等待的冷却时间")
+        form_layout.addRow(cooldown_label, self.cooldown_input)
         
         layout.addLayout(form_layout)
+        
+        # 添加说明文字
+        note_label = QLabel("<span style='color: red;'>*</span> 为必填项")
+        note_label.setStyleSheet("font-size: 12px; color: #666; margin-top: 10px;")
+        layout.addWidget(note_label)
         
         # 添加按钮
         button_layout = QHBoxLayout()
@@ -125,9 +139,9 @@ class VehicleAddDialog(QDialog):
     def update_cooldown_days(self):
         """根据车辆类型更新冷却天数"""
         vehicle_type = self.type_combo.currentData()
-        if vehicle_type == "to_rest":  # 运油车
+        if vehicle_type == "to_rest":  # 餐厅收集车
             self.cooldown_input.setText("1")
-        else:  # 送货车
+        else:  # 销售运输车
             self.cooldown_input.setText("3")
     
     def get_vehicle_info(self):
@@ -136,10 +150,19 @@ class VehicleAddDialog(QDialog):
         driver = self.driver_input.text().strip()
         vehicle_type = self.type_combo.currentData()
         cooldown_days = self.cooldown_input.text().strip()
-        cooldown_days = int(cooldown_days) if cooldown_days else 3
+        cooldown_days = int(cooldown_days) if cooldown_days else 1
 
+        # 验证必填项
         if not plate:
             QMessageBox.warning(self, "输入错误", "车牌号不能为空")
+            return None
+            
+        if not driver:
+            QMessageBox.warning(self, "输入错误", "司机姓名不能为空")
+            return None
+            
+        if not vehicle_type:
+            QMessageBox.warning(self, "输入错误", "请选择车辆类型")
             return None
             
         # 返回车辆信息字典
@@ -253,7 +276,21 @@ class Tab5(QWidget):
         """)
         
         excel_layout = QVBoxLayout(excel_group)
-        self.xlsx_viewer = XlsxViewerWidget(show_open=False, show_save=False, show_save_as=True, show_refresh=True)
+        self.xlsx_viewer = XlsxViewerWidget(
+            show_open=False, 
+            show_save=False, 
+            show_save_as=True, 
+            show_refresh=True,
+            display_columns=[
+                'vehicle_id', 'vehicle_license_plate', 'vehicle_driver_name', 
+                'vehicle_type', 'vehicle_belonged_cp', 'vehicle_status',
+                'vehicle_rough_weight', 'vehicle_tare_weight', 'vehicle_net_weight',
+                'vehicle_last_use', 'vehicle_cooldown_days'
+            ],
+            datetime_columns=[
+                'vehicle_last_use'
+            ]
+        )
         excel_layout.addWidget(self.xlsx_viewer)
         
         # 添加到主布局
@@ -294,9 +331,10 @@ class Tab5(QWidget):
             }
         """)
         
-        # 下载模版数据按钮
-        self.download_template_button = QPushButton("下载模版数据")
+        # 下载车辆模板按钮
+        self.download_template_button = QPushButton("下载车辆模板")
         self.download_template_button.clicked.connect(self.download_template)
+        self.download_template_button.setToolTip("下载车辆数据录入模板文件，包含必填字段：车牌号、司机姓名、车辆类型")
         self.download_template_button.setStyleSheet("""
             QPushButton {
                 background-color: #337ab7;
@@ -467,7 +505,9 @@ class Tab5(QWidget):
                     LOGGER.info(f"OSS路径 {self.oss_path} 中没有数据，创建空表")
                     self.vehicles_data = pd.DataFrame(columns=[
                         "vehicle_id", "vehicle_license_plate", "vehicle_driver_name", 
-                        "vehicle_type", "vehicle_belonged_cp", "vehicle_status"
+                        "vehicle_type", "vehicle_belonged_cp", "vehicle_status",
+                        "vehicle_rough_weight", "vehicle_tare_weight", "vehicle_net_weight",
+                        "vehicle_last_use", "vehicle_cooldown_days", "vehicle_historys", "vehicle_other_info"
                     ])
                     self.xlsx_viewer.load_data(data=self.vehicles_data)
             except Exception as e:
@@ -475,7 +515,9 @@ class Tab5(QWidget):
                 # 创建空DataFrame
                 self.vehicles_data = pd.DataFrame(columns=[
                     "vehicle_id", "vehicle_license_plate", "vehicle_driver_name", 
-                    "vehicle_type", "vehicle_belonged_cp", "vehicle_status"
+                    "vehicle_type", "vehicle_belonged_cp", "vehicle_status",
+                    "vehicle_rough_weight", "vehicle_tare_weight", "vehicle_net_weight",
+                    "vehicle_last_use", "vehicle_cooldown_days", "vehicle_historys", "vehicle_other_info"
                 ])
                 self.xlsx_viewer.load_data(data=self.vehicles_data)
                 
@@ -604,31 +646,34 @@ class Tab5(QWidget):
             QMessageBox.critical(self, "保存失败", f"保存车辆数据到OSS时出错: {str(e)}")
     
     def download_template(self):
-        """下载模版数据"""
+        """下载车辆模板文件"""
         try:
             # 获取保存位置
             save_path, _ = QFileDialog.getSaveFileName(
-                self, "保存模版文件", "vehicles_template.xlsx", "Excel文件 (*.xlsx)"
+                self, "保存车辆模板文件", "vehicle_template.xlsx", "Excel文件 (*.xlsx)"
             )
             
             if not save_path:
                 return  # 用户取消
             
-            # 获取默认模版文件路径
-            
-            template_path = f"CPs/template/default.xlsx"
+            # 获取车辆模板文件路径
+            template_path = "CPs/template/vehicle_template.xlsx"
             try:
                 file = oss_get_excel_file(template_path)
-                file.to_excel(save_path, index=False)
-                QMessageBox.information(self, "下载成功", f"模版文件已保存到: {save_path}")
-                LOGGER.info(f"模版文件已下载到: {save_path}")
+                if file is not None:
+                    file.to_excel(save_path, index=False)
+                    QMessageBox.information(self, "下载成功", f"车辆模板文件已保存到: {save_path}")
+                    LOGGER.info(f"车辆模板文件已下载到: {save_path}")
+                else:
+                    QMessageBox.warning(self, "模板文件不存在", f"OSS中未找到车辆模板文件: {template_path}")
+                    LOGGER.warning(f"OSS中未找到车辆模板文件: {template_path}")
             except Exception as e:
-                LOGGER.error(f"下载模版文件时出错: {str(e)}")
-                QMessageBox.critical(self, "下载失败", f"下载模版文件时出错: {str(e)}")
+                LOGGER.error(f"下载车辆模板文件时出错: {str(e)}")
+                QMessageBox.critical(self, "下载失败", f"下载车辆模板文件时出错: {str(e)}")
                 
         except Exception as e:
-            LOGGER.error(f"下载模版数据时出错: {str(e)}")
-            QMessageBox.critical(self, "下载失败", f"下载模版数据时出错: {str(e)}")
+            LOGGER.error(f"下载车辆模板时出错: {str(e)}")
+            QMessageBox.critical(self, "下载失败", f"下载车辆模板时出错: {str(e)}")
     
     def batch_upload(self):
         """批量上传车辆数据"""
@@ -692,14 +737,48 @@ class Tab5(QWidget):
                 
                 # 批量生成车辆对象并添加到现有数据
                 new_vehicles = []
-                for record in valid_records:
-                    # 设置所属CP
-                    record["vehicle_belonged_cp"] = self.current_cp['cp_id']
-                    
-                    # 创建Vehicle实例并生成
-                    vehicle = Vehicle(record)
-                    vehicle.generate()
-                    new_vehicles.append(vehicle.to_dict())
+                skipped_count = 0
+                for i, record in enumerate(valid_records):
+                    try:
+                        # 设置所属CP
+                        record["vehicle_belonged_cp"] = self.current_cp['cp_id']
+                        
+                        # 创建Vehicle实例
+                        vehicle = Vehicle(record)
+                        
+                        # 先生成ID
+                        vehicle._generate_id()
+                        
+                        # 检查车牌号是否已存在（在现有数据和已处理的新车辆中）
+                        existing_plates = []
+                        if self.vehicles_data is not None and not self.vehicles_data.empty:
+                            existing_plates.extend(self.vehicles_data['vehicle_license_plate'].tolist())
+                        existing_plates.extend([v['vehicle_license_plate'] for v in new_vehicles])
+                        
+                        if record.get('vehicle_license_plate') in existing_plates:
+                            LOGGER.warning(f"第{i+1}行车牌号 {record.get('vehicle_license_plate')} 已存在，跳过")
+                            skipped_count += 1
+                            continue
+                        
+                        # 检查ID是否已存在（在现有数据和已处理的新车辆中）
+                        existing_ids = []
+                        if self.vehicles_data is not None and not self.vehicles_data.empty and 'vehicle_id' in self.vehicles_data.columns:
+                            existing_ids.extend(self.vehicles_data['vehicle_id'].tolist())
+                        existing_ids.extend([v['vehicle_id'] for v in new_vehicles])
+                        
+                        if vehicle.inst.vehicle_id in existing_ids:
+                            LOGGER.warning(f"第{i+1}行生成的车辆ID {vehicle.inst.vehicle_id} 已存在，跳过")
+                            skipped_count += 1
+                            continue
+                        
+                        # 继续生成其他字段
+                        vehicle.generate()
+                        new_vehicles.append(vehicle.to_dict())
+                        
+                    except Exception as e:
+                        LOGGER.error(f"处理第{i+1}行车辆数据时出错: {str(e)}")
+                        skipped_count += 1
+                        continue
                 
                 # 添加到现有数据
                 if self.vehicles_data is None:
@@ -709,6 +788,12 @@ class Tab5(QWidget):
                 
                 # 更新UI
                 self.xlsx_viewer.load_data(data=self.vehicles_data)
+                
+                # 计算跳过的数量提示
+                success_msg = f"成功添加 {len(new_vehicles)} 条车辆记录"
+                if skipped_count > 0:
+                    success_msg += f"，跳过 {skipped_count} 条重复或无效记录"
+                success_msg += "，请点击「保存到OSS」按钮保存更改"
                 
                 QMessageBox.information(
                     self, 

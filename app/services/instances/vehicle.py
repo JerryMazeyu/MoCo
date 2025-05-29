@@ -130,7 +130,7 @@ class Vehicle(BaseInstance):
                 LOGGER.info(f"未指定车辆类型，设置为默认类型: {self.inst.vehicle_type}")
             
             # 生成原始皮重
-            if not hasattr(self.inst, 'vehicle_tare_weight') or not self.inst.vehicle_tare_weight:
+            if not hasattr(self.inst, 'vehicle_tare_weight') or not self.inst.vehicle_tare_weight or pd.isna(self.inst.vehicle_tare_weight):
                 # 根据车辆类型计算原始皮重
                 if self.inst.vehicle_type == "to_rest":
                     # 收集车公式：RANDBETWEEN(43,46)*100+RANDBETWEEN(1,9)*10
@@ -149,7 +149,7 @@ class Vehicle(BaseInstance):
                 LOGGER.info(f"已为车辆生成皮重: {self.inst.vehicle_tare_weight}kg")
             
             # 生成临时毛重
-            if not hasattr(self.inst, 'vehicle_rough_weight') or not self.inst.vehicle_rough_weight:
+            if not hasattr(self.inst, 'vehicle_rough_weight') or not self.inst.vehicle_rough_weight or pd.isna(self.inst.vehicle_rough_weight):
                 # 在原始皮重的基础上增加随机值
                 if self.inst.vehicle_type == "to_rest":
                     # 收集车增加10~90的随机值
@@ -166,7 +166,7 @@ class Vehicle(BaseInstance):
                 LOGGER.info(f"已为车辆生成毛重: {self.inst.vehicle_rough_weight}kg")
             
             # 计算净重
-            if not hasattr(self.inst, 'vehicle_net_weight') or not self.inst.vehicle_net_weight:
+            if not hasattr(self.inst, 'vehicle_net_weight') or not self.inst.vehicle_net_weight or pd.isna(self.inst.vehicle_net_weight):
                 self.inst.vehicle_net_weight = self.inst.vehicle_rough_weight - self.inst.vehicle_tare_weight
                 LOGGER.info(f"已为车辆计算净重: {self.inst.vehicle_net_weight}kg")
             
@@ -182,7 +182,7 @@ class Vehicle(BaseInstance):
         :return: 是否初始化成功
         """
         try:
-            if not hasattr(self.inst, 'vehicle_historys') or self.inst.vehicle_historys is None:
+            if not hasattr(self.inst, 'vehicle_historys') or self.inst.vehicle_historys is None or pd.isna(self.inst.vehicle_historys):
                 self.inst.vehicle_historys = []
                 LOGGER.info("已初始化车辆历史记录")
             return True
@@ -197,16 +197,16 @@ class Vehicle(BaseInstance):
         :return: 是否设置成功
         """
         try:
-            if not hasattr(self.inst, 'vehicle_status') or not self.inst.vehicle_status:
+            if not hasattr(self.inst, 'vehicle_status') or not self.inst.vehicle_status or pd.isna(self.inst.vehicle_status):
                 self.inst.vehicle_status = "available"
                 LOGGER.info(f"已为车辆设置默认状态: {self.inst.vehicle_status}")
             
-            if not hasattr(self.inst, 'vehicle_last_use') or not self.inst.vehicle_last_use:
+            if not hasattr(self.inst, 'vehicle_last_use') or not self.inst.vehicle_last_use or pd.isna(self.inst.vehicle_last_use):
                 # 设置上次使用时间为现在
                 self.inst.vehicle_last_use = '1900-01-01'
                 LOGGER.info(f"已为车辆设置上次使用时间: {self.inst.vehicle_last_use}")
             
-            if not hasattr(self.inst, 'vehicle_cooldown_days') or not self.inst.vehicle_cooldown_days:
+            if not hasattr(self.inst, 'vehicle_cooldown_days') or not self.inst.vehicle_cooldown_days or pd.isna(self.inst.vehicle_cooldown_days):
                 self.inst.vehicle_cooldown_days = 3
                 LOGGER.info(f"已为车辆设置冷却天数: {self.inst.vehicle_cooldown_days}")
             
@@ -223,7 +223,7 @@ class Vehicle(BaseInstance):
         :return: 是否设置成功
         """
         try:
-            if not hasattr(self.inst, 'vehicle_other_info') or self.inst.vehicle_other_info is None:
+            if not hasattr(self.inst, 'vehicle_other_info') or self.inst.vehicle_other_info is None or pd.isna(self.inst.vehicle_other_info):
                 self.inst.vehicle_other_info = {}
                 LOGGER.info("已初始化车辆其他信息")
             return True

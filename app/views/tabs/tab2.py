@@ -17,7 +17,7 @@ from pathlib import Path
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                             QLabel, QFrame, QComboBox, QGroupBox, QGridLayout,
                             QFileDialog, QMessageBox, QLayout, QListWidget, QDialog, QLineEdit, 
-                            QApplication, QCheckBox, QSpinBox, QRadioButton, QToolButton)
+                            QApplication, QCheckBox, QSpinBox, QRadioButton, QToolButton, QDoubleSpinBox)
 from PyQt5.QtCore import Qt, QSize, QPoint, QRect, QThread, pyqtSignal, QEvent, QTimer
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QPainter
 import pandas as pd
@@ -378,7 +378,8 @@ class RestaurantWorker(QThread):
     error = pyqtSignal(str)  # 错误信号，携带错误信息
     progress = pyqtSignal(str)  # 进度信号，用于实时更新进度
     
-    def __init__(self, city, cp_id, use_llm=True, if_gen_info=False):
+    def __init__(self, city, cp_id, use_llm=True, if_gen_info=False, 
+                 name_similarity_threshold=0.6, address_similarity_threshold=0.6, distance_threshold=1000):
         super().__init__()
         # 预先导入必要的模块
         import tempfile
@@ -394,6 +395,11 @@ class RestaurantWorker(QThread):
         self.use_llm = use_llm
         self.if_gen_info = if_gen_info
         self.running = True
+        
+        # 相似度阈值参数
+        self.name_similarity_threshold = name_similarity_threshold
+        self.address_similarity_threshold = address_similarity_threshold
+        self.distance_threshold = distance_threshold
         
         # 用于资源跟踪和清理的属性
         self._restaurant_service = None
@@ -444,7 +450,11 @@ class RestaurantWorker(QThread):
             self.progress.emit(f"开始获取 {self.city} 的餐厅信息...")
             
             # 创建服务实例
-            restaurant_service = GetRestaurantService()
+            restaurant_service = GetRestaurantService(
+                name_similarity_threshold=self.name_similarity_threshold,
+                address_similarity_threshold=self.address_similarity_threshold,
+                distance_threshold=self.distance_threshold
+            )
             self._restaurant_service = restaurant_service  # 保存引用用于取消时清理
             
             # 检查线程是否仍在运行
@@ -952,6 +962,10 @@ class Tab2(QWidget):
         # 高级配置默认值
         self.search_radius = 50  # 默认搜索半径
         self.strict_mode = False  # 默认非严格模式
+        # 相似度阈值默认值
+        self.name_similarity_threshold = 0.6  # 名称相似度阈值
+        self.address_similarity_threshold = 0.6  # 地址相似度阈值
+        self.distance_threshold = 1000  # 距离阈值（米）
 
         self.timestamp = time.strftime("%Y%m%d_%H%M%S")
         
@@ -1393,10 +1407,14 @@ class Tab2(QWidget):
             }
         """)
         
-        # 使用水平布局替代网格布局
-        advanced_layout = QHBoxLayout(self.advanced_config_frame)
+        # 使用垂直布局来容纳更多配置项
+        advanced_layout = QVBoxLayout(self.advanced_config_frame)
         advanced_layout.setContentsMargins(10, 10, 10, 10)
-        advanced_layout.setSpacing(15)
+        advanced_layout.setSpacing(10)
+        
+        # 第一行：搜索半径和严格模式
+        first_row_layout = QHBoxLayout()
+        first_row_layout.setSpacing(15)
         
         # 搜索半径配置
         radius_label = QLabel("搜索半径(KM):")
@@ -1423,15 +1441,68 @@ class Tab2(QWidget):
         strict_radio_layout.setContentsMargins(0, 0, 0, 0)
         strict_radio_layout.addWidget(self.strict_mode_yes)
         strict_radio_layout.addWidget(self.strict_mode_no)
-        strict_radio_layout.addStretch()
         
-        # 添加到水平布局中
-        advanced_layout.addWidget(radius_label)
-        advanced_layout.addWidget(self.radius_spinbox)
-        advanced_layout.addSpacing(20)
-        advanced_layout.addWidget(strict_mode_label)
-        advanced_layout.addLayout(strict_radio_layout)
-        advanced_layout.addStretch(1)
+        # 第一行布局
+        first_row_layout.addWidget(radius_label)
+        first_row_layout.addWidget(self.radius_spinbox)
+        first_row_layout.addSpacing(20)
+        first_row_layout.addWidget(strict_mode_label)
+        first_row_layout.addLayout(strict_radio_layout)
+        first_row_layout.addStretch(1)
+        
+        # 第二行：相似度阈值配置
+        second_row_layout = QHBoxLayout()
+        second_row_layout.setSpacing(15)
+        
+        # 名称相似度阈值
+        name_sim_label = QLabel("名称相似度:")
+        self.name_similarity_spinbox = QDoubleSpinBox()
+        self.name_similarity_spinbox.setRange(0.0, 1.0)
+        self.name_similarity_spinbox.setDecimals(2)
+        self.name_similarity_spinbox.setSingleStep(0.01)
+        self.name_similarity_spinbox.setValue(self.name_similarity_threshold)
+        self.name_similarity_spinbox.setFixedWidth(80)
+        self.name_similarity_spinbox.valueChanged.connect(self.update_name_similarity_threshold)
+        
+        # 地址相似度阈值
+        address_sim_label = QLabel("地址相似度:")
+        self.address_similarity_spinbox = QDoubleSpinBox()
+        self.address_similarity_spinbox.setRange(0.0, 1.0)
+        self.address_similarity_spinbox.setDecimals(2)
+        self.address_similarity_spinbox.setSingleStep(0.01)
+        self.address_similarity_spinbox.setValue(self.address_similarity_threshold)
+        self.address_similarity_spinbox.setFixedWidth(80)
+        self.address_similarity_spinbox.valueChanged.connect(self.update_address_similarity_threshold)
+        
+        # 距离阈值
+        distance_label = QLabel("距离阈值(米):")
+        self.distance_threshold_spinbox = QSpinBox()
+        self.distance_threshold_spinbox.setRange(1, 100000)
+        self.distance_threshold_spinbox.setValue(self.distance_threshold)
+        self.distance_threshold_spinbox.setSuffix(" 米")
+        self.distance_threshold_spinbox.setFixedWidth(100)
+        self.distance_threshold_spinbox.valueChanged.connect(self.update_distance_threshold)
+        
+        # 第二行布局
+        second_row_layout.addWidget(name_sim_label)
+        second_row_layout.addWidget(self.name_similarity_spinbox)
+        second_row_layout.addSpacing(10)
+        second_row_layout.addWidget(address_sim_label)
+        second_row_layout.addWidget(self.address_similarity_spinbox)
+        second_row_layout.addSpacing(10)
+        second_row_layout.addWidget(distance_label)
+        second_row_layout.addWidget(self.distance_threshold_spinbox)
+        second_row_layout.addStretch(1)
+        
+        # 添加说明文字
+        note_label = QLabel("注: 相似度阈值用于去重，范围0-1，值越大要求越严格；距离阈值用于判断餐厅是否重复")
+        note_label.setStyleSheet("color: #666; font-size: 11px; margin-top: 5px;")
+        note_label.setWordWrap(True)
+        
+        # 添加到主布局
+        advanced_layout.addLayout(first_row_layout)
+        advanced_layout.addLayout(second_row_layout)
+        advanced_layout.addWidget(note_label)
         
         # 隐藏高级配置面板
         self.advanced_config_frame.setVisible(False)
@@ -1466,6 +1537,21 @@ class Tab2(QWidget):
             self.conf.runtime.STRICT_MODE = False
             self.strict_mode = False
             LOGGER.info("严格模式已禁用")
+    
+    def update_name_similarity_threshold(self, value):
+        """更新名称相似度阈值"""
+        self.name_similarity_threshold = value
+        LOGGER.info(f"名称相似度阈值已更新为: {value}")
+    
+    def update_address_similarity_threshold(self, value):
+        """更新地址相似度阈值"""
+        self.address_similarity_threshold = value
+        LOGGER.info(f"地址相似度阈值已更新为: {value}")
+    
+    def update_distance_threshold(self, value):
+        """更新距离阈值"""
+        self.distance_threshold = value
+        LOGGER.info(f"距离阈值已更新为: {value} 米")
     
     def search_by_cp_location(self):
         """根据CP位置进行搜索"""
@@ -1717,7 +1803,10 @@ class Tab2(QWidget):
                 city=city, 
                 cp_id=self.current_cp['cp_id'], 
                 use_llm=use_llm,
-                if_gen_info=False  # 不在查询阶段生成详细信息
+                if_gen_info=False,  # 不在查询阶段生成详细信息
+                name_similarity_threshold=self.name_similarity_threshold,
+                address_similarity_threshold=self.address_similarity_threshold,
+                distance_threshold=self.distance_threshold
             )
             
             # 将搜索半径和严格模式设置到工作线程中（如果Worker类支持这些参数）

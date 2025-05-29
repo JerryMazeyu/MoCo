@@ -313,11 +313,14 @@ class XlsxViewerWidget(QWidget):
             'rest_type': '餐厅类型',
             
             # 车辆信息字段映射
+            'vehicle_id': '车辆ID',
             'vehicle_license_plate': '车牌号',
             'vehicle_driver_name': '司机姓名',
             'vehicle_type': '车辆类型',
+            'vehicle_belonged_cp': '所属CP',
             'vehicle_rough_weight': '毛重',
             'vehicle_tare_weight': '皮重',
+            'vehicle_net_weight': '净重',
             'vehicle_cooldown_days': '冷却天数',
             'vehicle_status': '车辆状态',
             'vehicle_last_use': '最后使用日期',
