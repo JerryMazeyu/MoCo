@@ -379,7 +379,8 @@ class RestaurantWorker(QThread):
     progress = pyqtSignal(str)  # 进度信号，用于实时更新进度
     
     def __init__(self, city, cp_id, use_llm=True, if_gen_info=False, 
-                 name_similarity_threshold=0.6, address_similarity_threshold=0.6, distance_threshold=1000):
+                 name_similarity_threshold=0.6, address_similarity_threshold=0.6, distance_threshold=1000,
+                 existing_data=None, is_append_mode=False):
         super().__init__()
         # 预先导入必要的模块
         import tempfile
@@ -395,6 +396,10 @@ class RestaurantWorker(QThread):
         self.use_llm = use_llm
         self.if_gen_info = if_gen_info
         self.running = True
+        
+        # 增补模式相关参数
+        self.existing_data = existing_data
+        self.is_append_mode = is_append_mode
         
         # 相似度阈值参数
         self.name_similarity_threshold = name_similarity_threshold
@@ -412,6 +417,10 @@ class RestaurantWorker(QThread):
         # 使用CPU核心数的一半，但最少2个，最多4个
         self.num_workers = max(2, min(4, multiprocessing.cpu_count() // 2))
         LOGGER.info(f"设置工作线程数为: {self.num_workers}")
+        
+        # 如果是增补模式，记录已有数据信息
+        if self.is_append_mode and self.existing_data is not None:
+            LOGGER.info(f"启用增补模式，已有数据: {len(self.existing_data)} 条")
     
     def stop(self):
         """停止线程执行"""
@@ -547,11 +556,53 @@ class RestaurantWorker(QThread):
                 self.progress.emit(f"正在将餐厅信息转换为表格数据...")
                 restaurant_data = restaurant_group.to_dataframe()
                 
+                # 如果是增补模式，需要与已有数据合并并去重
+                if self.is_append_mode and self.existing_data is not None:
+                    self.progress.emit(f"增补模式：正在合并已有数据...")
+                    
+                    # 记录新获取的数据量
+                    new_data_count = len(restaurant_data)
+                    existing_data_count = len(self.existing_data)
+                    
+                    LOGGER.info(f"新获取餐厅数据: {new_data_count} 条")
+                    LOGGER.info(f"已有餐厅数据: {existing_data_count} 条")
+                    
+                    # 合并数据
+                    combined_data = pd.concat([self.existing_data, restaurant_data], ignore_index=True)
+                    LOGGER.info(f"合并后总数据: {len(combined_data)} 条")
+                    
+                    # 使用GetRestaurantService进行去重
+                    self.progress.emit(f"正在对合并后的数据进行去重...")
+                    
+                    # 创建临时服务实例用于去重
+                    dedup_service = GetRestaurantService(
+                        name_similarity_threshold=self.name_similarity_threshold,
+                        address_similarity_threshold=self.address_similarity_threshold,
+                        distance_threshold=self.distance_threshold
+                    )
+                    
+                    # 将DataFrame转换为字典列表进行去重
+                    combined_records = combined_data.to_dict('records')
+                    dedup_service.info = combined_records
+                    
+                    # 执行去重
+                    dedup_service._dedup()
+                    
+                    # 将去重后的数据转换回DataFrame
+                    restaurant_data = pd.DataFrame(dedup_service.info)
+                    
+                    final_count = len(restaurant_data)
+                    removed_count = len(combined_data) - final_count
+                    
+                    LOGGER.info(f"去重完成，最终数据: {final_count} 条，去除重复: {removed_count} 条")
+                    self.progress.emit(f"增补完成：原有 {existing_data_count} 条，新增 {new_data_count} 条，去重后总计 {final_count} 条")
+                
                 # 保存完整数据到临时文件
                 import os
                 import datetime
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                file_path = os.path.join(self.temp_dir, f"restaurants_{self.city}_{timestamp}.xlsx")
+                mode_suffix = "_append" if self.is_append_mode else ""
+                file_path = os.path.join(self.temp_dir, f"restaurants_{self.city}_{timestamp}{mode_suffix}.xlsx")
                 
                 self.progress.emit(f"正在保存完整数据到临时文件: {file_path}")
                 restaurant_data.to_excel(file_path, index=False)
@@ -567,8 +618,9 @@ class RestaurantWorker(QThread):
                 import gc
                 gc.collect()
                 
-                LOGGER.info(f"{self.city} 餐厅信息获取完成，共 {len(restaurant_data)} 条记录")
-                self.progress.emit(f"餐厅信息获取完成，共 {len(restaurant_data)} 条记录")
+                mode_text = "增补模式" if self.is_append_mode else "全新获取"
+                LOGGER.info(f"{self.city} 餐厅信息获取完成({mode_text})，共 {len(restaurant_data)} 条记录")
+                self.progress.emit(f"餐厅信息获取完成({mode_text})，共 {len(restaurant_data)} 条记录")
                 self.finished.emit(restaurant_data, file_path)
             except Exception as e:
                 LOGGER.error(f"转换餐厅数据为DataFrame时出错: {str(e)}")
@@ -1770,6 +1822,37 @@ class Tab2(QWidget):
                 QMessageBox.warning(self, "请输入城市", "请先输入餐厅城市")
                 return
             
+            # 检查是否已有数据，决定是否进行增补
+            existing_data = None
+            is_append_mode = False
+            
+            # 检查当前表格中是否有数据
+            if (hasattr(self.xlsx_viewer, 'model') and 
+                self.xlsx_viewer.model is not None and 
+                hasattr(self.xlsx_viewer.model, '_original_data') and 
+                self.xlsx_viewer.model._original_data is not None and 
+                len(self.xlsx_viewer.model._original_data) > 0):
+                
+                existing_data = self.xlsx_viewer.model._original_data.copy()
+                
+                # 询问用户是否要进行增补
+                reply = QMessageBox.question(
+                    self, 
+                    '发现已有数据', 
+                    f'当前已有 {len(existing_data)} 条餐厅数据。\n\n'
+                    '选择"是"将在现有数据基础上增补新餐厅并去重\n'
+                    '选择"否"将清空现有数据，重新获取',
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+                
+                if reply == QMessageBox.Yes:
+                    is_append_mode = True
+                    LOGGER.info(f"启用增补模式，现有数据: {len(existing_data)} 条")
+                else:
+                    existing_data = None
+                    LOGGER.info("用户选择重新获取，将清空现有数据")
+            
             # 获取是否使用大模型
             use_llm = self.use_llm_checkbox.isChecked()
             self.conf.runtime.USE_LLM = use_llm
@@ -1795,7 +1878,8 @@ class Tab2(QWidget):
                 self.progress_label.setStyleSheet("color: #666; margin-top: 5px;")
                 self.layout.addWidget(self.progress_label)
             else:
-                self.progress_label.setText("正在准备...")
+                mode_text = "增补模式" if is_append_mode else "全新获取"
+                self.progress_label.setText(f"正在准备({mode_text})...")
                 self.progress_label.setVisible(True)
             
             # 创建工作线程，传递使用大模型的选项和高级配置
@@ -1806,7 +1890,9 @@ class Tab2(QWidget):
                 if_gen_info=False,  # 不在查询阶段生成详细信息
                 name_similarity_threshold=self.name_similarity_threshold,
                 address_similarity_threshold=self.address_similarity_threshold,
-                distance_threshold=self.distance_threshold
+                distance_threshold=self.distance_threshold,
+                existing_data=existing_data,  # 传递已有数据
+                is_append_mode=is_append_mode  # 传递增补模式标志
             )
             
             # 将搜索半径和严格模式设置到工作线程中（如果Worker类支持这些参数）
@@ -1819,7 +1905,8 @@ class Tab2(QWidget):
             self.worker.progress.connect(self.update_progress)
             
             # 启动线程
-            LOGGER.info(f"启动餐厅获取线程，搜索城市: {city}，{'使用' if use_llm else '不使用'}大模型，搜索半径: {self.search_radius}KM，严格模式: {'是' if self.strict_mode else '否'}")
+            mode_text = "增补模式" if is_append_mode else "全新获取"
+            LOGGER.info(f"启动餐厅获取线程({mode_text})，搜索城市: {city}，{'使用' if use_llm else '不使用'}大模型，搜索半径: {self.search_radius}KM，严格模式: {'是' if self.strict_mode else '否'}")
             self.worker.start()
             
         except Exception as e:
@@ -1873,6 +1960,12 @@ class Tab2(QWidget):
             row_count = len(restaurant_data)
             LOGGER.info(f"收到餐厅数据，共 {row_count} 条记录")
             
+            # 检查是否是增补模式
+            is_append_mode = hasattr(self.worker, 'is_append_mode') and self.worker.is_append_mode
+            existing_count = 0
+            if is_append_mode and hasattr(self.worker, 'existing_data') and self.worker.existing_data is not None:
+                existing_count = len(self.worker.existing_data)
+            
             # 限制显示的数据量，无论多大只显示前100行
             max_display_rows = 10
             if row_count > max_display_rows:
@@ -1890,9 +1983,21 @@ class Tab2(QWidget):
             self.xlsx_viewer.load_data(data=restaurant_data_display)
             
             # 显示成功消息，包含文件路径信息
-            success_msg = f"餐厅信息获取完成，共 {row_count} 条记录"
+            mode_text = "增补模式" if is_append_mode else "全新获取"
+            success_msg = f"餐厅信息获取完成({mode_text})"
+            
+            if is_append_mode:
+                success_msg += f"\n\n原有数据: {existing_count} 条"
+                success_msg += f"\n最终结果: {row_count} 条"
+                if existing_count > 0:
+                    # 计算实际新增的数量（考虑去重）
+                    net_added = row_count - existing_count
+                    success_msg += f"\n净增加: {net_added} 条"
+            else:
+                success_msg += f"\n\n共获取: {row_count} 条记录"
+            
             if warning_msg:
-                success_msg += "\n" + warning_msg
+                success_msg += "\n\n" + warning_msg
             success_msg += f"\n\n完整数据已保存到文件：\n{file_path}"
             success_msg += "\n\n您可以点击 补全餐厅信息 按钮来补全餐厅的详细数据。"
             
@@ -2901,6 +3006,37 @@ class Tab2(QWidget):
                 QMessageBox.warning(self, "请输入城市", "请先输入餐厅城市")
                 return
             
+            # 检查是否已有数据，决定是否进行增补
+            existing_data = None
+            is_append_mode = False
+            
+            # 检查当前表格中是否有数据
+            if (hasattr(self.xlsx_viewer, 'model') and 
+                self.xlsx_viewer.model is not None and 
+                hasattr(self.xlsx_viewer.model, '_original_data') and 
+                self.xlsx_viewer.model._original_data is not None and 
+                len(self.xlsx_viewer.model._original_data) > 0):
+                
+                existing_data = self.xlsx_viewer.model._original_data.copy()
+                
+                # 询问用户是否要进行增补
+                reply = QMessageBox.question(
+                    self, 
+                    '发现已有数据', 
+                    f'当前已有 {len(existing_data)} 条餐厅数据。\n\n'
+                    '选择"是"将在现有数据基础上增补新餐厅并去重\n'
+                    '选择"否"将清空现有数据，重新获取',
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+                
+                if reply == QMessageBox.Yes:
+                    is_append_mode = True
+                    LOGGER.info(f"启用增补模式（低资源版），现有数据: {len(existing_data)} 条")
+                else:
+                    existing_data = None
+                    LOGGER.info("用户选择重新获取（低资源版），将清空现有数据")
+            
             # 获取是否使用大模型
             use_llm = self.use_llm_checkbox.isChecked()
             
@@ -2909,8 +3045,21 @@ class Tab2(QWidget):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             unique_id = str(uuid.uuid4())[:8]  # 添加唯一ID确保目录唯一
             city_safe = city.replace(" ", "_").replace("/", "_")
-            output_dir = os.path.join(temp_base_dir, f"restaurants_{city_safe}_{timestamp}_{unique_id}")
+            mode_suffix = "_append" if is_append_mode else ""
+            output_dir = os.path.join(temp_base_dir, f"restaurants_{city_safe}_{timestamp}_{unique_id}{mode_suffix}")
             os.makedirs(output_dir, exist_ok=True)  # 立即创建目录
+            
+            # 如果是增补模式，先保存已有数据
+            existing_data_file = None
+            if is_append_mode and existing_data is not None:
+                existing_data_file = os.path.join(output_dir, f"existing_data_{timestamp}.xlsx")
+                existing_data.to_excel(existing_data_file, index=False)
+                LOGGER.info(f"已保存现有数据到: {existing_data_file}")
+                
+                # 记录临时文件
+                self.temp_files.append(existing_data_file)
+                if hasattr(self.conf.runtime, 'temp_files'):
+                    self.conf.runtime.temp_files.append(existing_data_file)
             
             # 检查是否存在同城市的已有结果
             existing_dirs = self.check_existing_city_results(city, temp_base_dir)
@@ -2994,6 +3143,14 @@ class Tab2(QWidget):
                 f"--config_file={config_file}"
             ]
             
+            # 如果是增补模式，添加已有数据文件参数
+            if is_append_mode and existing_data_file:
+                cmd.append(f"--existing_data_file={existing_data_file}")
+                cmd.append("--append_mode=True")
+                cmd.append(f"--name_similarity_threshold={self.name_similarity_threshold}")
+                cmd.append(f"--address_similarity_threshold={self.address_similarity_threshold}")
+                cmd.append(f"--distance_threshold={self.distance_threshold}")
+            
             # 添加关键词参数
             if keywords_to_search:
                 cmd.append("--keywords")
@@ -3008,13 +3165,16 @@ class Tab2(QWidget):
                 'city': city,
                 'keywords': keywords_to_search,
                 'loaded_dirs': [d['path'] for d in existing_dirs] if existing_dirs else [],
-                'timestamp': timestamp
+                'timestamp': timestamp,
+                'is_append_mode': is_append_mode,
+                'existing_data_file': existing_data_file
             }
             
             # 根据平台启动命令
             if sys.platform == 'win32':
                 # Windows
-                title = f"餐厅搜索 - {city}"
+                mode_text = "增补模式" if is_append_mode else "全新搜索"
+                title = f"餐厅搜索({mode_text}) - {city}"
                 start_cmd = f'start "{title}" cmd /k "{cmd_str} & echo. & echo 搜索完成，按任意键关闭窗口... & pause > nul"'
                 os.system(start_cmd)
             elif sys.platform == 'darwin':
@@ -3039,12 +3199,16 @@ read -n 1
             LOGGER.info(f"已启动低资源版餐厅搜索: {cmd_str}")
             
             # 显示提示信息
+            mode_text = "增补模式" if is_append_mode else "全新搜索"
             message = (
-                f"餐厅搜索已在新窗口中启动。\n"
+                f"餐厅搜索已在新窗口中启动({mode_text})。\n"
                 f"搜索城市: {city}\n"
-                f"输出目录: {output_dir}\n\n"
-                "搜索完成后，点击'加载搜索结果'按钮查看结果。"
+                f"输出目录: {output_dir}\n"
             )
+            if is_append_mode:
+                message += f"现有数据: {len(existing_data)} 条\n"
+            message += "\n搜索完成后，点击'加载搜索结果'按钮查看结果。"
+            
             QMessageBox.information(self, "搜索已启动", message)
             
             # 显示加载结果按钮
@@ -3120,6 +3284,8 @@ read -n 1
             
             task_info = self.current_low_resource_task
             output_dir = task_info['output_dir']
+            is_append_mode = task_info.get('is_append_mode', False)
+            existing_data_file = task_info.get('existing_data_file', None)
             
             if not os.path.exists(output_dir):
                 QMessageBox.warning(self, "目录不存在", f"输出目录不存在: {output_dir}")
@@ -3128,6 +3294,61 @@ read -n 1
             # 收集所有结果文件
             all_result_files = []
             
+            # 优先查找增补模式的最终结果文件
+            final_result_file = None
+            if is_append_mode:
+                for file_name in os.listdir(output_dir):
+                    if file_name.startswith('final_restaurants_') and file_name.endswith('.xlsx'):
+                        final_result_file = os.path.join(output_dir, file_name)
+                        LOGGER.info(f"找到增补模式最终结果文件: {final_result_file}")
+                        break
+            
+            # 如果找到最终结果文件，直接使用它
+            if final_result_file and os.path.exists(final_result_file):
+                try:
+                    merged_data = pd.read_excel(final_result_file)
+                    LOGGER.info(f"直接加载最终结果文件，共 {len(merged_data)} 条记录")
+                    
+                    # 显示前10条记录
+                    display_data = merged_data.head(10).copy()
+                    self.xlsx_viewer.load_data(data=display_data)
+                    
+                    # 保存为最后查询文件
+                    self.last_query_file = final_result_file
+                    
+                    # 显示成功消息
+                    msg_box = QMessageBox(self)
+                    msg_box.setWindowTitle("加载成功")
+                    
+                    message = f"餐厅数据加载完成(增补模式)！\n\n"
+                    message += f"最终结果: {len(merged_data)} 条记录\n\n"
+                    message += f"完整数据文件:\n{final_result_file}"
+                    
+                    msg_box.setText(message)
+                    msg_box.setIcon(QMessageBox.Information)
+                    
+                    open_button = msg_box.addButton("打开完整数据", QMessageBox.ActionRole)
+                    view_dir_button = msg_box.addButton("打开输出目录", QMessageBox.ActionRole)
+                    close_button = msg_box.addButton("关闭", QMessageBox.RejectRole)
+                    
+                    msg_box.exec_()
+                    
+                    if msg_box.clickedButton() == open_button:
+                        self.open_file_external(final_result_file)
+                    elif msg_box.clickedButton() == view_dir_button:
+                        self.open_file_external(output_dir)
+                    
+                    # 隐藏加载按钮
+                    if hasattr(self, 'load_search_results_button'):
+                        self.load_search_results_button.setVisible(False)
+                    
+                    return
+                    
+                except Exception as e:
+                    LOGGER.error(f"加载最终结果文件失败: {e}")
+                    # 继续使用原有逻辑
+            
+            # 如果没有找到最终结果文件，使用原有的合并逻辑
             # 从当前任务目录收集
             for file_name in os.listdir(output_dir):
                 if file_name.endswith('.xlsx') and file_name.startswith('restaurants_'):
@@ -3148,10 +3369,25 @@ read -n 1
             
             # 合并所有结果
             all_data = []
+            
+            # 如果是增补模式，先加载已有数据
+            existing_data_count = 0
+            if is_append_mode and existing_data_file and os.path.exists(existing_data_file):
+                try:
+                    existing_data = pd.read_excel(existing_data_file)
+                    all_data.append(existing_data)
+                    existing_data_count = len(existing_data)
+                    LOGGER.info(f"已加载现有数据 {existing_data_count} 条记录从: {existing_data_file}")
+                except Exception as e:
+                    LOGGER.error(f"加载现有数据失败 {existing_data_file}: {e}")
+            
+            # 加载新搜索的结果
+            new_data_count = 0
             for file_path in all_result_files:
                 try:
                     data = pd.read_excel(file_path)
                     all_data.append(data)
+                    new_data_count += len(data)
                     LOGGER.info(f"已加载 {len(data)} 条记录从: {file_path}")
                 except Exception as e:
                     LOGGER.error(f"加载文件失败 {file_path}: {e}")
@@ -3162,18 +3398,52 @@ read -n 1
             
             # 合并数据
             merged_data = pd.concat(all_data, ignore_index=True)
+            total_before_dedup = len(merged_data)
             
-            # 去重
-            if 'rest_chinese_name' in merged_data.columns and 'rest_chinese_address' in merged_data.columns:
-                merged_data = merged_data.drop_duplicates(
-                    subset=['rest_chinese_name', 'rest_chinese_address'], 
-                    keep='first'
+            LOGGER.info(f"合并后共 {total_before_dedup} 条记录")
+            
+            # 如果是增补模式，使用高级去重逻辑
+            if is_append_mode and existing_data_count > 0:
+                LOGGER.info("增补模式：开始执行高级去重...")
+                
+                # 使用GetRestaurantService进行去重
+                from app.services.functions.get_restaurant_service import GetRestaurantService
+                
+                dedup_service = GetRestaurantService(
+                    name_similarity_threshold=self.name_similarity_threshold,
+                    address_similarity_threshold=self.address_similarity_threshold,
+                    distance_threshold=self.distance_threshold
                 )
-            
-            LOGGER.info(f"合并后共 {len(merged_data)} 条记录")
+                
+                # 将DataFrame转换为字典列表进行去重
+                combined_records = merged_data.to_dict('records')
+                dedup_service.info = combined_records
+                
+                # 执行去重
+                dedup_service._dedup()
+                
+                # 将去重后的数据转换回DataFrame
+                merged_data = pd.DataFrame(dedup_service.info)
+                
+                final_count = len(merged_data)
+                removed_count = total_before_dedup - final_count
+                
+                LOGGER.info(f"增补模式去重完成：原有 {existing_data_count} 条，新增 {new_data_count} 条，去重后总计 {final_count} 条，去除重复 {removed_count} 条")
+            else:
+                # 非增补模式，使用简单去重
+                if 'rest_chinese_name' in merged_data.columns and 'rest_chinese_address' in merged_data.columns:
+                    merged_data = merged_data.drop_duplicates(
+                        subset=['rest_chinese_name', 'rest_chinese_address'], 
+                        keep='first'
+                    )
+                
+                final_count = len(merged_data)
+                removed_count = total_before_dedup - final_count
+                LOGGER.info(f"简单去重完成：总计 {final_count} 条，去除重复 {removed_count} 条")
             
             # 保存合并结果
-            merged_file = os.path.join(output_dir, f"merged_restaurants_{task_info['city']}_{task_info['timestamp']}.xlsx")
+            mode_suffix = "_append" if is_append_mode else ""
+            merged_file = os.path.join(output_dir, f"merged_restaurants_{task_info['city']}_{task_info['timestamp']}{mode_suffix}.xlsx")
             merged_data.to_excel(merged_file, index=False)
             self.temp_files.append(merged_file)
             if hasattr(self.conf.runtime, 'temp_files'):
@@ -3189,12 +3459,22 @@ read -n 1
             # 显示成功消息
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle("加载成功")
-            msg_box.setText(
-                f"餐厅数据加载完成！\n\n"
-                f"总记录数: {len(merged_data)}\n"
-                f"合并自 {len(all_result_files)} 个文件\n\n"
-                f"完整数据已保存到:\n{merged_file}"
-            )
+            
+            mode_text = "增补模式" if is_append_mode else "全新搜索"
+            message = f"餐厅数据加载完成({mode_text})！\n\n"
+            
+            if is_append_mode:
+                message += f"原有数据: {existing_data_count} 条\n"
+                message += f"新搜索数据: {new_data_count} 条\n"
+                message += f"去重后总计: {len(merged_data)} 条\n"
+                message += f"去除重复: {total_before_dedup - len(merged_data)} 条\n\n"
+            else:
+                message += f"总记录数: {len(merged_data)} 条\n"
+                message += f"合并自 {len(all_result_files)} 个文件\n\n"
+            
+            message += f"完整数据已保存到:\n{merged_file}"
+            
+            msg_box.setText(message)
             msg_box.setIcon(QMessageBox.Information)
             
             open_button = msg_box.addButton("打开完整数据", QMessageBox.ActionRole)

@@ -260,6 +260,13 @@ def main():
     parser.add_argument('--merge_only', action='store_true', help='仅合并结果')
     parser.add_argument('--result_files', nargs='*', help='要合并的结果文件列表')
     
+    # 增补模式相关参数
+    parser.add_argument('--existing_data_file', help='已有数据文件路径')
+    parser.add_argument('--append_mode', type=bool, default=False, help='是否启用增补模式')
+    parser.add_argument('--name_similarity_threshold', type=float, default=0.6, help='名称相似度阈值')
+    parser.add_argument('--address_similarity_threshold', type=float, default=0.6, help='地址相似度阈值')
+    parser.add_argument('--distance_threshold', type=int, default=1000, help='距离阈值（米）')
+    
     args = parser.parse_args()
     
     # 加载运行时配置
@@ -283,6 +290,16 @@ def main():
     # 执行搜索
     try:
         result_files = []
+        existing_data = None
+        
+        # 如果是增补模式，加载已有数据
+        if args.append_mode and args.existing_data_file and os.path.exists(args.existing_data_file):
+            try:
+                existing_data = pd.read_excel(args.existing_data_file)
+                LOGGER.info(f"增补模式：已加载现有数据 {len(existing_data)} 条")
+            except Exception as e:
+                LOGGER.error(f"加载现有数据失败: {e}")
+                existing_data = None
         
         if args.keywords:
             # 按关键词搜索
@@ -310,15 +327,75 @@ def main():
             if result_file:
                 result_files.append(result_file)
         
-        # 合并结果
-        if len(result_files) > 1:
-            merged_file = os.path.join(args.output_dir, f"merged_restaurants_{args.city}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
-            merge_results(result_files, merged_file)
-            print(f"搜索完成，结果已保存到: {merged_file}")
-        elif result_files:
-            print(f"搜索完成，结果已保存到: {result_files[0]}")
+        # 处理增补模式的合并和去重
+        if args.append_mode and existing_data is not None and result_files:
+            LOGGER.info("增补模式：开始合并数据并去重")
+            
+            # 加载新搜索的数据
+            new_data_list = []
+            for file_path in result_files:
+                try:
+                    data = pd.read_excel(file_path)
+                    new_data_list.append(data)
+                    LOGGER.info(f"已加载新数据 {len(data)} 条从: {file_path}")
+                except Exception as e:
+                    LOGGER.error(f"加载新数据失败 {file_path}: {e}")
+            
+            if new_data_list:
+                # 合并新数据
+                new_data = pd.concat(new_data_list, ignore_index=True)
+                
+                # 与已有数据合并
+                combined_data = pd.concat([existing_data, new_data], ignore_index=True)
+                total_before_dedup = len(combined_data)
+                
+                LOGGER.info(f"合并数据：原有 {len(existing_data)} 条，新增 {len(new_data)} 条，总计 {total_before_dedup} 条")
+                
+                # 使用GetRestaurantService进行高级去重
+                dedup_service = GetRestaurantService(
+                    name_similarity_threshold=args.name_similarity_threshold,
+                    address_similarity_threshold=args.address_similarity_threshold,
+                    distance_threshold=args.distance_threshold
+                )
+                
+                # 将DataFrame转换为字典列表进行去重
+                combined_records = combined_data.to_dict('records')
+                dedup_service.info = combined_records
+                
+                # 执行去重
+                dedup_service._dedup()
+                
+                # 将去重后的数据转换回DataFrame
+                final_data = pd.DataFrame(dedup_service.info)
+                
+                final_count = len(final_data)
+                removed_count = total_before_dedup - final_count
+                
+                LOGGER.info(f"去重完成：最终 {final_count} 条，去除重复 {removed_count} 条")
+                
+                # 保存最终结果
+                final_file = os.path.join(args.output_dir, f"final_restaurants_{args.city}_append_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+                final_data.to_excel(final_file, index=False)
+                
+                print(f"增补模式搜索完成")
+                print(f"原有数据: {len(existing_data)} 条")
+                print(f"新搜索数据: {len(new_data)} 条")
+                print(f"去重后总计: {final_count} 条")
+                print(f"最终结果已保存到: {final_file}")
+            else:
+                print("未获取到新数据")
+                
         else:
-            print("搜索完成，但未找到任何餐厅")
+            # 非增补模式，使用原有逻辑
+            # 合并结果
+            if len(result_files) > 1:
+                merged_file = os.path.join(args.output_dir, f"merged_restaurants_{args.city}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+                merge_results(result_files, merged_file)
+                print(f"搜索完成，结果已保存到: {merged_file}")
+            elif result_files:
+                print(f"搜索完成，结果已保存到: {result_files[0]}")
+            else:
+                print("搜索完成，但未找到任何餐厅")
         
     except Exception as e:
         LOGGER.error(f"搜索失败: {str(e)}")

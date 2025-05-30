@@ -400,6 +400,7 @@ class GetRestaurantService:
                 if (name_similarity >= self.name_similarity_threshold and 
                     address_similarity >= self.address_similarity_threshold and 
                     distance <= self.distance_threshold):
+                    LOGGER.info(f"去重信息: 餐厅名:{name1}-{name2}({name_similarity}) 地址:{address1}-{address2}({address_similarity}) 距离:{distance}米")
                     is_duplicate = True
                     duplicate_count += 1
                     break
