@@ -20,6 +20,7 @@ import math
 from app.utils.oss import oss_get_json_file
 import pandas as pd
 import logging
+import re  # 添加正则表达式模块
 
 # 设置日志
 LOGGER = setup_logger("moco.log")
@@ -768,36 +769,69 @@ class Restaurant(BaseInstance):
             # 检查是否已有区域信息
             if not hasattr(self.inst, 'rest_district') or not self.inst.rest_district or pd.isna(self.inst.rest_district):
                 
-                # 1. 从citycode.xlsx查询城市对应的citycode
-                city_code = get_city_code_from_excel(self.inst.rest_city)
-                if not city_code:
-                    print(f"无法获取城市 {self.inst.rest_city} 的citycode")
-                    # self.logger.error(f"无法获取城市 {self.inst.rest_city} 的citycode")
-                    self.inst.rest_district = "未知区"  # 设置默认区域
-                    result = False
+                # 优先尝试从地址中直接提取区域信息
+                extracted_district = None
+                
+                # 1. 匹配"XX区"模式
+                district_pattern = r'([^市县区]{1,10}区)'
+                district_match = re.search(district_pattern, address)
+                if district_match:
+                    extracted_district = district_match.group(1)
+                    LOGGER.info(f"从地址中直接提取到区域(区): {extracted_district}")
+                
+                # 2. 如果没找到区，匹配"XX县"模式
+                if not extracted_district:
+                    county_pattern = r'([^市县区]{1,10}县)'
+                    county_match = re.search(county_pattern, address)
+                    if county_match:
+                        extracted_district = county_match.group(1)
+                        LOGGER.info(f"从地址中直接提取到区域(县): {extracted_district}")
+                
+                # 3. 如果没找到区县，匹配"A市B市"模式（B市为县级市）
+                if not extracted_district:
+                    city_pattern = r'([^市]{1,10}市)([^市]{1,10}市)'
+                    city_match = re.search(city_pattern, address)
+                    if city_match:
+                        # 取第二个市作为区域（县级市）
+                        extracted_district = city_match.group(2)
+                        LOGGER.info(f"从地址中直接提取到区域(县级市): {extracted_district}")
+                
+                # 如果成功从地址中提取到区域，直接使用
+                if extracted_district:
+                    self.inst.rest_district = extracted_district
+                    LOGGER.info(f"已直接从地址提取区域，无需API调用: {extracted_district}")
                 else:
-                    # 2. 使用POI搜索API查询餐厅信息
-                    def poi_query_func(key):
-                        return query_gaode_poi(key, self.inst.rest_chinese_address, city_code, "050000")
-                    
-                    poi_result = robust_query(poi_query_func, self.conf.KEYS.gaode_keys)
-
-                    if poi_result and poi_result.get('pois') and len(poi_result['pois']) > 0:
-                        # 3. 从第一个POI结果中提取adname作为区域
-                        first_poi = poi_result['pois'][0]
-                        adname = first_poi.get('adname', '')
-                        if adname:
-                            self.inst.rest_district = adname
-                            # print(f"已通过POI搜索为餐厅提取区域: {adname}")
-                            # self.logger.info(f"已通过POI搜索为餐厅提取区域: {adname}")
-                        else:
-                            # self.logger.warning(f"POI搜索结果中没有adname字段")
-                            self.inst.rest_district = "未知区"  # 设置默认区域
-                            result = False
-                    else:
-                        # self.logger.warning(f"POI搜索未找到餐厅 {self.inst.rest_chinese_name} 的信息")
+                    # 如果无法从地址直接提取，使用原有的API查询逻辑
+                    # 1. 从citycode.xlsx查询城市对应的citycode
+                    city_code = get_city_code_from_excel(self.inst.rest_city)
+                    if not city_code:
+                        print(f"无法获取城市 {self.inst.rest_city} 的citycode")
+                        # self.logger.error(f"无法获取城市 {self.inst.rest_city} 的citycode")
                         self.inst.rest_district = "未知区"  # 设置默认区域
                         result = False
+                    else:
+                        # 2. 使用POI搜索API查询餐厅信息
+                        def poi_query_func(key):
+                            return query_gaode_poi(key, self.inst.rest_chinese_address, city_code, "050000")
+                        
+                        poi_result = robust_query(poi_query_func, self.conf.KEYS.gaode_keys)
+
+                        if poi_result and poi_result.get('pois') and len(poi_result['pois']) > 0:
+                            # 3. 从第一个POI结果中提取adname作为区域
+                            first_poi = poi_result['pois'][0]
+                            adname = first_poi.get('adname', '')
+                            if adname:
+                                self.inst.rest_district = adname
+                                # print(f"已通过POI搜索为餐厅提取区域: {adname}")
+                                # self.logger.info(f"已通过POI搜索为餐厅提取区域: {adname}")
+                            else:
+                                # self.logger.warning(f"POI搜索结果中没有adname字段")
+                                self.inst.rest_district = "未知区"  # 设置默认区域
+                                result = False
+                        else:
+                            # self.logger.warning(f"POI搜索未找到餐厅 {self.inst.rest_chinese_name} 的信息")
+                            self.inst.rest_district = "未知区"  # 设置默认区域
+                            result = False
         except Exception as e:
             result = False
             # print(f"提取区域失败: {e}")
