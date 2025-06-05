@@ -1,24 +1,24 @@
 @echo off
 echo ======================================
-echo    安装依赖包
+echo    Install packages...
 echo ======================================
 
 
 set /p ENV_NAME=<"%~dp0\env_name.txt"
 
-echo 正在为环境 %ENV_NAME% 安装依赖包...
+echo Installing packages for environment %ENV_NAME%...
 
 
 call conda activate %ENV_NAME%
 
 
 if not exist "%~dp0..\requirements.txt" (
-    echo 错误：requirements.txt文件不存在！
+    echo Error: requirements.txt file not found!
     exit /b 1
 )
 
 
-echo 正在安装requirements.txt中的依赖包...
+echo Installing packages in requirements.txt...
 call pip install -r "%~dp0..\requirements.txt"
 
-echo 所有依赖包安装完成！ 
+echo All packages installed! 
