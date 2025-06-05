@@ -1,5 +1,4 @@
 @echo off
-REM 获取当前批处理脚本所在目录
 set ROOT_PATH=%~dp0
 set ROOT_PATH=%ROOT_PATH:~0,-1%
 for %%i in ("%ROOT_PATH%") do set PARENT_PATH=%%~dpi

@@ -1,7 +1,7 @@
 @echo off
 REM ======== Configuration section ========
 REM Set virtual environment name (modify as needed)
-set ENV_NAME=py310
+set ENV_NAME=moco
 
 REM ======== Script start ========
 REM Set Chinese encoding
@@ -15,36 +15,30 @@ echo Current directory: %CD%
 cd ..
 echo Working directory: %CD%
 
-REM 检查conda是否在PATH中，如果不在，尝试找到它并添加到PATH
 where conda >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo 'conda' command not found, try to find conda installation path and add to PATH...
     
-    REM 检查常见的conda安装位置
     set CONDA_FOUND=false
     
-    REM 检查用户目录下的Anaconda3
     if exist "%USERPROFILE%\Anaconda3\Scripts\conda.exe" (
         echo 找到conda: %USERPROFILE%\Anaconda3\Scripts\conda.exe
         set "PATH=%PATH%;%USERPROFILE%\Anaconda3;%USERPROFILE%\Anaconda3\Scripts;%USERPROFILE%\Anaconda3\Library\bin"
         set CONDA_FOUND=true
     )
     
-    REM 检查用户目录下的Miniconda3
     if "%CONDA_FOUND%"=="false" if exist "%USERPROFILE%\Miniconda3\Scripts\conda.exe" (
         echo Found conda: %USERPROFILE%\Miniconda3\Scripts\conda.exe
         set "PATH=%PATH%;%USERPROFILE%\Miniconda3;%USERPROFILE%\Miniconda3\Scripts;%USERPROFILE%\Miniconda3\Library\bin"
         set CONDA_FOUND=true
     )
     
-    REM 检查程序目录下的Anaconda3
     if "%CONDA_FOUND%"=="false" if exist "C:\ProgramData\Anaconda3\Scripts\conda.exe" (
         echo Found conda: C:\ProgramData\Anaconda3\Scripts\conda.exe
         set "PATH=%PATH%;C:\ProgramData\Anaconda3;C:\ProgramData\Anaconda3\Scripts;C:\ProgramData\Anaconda3\Library\bin"
         set CONDA_FOUND=true
     )
     
-    REM 如果找到了conda，再次检查
     if "%CONDA_FOUND%"=="true" (
         where conda >nul 2>&1
         if %ERRORLEVEL% NEQ 0 (
@@ -55,11 +49,9 @@ if %ERRORLEVEL% NEQ 0 (
     ) else (
         echo Failed to find conda installation path, please install conda or manually add it to environment variables
         echo You can download Miniconda from the following URL: https://docs.conda.io/en/latest/miniconda.html
-        REM 继续执行，尝试使用系统Python
     )
 )
 
-REM 检查main_window.py是否存在及可能的位置
 echo Checking application files...
 set FOUND_FILE=false
 
@@ -88,7 +80,6 @@ if "%FOUND_FILE%"=="false" (
     exit /b 1
 )
 
-REM 首先尝试使用conda环境中的Python
 echo Trying to activate conda environment %ENV_NAME% ...
 call conda activate %ENV_NAME% 2>nul
 set PYTHON_ACTIVATED=false
@@ -102,7 +93,6 @@ if %ERRORLEVEL% EQU 0 (
 ) else (
     echo Failed to activate conda environment %ENV_NAME%, try other ways...
     
-    REM 尝试其他可能的conda激活路径
     if exist C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat (
         echo Trying path: C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat
         call C:\Users\%USERNAME%\Anaconda3\Scripts\activate.bat %ENV_NAME%
@@ -125,7 +115,6 @@ if %ERRORLEVEL% EQU 0 (
     )
 )
 
-REM 如果conda环境激活失败，尝试使用系统Python
 if "%PYTHON_ACTIVATED%"=="false" (
     echo Warning: Failed to activate conda environment, try using system Python...
     where python >nul 2>&1
@@ -141,7 +130,6 @@ if "%PYTHON_ACTIVATED%"=="false" (
 
 echo Environment prepared, start running application...
 
-REM 运行Python应用程序
 echo Starting application: python %APP_PATH%
 python "%APP_PATH%"
 if %ERRORLEVEL% NEQ 0 (
