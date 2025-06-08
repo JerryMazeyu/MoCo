@@ -1889,7 +1889,7 @@ class Tab3(QWidget):
     def save_restaurant_template(self, file_path):
         fields = list(RestaurantModel.schema()['properties'].keys())
         descs = [RestaurantModel.schema()['properties'][f].get('description', '') for f in fields]
-        must_fields = ["rest_belonged_cp", "rest_chinese_name", "rest_city", "rest_chinese_address", "rest_district", "rest_type"]
+        must_fields = ["rest_chinese_name", "rest_city", "rest_chinese_address", "rest_district", "rest_type"]
         merge_tip = "标红字段为必填字段，上传文件时删除第二行和第三行"
         workbook = xlsxwriter.Workbook(file_path)
         worksheet = workbook.add_worksheet()
@@ -1908,7 +1908,7 @@ class Tab3(QWidget):
     def save_total_template(self, file_path):
         fields = list(RestaurantTotalModel.schema()['properties'].keys())
         descs = [RestaurantTotalModel.schema()['properties'][f].get('description', '') for f in fields]
-        must_fields = ["total_cp", "total_supplied_date", "total_delivery_trucks_vehicle_registration_no", "total_volume_per_trucks", "total_weighbridge_ticket_number", "total_collection_city", "total_ending_inventory", "total_quantities_sold"]
+        must_fields = [ "total_supplied_date", "total_delivery_trucks_vehicle_registration_no", "total_volume_per_trucks", "total_weighbridge_ticket_number", "total_collection_city", "total_ending_inventory", "total_quantities_sold"]
         merge_tip = "标红字段为必填字段，上传文件时删除第二行和第三行"
         workbook = xlsxwriter.Workbook(file_path)
         worksheet = workbook.add_worksheet()
