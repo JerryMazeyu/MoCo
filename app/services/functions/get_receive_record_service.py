@@ -493,8 +493,7 @@ class GetReceiveRecordService:
             # 调用VehicleGroup，通过cp_id获取车辆列表
             # 确保每个车辆信息都包含 vehicle_belonged_cp
             for info in vehicle_info:
-                if "vehicle_belonged_cp" not in info:
-                    info["vehicle_belonged_cp"] = cp_id
+                info["vehicle_belonged_cp"] = cp_id
             
             vehicles = [Vehicle(info, model = VehicleModel) for info in vehicle_info]  # 将字典列表转换为 Vehicle 实例列表
             vehicle_group = VehicleGroup(vehicles=vehicles,group_type="cp")
@@ -542,8 +541,8 @@ class GetReceiveRecordService:
             
             ## 筛选车辆类型为运输车、车辆状态为非冻结
             # 筛选车辆类型是否可用，并且是否过冷却期，只筛选过了冷却器的车辆
-            cp_vehicle_df = cp_vehicle_group.filter_available()
-            cp_vehicle_df = cp_vehicle_df.filter_by_type(vehicle_type="to_rest")
+            # cp_vehicle_df = cp_vehicle_group.filter_available()
+            cp_vehicle_df = cp_vehicle_group.filter_by_type(vehicle_type="to_rest")
             cp_vehicle_df = cp_vehicle_df.to_dataframe()
 
             # 增加一列随机数作为桶数
@@ -694,23 +693,45 @@ class GetReceiveRecordService:
         days = len(dates_in_month)
         total = len(restaurant_balance_df)
         base = car_number_of_day
-        # 1. 先全部分配 base
-        plan = [base] * days
-        assigned = base * days
-        diff = total - assigned
-        # 2. 需要补 diff 个到 +1 或 -1
-        # 如果 diff > 0，随机 diff 天 +1
-        # 如果 diff < 0，随机 -diff 天 -1
-        if diff > 0:
-            plus_days = random.sample(range(days), diff)
-            for i in plus_days:
-                plan[i] += 1
-        elif diff < 0:
-            minus_days = random.sample(range(days), -diff)
-            for i in minus_days:
-                plan[i] -= 1
-        # 3. 检查所有天数都在 [base-1, base+1] 范围内
-        assert all(base-1 <= x <= base+1 for x in plan)
+        
+        # 1. 给每天随机分配车辆数，范围是 [base-3, base+3]
+        plan = []
+        for _ in range(days):
+            # 随机选择 -3 到 +3 的调整值
+            adjustment = random.randint(-3, 3)
+            daily_cars = max(1, base + adjustment)  # 确保每天至少有1辆车
+            plan.append(daily_cars)
+
+        # 2. 计算当前总分配数
+        current_total = sum(plan)
+        diff = total - current_total
+
+        # 3. 调整分配方案，使总数等于目标总数
+        while diff != 0:
+            if diff > 0:
+                # 需要增加车辆，随机选择一天增加1辆（但不能超过base+3）
+                available_days = [i for i in range(days) if plan[i] < base + 3]
+                if available_days:
+                    day_to_add = random.choice(available_days)
+                    plan[day_to_add] += 1
+                    diff -= 1
+                else:
+                    break  # 所有天都已达到最大值
+            else:  # diff < 0
+                # 需要减少车辆，随机选择一天减少1辆（但不能低于max(1, base-3)）
+                min_cars = max(1, base - 3)
+                available_days = [i for i in range(days) if plan[i] > min_cars]
+                if available_days:
+                    day_to_reduce = random.choice(available_days)
+                    plan[day_to_reduce] -= 1
+                    diff += 1
+                else:
+                    break  # 所有天都已达到最小值
+
+        # 4. 检查所有天数都在 [max(1, base-3), base+3] 范围内
+        min_allowed = max(1, base - 3)
+        max_allowed = base + 3
+        assert all(min_allowed <= x <= max_allowed for x in plan)
         # 4. 生成 delivery_dates
         for day, count in zip(dates_in_month, plan):
             delivery_dates.extend([day.date()] * count)
