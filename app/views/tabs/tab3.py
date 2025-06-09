@@ -1311,9 +1311,10 @@ class Tab3(QWidget):
             self.vehicles = [Vehicle(info) for info in vehicle_data.to_dict('records')]
             
             # 使用VehicleGroup进行过滤
+            ## 不根据cp过滤，因为地址已经是根据cp_id进行过滤的
             vehicles_group = VehicleGroup(self.vehicles)
-            self.vehicles = vehicles_group.filter_by_cp(self.current_cp['cp_id']).to_dicts()
-            filter_vehicles = vehicles_group.filter_by_cp(self.current_cp['cp_id']).to_dataframe()
+            self.vehicles = vehicles_group.to_dicts()
+            filter_vehicles = vehicles_group.to_dataframe()
             # 将数据加载到车辆信息页签
             self.vehicle_viewer.load_data(data=filter_vehicles)
             
