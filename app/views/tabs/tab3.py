@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QFrame, QComboBox, QGroupBox, QFileDialog, 
-                             QMessageBox, QDialog, QTabWidget,QLineEdit, QButtonGroup, QRadioButton, QTreeWidget, QTreeWidgetItem, QInputDialog, QTextEdit)
+                             QMessageBox, QDialog, QTabWidget,QLineEdit, QButtonGroup, QRadioButton, QTreeWidget, QTreeWidgetItem, QInputDialog, QTextEdit, QScrollArea)
 from PyQt5.QtGui import QPixmap, QColor
 from app.utils.logger import get_logger
 from app.services.instances.restaurant import Restaurant, RestaurantsGroup
@@ -70,9 +70,19 @@ class TransportDialog(QDialog):
         collect_label.setFixedWidth(label_width)
         collect_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         collect_layout.addWidget(collect_label)
+        
+        # 创建单选按钮组确保互斥
+        self.collect_button_group = QButtonGroup(self)
         self.collect_all_radio = QRadioButton("全部收油", self)
         self.collect_partial_radio = QRadioButton("部分收油", self)
+        
+        # 将单选按钮添加到组中
+        self.collect_button_group.addButton(self.collect_all_radio)
+        self.collect_button_group.addButton(self.collect_partial_radio)
+        
+        # 设置默认选择
         self.collect_all_radio.setChecked(True)
+        
         collect_layout.addWidget(self.collect_all_radio)
         collect_layout.addWidget(self.collect_partial_radio)
         collect_layout.addStretch()
@@ -129,23 +139,96 @@ class TransportDialog(QDialog):
         self.custom_order_widget = QWidget()
         custom_order_layout = QVBoxLayout(self.custom_order_widget)
         
+        # 收油顺序选择
+        order_type_layout = QHBoxLayout()
+        order_type_layout.setAlignment(Qt.AlignLeft)
+        order_type_label = QLabel("收油顺序:")
+        order_type_label.setFixedWidth(label_width)
+        order_type_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        order_type_layout.addWidget(order_type_label)
         
-        # 已选择的区域显示框
+        self.existing_order_radio = QRadioButton("现有顺序", self)
+        self.new_order_radio = QRadioButton("新增顺序", self)
+        self.existing_order_radio.setChecked(True)  # 默认选择现有顺序
+        
+        order_type_layout.addWidget(self.existing_order_radio)
+        order_type_layout.addWidget(self.new_order_radio)
+        order_type_layout.addStretch()
+        custom_order_layout.addLayout(order_type_layout)
+        
+        # 现有顺序选择区域（单选框列表）
+        self.existing_order_widget = QWidget()
+        self.existing_order_widget.setMinimumHeight(140)  # 设置最小高度，防止高度变化
+        existing_order_layout = QVBoxLayout(self.existing_order_widget)
+        existing_order_layout.setContentsMargins(0, 0, 0, 0)  # 移除边距
+        
+        # 现有顺序标签行，与其他标签对齐
+        existing_label_layout = QHBoxLayout()
+        existing_label_layout.setAlignment(Qt.AlignLeft)
+        self.existing_order_label = QLabel("选择现有顺序:")
+        self.existing_order_label.setFixedWidth(label_width)
+        self.existing_order_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        existing_label_layout.addWidget(self.existing_order_label)
+        existing_label_layout.addStretch()
+        existing_order_layout.addLayout(existing_label_layout)
+        
+        # 创建滚动区域来放置单选框，铺满窗口宽度
+        scroll_container_layout = QHBoxLayout()
+        scroll_container_layout.setContentsMargins(0, 0, 0, 0)
+        
+        scroll_area = QScrollArea()
+        scroll_area.setFixedHeight(100)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)  # 改为按需显示横向滚动条
+        # 不设置固定宽度，让它自适应
+        
+        scroll_widget = QWidget()
+        self.existing_order_button_layout = QVBoxLayout(scroll_widget)
+        self.existing_order_button_group = QButtonGroup(self)
+        
+        scroll_area.setWidget(scroll_widget)
+        scroll_container_layout.addWidget(scroll_area)  # 移除addStretch，让滚动区域占满宽度
+        existing_order_layout.addLayout(scroll_container_layout)
+        
+        custom_order_layout.addWidget(self.existing_order_widget)
+        
+        # 新增顺序区域（原来的自定义区域排序）
+        self.new_order_widget = QWidget()
+        self.new_order_widget.setMinimumHeight(140)  # 设置最小高度，防止高度变化
+        new_order_layout = QVBoxLayout(self.new_order_widget)
+        new_order_layout.setContentsMargins(0, 0, 0, 0)  # 移除边距
+        
+        # 自定义区域排序标签行，与其他标签对齐
+        custom_label_layout = QHBoxLayout()
+        custom_label_layout.setAlignment(Qt.AlignLeft)
         self.selected_districts_label = QLabel("自定义区域排序：")
+        self.selected_districts_label.setFixedWidth(label_width)
         self.selected_districts_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        custom_label_layout.addWidget(self.selected_districts_label)
+        custom_label_layout.addStretch()
+        new_order_layout.addLayout(custom_label_layout)
+        
+        # 文本框容器，铺满窗口宽度
+        text_container_layout = QHBoxLayout()
+        text_container_layout.setContentsMargins(0, 0, 0, 0)
+        
         self.selected_districts_text = QTextEdit("")
         self.selected_districts_text.setReadOnly(True)
         self.selected_districts_text.setFixedHeight(60)  # 可根据需要调整高度
+        # 移除固定宽度设置，让文本框自适应宽度
         self.selected_districts_text.setStyleSheet("background-color: #f0f0f0; padding: 5px; border-radius: 3px;")
-        custom_order_layout.addWidget(self.selected_districts_label)
-        custom_order_layout.addWidget(self.selected_districts_text)
+        text_container_layout.addWidget(self.selected_districts_text)  # 移除addStretch，让文本框占满宽度
+        new_order_layout.addLayout(text_container_layout)
         
-        # 区域选择下拉框
+        # 区域选择下拉框和按钮，铺满窗口宽度
         district_layout = QHBoxLayout()
+        district_layout.setContentsMargins(0, 0, 0, 0)
+        
         self.district_combo = QComboBox(self)
-        self.district_combo.setFixedWidth(input_width)
+        # 移除固定宽度设置，让下拉框可以自适应
         self.district_combo.currentIndexChanged.connect(self.on_district_selected)
-        district_layout.addWidget(self.district_combo)
+        district_layout.addWidget(self.district_combo, 1)  # 设置拉伸因子，让下拉框占据剩余空间
         
         # 添加按钮
         add_button = QPushButton("添加")
@@ -157,7 +240,10 @@ class TransportDialog(QDialog):
         reset_button.clicked.connect(self.reset_district_selection)
         district_layout.addWidget(reset_button)
         
-        custom_order_layout.addLayout(district_layout)
+        new_order_layout.addLayout(district_layout)
+        custom_order_layout.addWidget(self.new_order_widget)
+        
+        self.new_order_widget.setVisible(False)  # 默认隐藏新增顺序
         
         self.custom_order_widget.setVisible(False)
         layout.addWidget(self.custom_order_widget)
@@ -181,6 +267,8 @@ class TransportDialog(QDialog):
         self.collect_all_radio.toggled.connect(self.toggle_weight_input)
         self.collect_partial_radio.toggled.connect(self.toggle_weight_input)
         self.month_year_combo.currentIndexChanged.connect(self.update_days_input)
+        self.existing_order_radio.toggled.connect(self.toggle_order_type)
+        self.new_order_radio.toggled.connect(self.toggle_order_type)
         
         # 初始化区域选择列表
         self.selected_districts = []
@@ -206,6 +294,11 @@ class TransportDialog(QDialog):
                     # 获取所有区域并去重
                     all_districts = sorted(restaurant_df['rest_district'].astype(str).unique())
                     self.setup_district_combo(all_districts)
+            
+            # 初始化现有顺序列表
+            self.setup_existing_orders()
+            # 初始显示状态
+            self.toggle_order_type()
 
     def setup_district_combo(self, districts):
         """设置区域选择下拉框"""
@@ -236,6 +329,103 @@ class TransportDialog(QDialog):
         """重置区域选择"""
         self.selected_districts.clear()
         self.update_selected_districts_display()
+
+    def toggle_order_type(self):
+        """切换收油顺序类型显示"""
+        if self.existing_order_radio.isChecked():
+            self.existing_order_widget.setVisible(True)
+            self.new_order_widget.setVisible(False)
+        else:
+            self.existing_order_widget.setVisible(False)
+            self.new_order_widget.setVisible(True)
+        
+        # 强制更新布局，防止高度变化
+        self.custom_order_widget.updateGeometry()
+        self.adjustSize()
+
+    def setup_existing_orders(self):
+        """设置现有顺序列表"""
+        from app.config.config import CONF
+        
+        # 清除现有按钮
+        for i in reversed(range(self.existing_order_button_layout.count())):
+            child = self.existing_order_button_layout.itemAt(i).widget()
+            if child:
+                child.setParent(None)
+        
+        # 获取配置中的历史顺序
+        district_order_history = []
+        if hasattr(CONF, '_config_dict') and 'district_order_history' in CONF._config_dict:
+            district_order_history = CONF._config_dict.get('district_order_history', [])
+        
+        # 创建单选框
+        for i, order in enumerate(district_order_history):
+            if isinstance(order, list):
+                order_text = ", ".join(order)
+                radio_button = QRadioButton(f"顺序{i+1}: {order_text}")
+                radio_button.setProperty("order_data", order)  # 存储实际的顺序数据
+                # 通过样式表确保文本不换行
+                radio_button.setStyleSheet("QRadioButton { white-space: nowrap; }")
+                self.existing_order_button_group.addButton(radio_button, i)
+                self.existing_order_button_layout.addWidget(radio_button)
+                
+                # 默认选择第一个选项
+                if i == 0:
+                    radio_button.setChecked(True)
+        
+        # 如果没有历史顺序，添加提示
+        if not district_order_history:
+            no_history_label = QLabel("暂无历史顺序记录")
+            no_history_label.setStyleSheet("color: gray; font-style: italic;")
+            self.existing_order_button_layout.addWidget(no_history_label)
+
+    def save_district_order_to_history(self, district_order):
+        """保存区域顺序到历史记录"""
+        from app.config.config import CONF
+        import yaml
+        import os
+        from app.utils import rp
+        
+        # 获取当前历史记录
+        if not hasattr(CONF, '_config_dict'):
+            CONF._config_dict = {}
+        
+        district_order_history = CONF._config_dict.get('district_order_history', [])
+        
+        # 检查是否已存在相同的顺序
+        if district_order not in district_order_history:
+            # 将新顺序添加到开头
+            district_order_history.insert(0, district_order)
+            
+            # 只保留最近10条记录
+            district_order_history = district_order_history[:10]
+            
+            # 更新配置
+            CONF._config_dict['district_order_history'] = district_order_history
+            
+            # 保存到临时配置文件
+            try:
+                username = getattr(CONF, 'username', 'default')
+                user_temp_conf_path = rp(f"{username}_temp.yaml", folder="config")
+                
+                # 确保config目录存在
+                os.makedirs(os.path.dirname(user_temp_conf_path), exist_ok=True)
+                
+                # 保存配置（不包含runtime）
+                config_to_save = CONF._config_dict.copy()
+                if 'runtime' in config_to_save:
+                    del config_to_save['runtime']
+                
+                with open(user_temp_conf_path, "w", encoding="utf-8") as f:
+                    yaml.dump(config_to_save, f, allow_unicode=True)
+                    
+                print(f"区域顺序已保存到历史记录: {district_order}")
+                return True
+            except Exception as e:
+                print(f"保存区域顺序历史记录失败: {e}")
+                return False
+        
+        return True
 
     def toggle_weight_input(self, checked):
         """根据单选按钮状态切换收油重量输入框的显示状态"""
@@ -268,8 +458,26 @@ class TransportDialog(QDialog):
         """获取输入的数据"""
         weight = self.weight_input.text() if self.collect_partial_radio.isChecked() else ""
         sort_by_letter = self.sort_combo.currentText() == "是"
-        custom_order = ",".join(self.selected_districts) if not sort_by_letter and self.selected_districts else None
-        return self.days_input.text(), self.month_year_combo.currentText(), self.bucket_ratio_input.text(), weight, sort_by_letter, custom_order
+        
+        # 处理区域顺序
+        district_order = None
+        is_custom_order = False
+        
+        if not sort_by_letter:  # 如果不按字母排序
+            if self.existing_order_radio.isChecked():
+                # 选择现有顺序
+                checked_button = self.existing_order_button_group.checkedButton()
+                if checked_button:
+                    district_order = checked_button.property("order_data")
+                    is_custom_order = False
+                # 如果没有选择任何现有顺序，district_order保持为None
+            else:
+                # 选择新增顺序
+                if self.selected_districts:
+                    district_order = self.selected_districts.copy()
+                    is_custom_order = True
+        
+        return self.days_input.text(), self.month_year_combo.currentText(), self.bucket_ratio_input.text(), weight, sort_by_letter, district_order, is_custom_order
 
     def update_days_input(self):
         """根据选择的年月更新运输天数的默认值"""
@@ -1357,7 +1565,7 @@ class Tab3(QWidget):
         # 弹出运输信息对话框
         dialog = TransportDialog(self)
         if dialog.exec_() == QDialog.Accepted:
-            days_input, month_year, bucket_ratio, weight, sort_by_letter, custom_order = dialog.get_input_data()
+            days_input, month_year, bucket_ratio, weight, sort_by_letter, district_order, is_custom_order = dialog.get_input_data()
             year, month = month_year.split('-')
             CONF.runtime.dates_to_trans = f'{year}-{month}-{days_input}'
             
@@ -1373,22 +1581,29 @@ class Tab3(QWidget):
             # 获取所有区域并去重
             all_districts = sorted(restaurant_df['rest_district'].astype(str).unique())
             
-            # 如果选择自定义顺序，验证输入的区域是否有效
-            if not sort_by_letter and custom_order:
-                custom_districts = [d.strip() for d in custom_order.split(',')]
-                invalid_districts = [d for d in custom_districts if d not in all_districts]
-                if invalid_districts:
-                    QMessageBox.warning(self, "输入错误", f"以下区域不存在：{', '.join(invalid_districts)}")
+            # 处理区域顺序
+            if sort_by_letter:
+                # 使用字母顺序
+                final_district_order = sorted(all_districts)
+            elif district_order:
+                # 筛选出在当前餐厅数据中存在的区域
+                valid_districts = [d for d in district_order if d in all_districts]
+                final_district_order = valid_districts
+                
+                # 如果是自定义顺序，保存到历史记录
+                if is_custom_order:
+                    dialog.save_district_order_to_history(district_order)
+            else:
+                # 如果没有选择任何顺序且不按字母排序，提示用户
+                if not sort_by_letter:
+                    QMessageBox.warning(self, "输入错误", "请选择一个现有顺序或创建新的自定义顺序。")
                     self.update_step_status(3, 'error')
                     return
-                # 使用自定义顺序
-                district_order = custom_districts
-            else:
-                # 使用字母顺序
-                district_order = sorted(all_districts)
+                # 默认使用字母顺序
+                final_district_order = sorted(all_districts)
             
             # 将区域顺序传递给服务层
-            CONF.runtime.district_order = district_order
+            CONF.runtime.district_order = final_district_order
             CONF.runtime.sort_by_letter = sort_by_letter
             
             try:
@@ -1406,14 +1621,14 @@ class Tab3(QWidget):
                             self.update_step_status(3, 'error')
                             return
                         CONF.runtime.oil_weight = weight_float
-                        self.logger.info(f"运输天数: {days_to_trans}, 选择的年月: {month_year}, 收油重量: {weight_float}吨")
+                        self.logger.info(f"运输天数: {days_to_trans}, 选择的年月: {month_year}, 收油重量: {weight_float}吨，收油区域顺序: {final_district_order}")
                     except ValueError:
                         QMessageBox.warning(self, "输入错误", "收油重量必须是有效的数字。")
                         self.update_step_status(3, 'error')
                         return
                 else:  # 如果选择了全部收油
                     CONF.runtime.oil_weight = None
-                    self.logger.info(f"运输天数: {days_to_trans}, 选择的年月: {month_year}, 全部收油")
+                    self.logger.info(f"运输天数: {days_to_trans}, 选择的年月: {month_year}, 全部收油，收油区域顺序: {final_district_order}")
 
                 oil_records_df, restaurant_balance, cp_restaurants_df, cp_vehicle_df = service.get_restaurant_oil_records(
                     self.restaurants, 
