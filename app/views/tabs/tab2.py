@@ -1045,6 +1045,13 @@ class Tab2(QWidget):
                 except Exception:
                     pass
             
+            # 停止任务监控定时器
+            if hasattr(self, 'task_monitor_timer') and self.task_monitor_timer is not None:
+                try:
+                    self.task_monitor_timer.stop()
+                except Exception:
+                    pass
+            
             # 检查是否已经在closeEvent中处理过
             if hasattr(self, 'cleaned_in_close_event') and self.cleaned_in_close_event:
                 # 已经处理过，就不再显示确认对话框
@@ -2143,6 +2150,12 @@ class Tab2(QWidget):
             try:
                 # 加载选择的文件
                 self.xlsx_viewer.load_data(file_path)
+                
+                # 清空之前的查询文件缓存，确保下次补全使用新导入的数据
+                if hasattr(self, 'last_query_file'):
+                    self.last_query_file = None
+                    LOGGER.info("已清空之前的查询文件缓存")
+                
                 LOGGER.info(f"餐厅数据已从 {file_path} 导入")
                 QMessageBox.information(self, "导入成功", f"已成功导入餐厅数据文件：\n{file_path}")
             except Exception as e:
@@ -2426,6 +2439,9 @@ class Tab2(QWidget):
             # 隐藏进度标签
             if hasattr(self, 'progress_label'):
                 self.progress_label.setVisible(False)
+            
+            # 开始监控任务完成状态
+            self._start_task_monitoring(task_id, status_file, output_dir)
             
             # 设置定时器在2秒后恢复按钮
             QTimer.singleShot(2000, lambda: self.complete_info_button.setEnabled(True))
@@ -3495,3 +3511,107 @@ read -n 1
         except Exception as e:
             LOGGER.error(f"加载搜索结果时出错: {str(e)}")
             QMessageBox.critical(self, "加载失败", f"加载搜索结果时出错: {str(e)}")
+    
+    def _start_task_monitoring(self, task_id, status_file, output_dir):
+        """开始监控任务完成状态"""
+        try:
+            # 存储监控相关信息
+            self.monitoring_task_id = task_id
+            self.monitoring_status_file = status_file
+            self.monitoring_output_dir = output_dir
+            
+            # 创建定时器用于轮询状态
+            if not hasattr(self, 'task_monitor_timer'):
+                self.task_monitor_timer = QTimer()
+                self.task_monitor_timer.timeout.connect(self._check_task_status)
+            
+            # 每5秒检查一次状态
+            self.task_monitor_timer.start(5000)
+            LOGGER.info(f"开始监控任务状态: {task_id}")
+            
+        except Exception as e:
+            LOGGER.error(f"启动任务监控失败: {str(e)}")
+    
+    def _check_task_status(self):
+        """检查任务状态"""
+        try:
+            if not hasattr(self, 'monitoring_status_file') or not os.path.exists(self.monitoring_status_file):
+                return
+            
+            # 读取状态文件
+            with open(self.monitoring_status_file, 'r', encoding='utf-8') as f:
+                status_data = json.load(f)
+            
+            task_status = status_data.get('status', '')
+            
+            if task_status == 'completed':
+                # 任务已完成，停止监控
+                self.task_monitor_timer.stop()
+                
+                # 检查结果文件是否存在
+                result_file = status_data.get('result_file', '')
+                if not result_file:
+                    # 如果状态文件中没有result_file路径，尝试构造路径
+                    result_file = os.path.join(self.monitoring_output_dir, 
+                                             f"result_{self.monitoring_task_id}【最终文件，请下载】.xlsx")
+                
+                if os.path.exists(result_file):
+                    # 弹窗询问用户是否打开文件
+                    self._show_completion_dialog(result_file)
+                else:
+                    LOGGER.warning(f"任务完成但结果文件不存在: {result_file}")
+                    QMessageBox.information(self, "任务完成", "餐厅信息补全任务已完成，但结果文件未找到。")
+                
+            elif task_status == 'failed':
+                # 任务失败，停止监控
+                self.task_monitor_timer.stop()
+                error_msg = status_data.get('error', '未知错误')
+                QMessageBox.warning(self, "任务失败", f"餐厅信息补全任务失败: {error_msg}")
+                
+        except Exception as e:
+            LOGGER.error(f"检查任务状态时出错: {str(e)}")
+    
+    def _show_completion_dialog(self, result_file):
+        """显示任务完成对话框并询问是否打开文件"""
+        try:
+            # 创建消息框
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("任务完成")
+            msg_box.setText("餐厅信息补全任务已完成！")
+            msg_box.setInformativeText("是否要打开结果文件？")
+            
+            # 添加按钮
+            open_button = msg_box.addButton("打开文件", QMessageBox.AcceptRole)
+            close_button = msg_box.addButton("稍后查看", QMessageBox.RejectRole)
+            
+            # 设置默认按钮
+            msg_box.setDefaultButton(open_button)
+            
+            # 显示对话框并获取用户选择
+            msg_box.exec_()
+            
+            if msg_box.clickedButton() == open_button:
+                # 用户选择打开文件
+                self._open_result_file(result_file)
+                
+        except Exception as e:
+            LOGGER.error(f"显示完成对话框时出错: {str(e)}")
+    
+    def _open_result_file(self, result_file):
+        """打开结果文件"""
+        try:
+            import subprocess
+            import sys
+            
+            if sys.platform == 'win32':  # Windows
+                os.startfile(result_file)
+            elif sys.platform == 'darwin':  # macOS
+                subprocess.run(['open', result_file])
+            else:  # Linux等其他系统
+                subprocess.run(['xdg-open', result_file])
+                
+            LOGGER.info(f"已打开结果文件: {result_file}")
+            
+        except Exception as e:
+            LOGGER.error(f"打开结果文件失败: {str(e)}")
+            QMessageBox.warning(self, "打开文件失败", f"无法打开结果文件: {str(e)}")
