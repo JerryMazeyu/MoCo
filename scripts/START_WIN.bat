@@ -22,7 +22,7 @@ if %ERRORLEVEL% NEQ 0 (
     set CONDA_FOUND=false
     
     if exist "%USERPROFILE%\Anaconda3\Scripts\conda.exe" (
-        echo 找到conda: %USERPROFILE%\Anaconda3\Scripts\conda.exe
+        echo Found conda: %USERPROFILE%\Anaconda3\Scripts\conda.exe
         set "PATH=%PATH%;%USERPROFILE%\Anaconda3;%USERPROFILE%\Anaconda3\Scripts;%USERPROFILE%\Anaconda3\Library\bin"
         set CONDA_FOUND=true
     )
